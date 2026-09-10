@@ -1,0 +1,15 @@
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.token
+*.credentials
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.recovery/
+.DS_Store
