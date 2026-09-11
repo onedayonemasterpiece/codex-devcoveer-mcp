@@ -91,14 +91,36 @@ async def _model_discovery_payload(
                         availability = "inference_verified_recent"
                     else:
                         availability = historical
+
+                    capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else {}
+                    modalities = capabilities.get("modalities") if isinstance(capabilities.get("modalities"), dict) else {}
+                    input_modalities = modalities.get("input") if isinstance(modalities.get("input"), list) else []
+                    output_modalities = modalities.get("output") if isinstance(modalities.get("output"), list) else []
+                    toolcall = capabilities.get("toolcall") is True
+                    text_input_ok = not input_modalities or "text" in input_modalities
+                    text_output_ok = not output_modalities or "text" in output_modalities
+                    agent_eligible = toolcall and text_input_ok and text_output_ok
+                    agent_exclusion = None
+                    if not toolcall:
+                        agent_exclusion = "tool_call_not_supported"
+                    elif not text_input_ok:
+                        agent_exclusion = "text_input_not_supported"
+                    elif not text_output_ok:
+                        agent_exclusion = "text_output_not_supported"
+
                     usage = active_usage.get(selection, {"activeTasks": 0, "sessionIds": set()})
                     record = dict(item)
+                    health_recommended = record.get("routingRecommended") is not False
                     record.update({
                         "availability": availability,
                         "historicalVerification": historical,
                         "verifiedAt": verification.get("verifiedAt") if (verified or snapshot) and verification else None,
                         "default": selection == DEFAULT_OPENCODE_MODEL,
                         "taskRoutingReady": availability != "eol",
+                        "agentEligible": agent_eligible,
+                        "agentRoutingExclusionReason": agent_exclusion,
+                        "agentTaskReady": agent_eligible and availability != "eol",
+                        "routingRecommended": health_recommended and agent_eligible and availability != "eol",
                         "activeTasks": int(usage.get("activeTasks", 0)),
                         "activeSessions": len(usage.get("sessionIds", set())),
                         "concurrencyPolicy": "parallel_by_default_project_writer_serialized",
@@ -128,10 +150,10 @@ async def _model_discovery_payload(
         success_rate = one_hour.get("successRate")
         p95 = one_hour.get("p95LatencyMs")
         resource_priority = health.get("resourcePriority")
-        recommended = item.get("routingRecommended") is not False and item.get("availability") != "eol"
-        # Current health is the hard gate. Resource class priority is applied only
-        # after an endpoint is actually eligible, so exhausted Zen never outranks
-        # a healthy NVIDIA endpoint merely because Zen is normally preferred.
+        recommended = item.get("routingRecommended") is True
+        # Current health/agent eligibility is the hard gate. Resource class priority
+        # is applied only after an endpoint is actually eligible, so exhausted Zen
+        # never outranks a healthy NVIDIA endpoint merely because Zen is preferred.
         return (
             0 if recommended else 1,
             int(resource_priority) if isinstance(resource_priority, int) else 90,
@@ -142,10 +164,7 @@ async def _model_discovery_payload(
         )
 
     open_code_candidates = [item for item in models if item.get("backend") == "opencode"]
-    suggestable = [
-        item for item in open_code_candidates
-        if item.get("routingRecommended") is not False and item.get("availability") != "eol"
-    ]
+    suggestable = [item for item in open_code_candidates if item.get("routingRecommended") is True]
     suggested = [item["id"] for item in sorted(suggestable, key=routing_key)[:8]]
     overall = "ok" if provider_status and all(
         item.get("status") == "available" for item in provider_status.values()
@@ -164,6 +183,7 @@ async def _model_discovery_payload(
             "policy": "zen_then_nvidia_then_metered",
             "automaticFallback": False,
             "globalModelLock": False,
+            "genericAgentFilter": "toolcall_and_text_io",
             "suggestedSelections": suggested,
         },
         "warnings": warnings,
