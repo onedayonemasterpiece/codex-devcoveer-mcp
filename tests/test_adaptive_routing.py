@@ -218,7 +218,10 @@ def test_installer_bootstrap_is_fail_closed_and_does_not_restart_services():
     assert 'EXPECTED_NEW_BACKEND_SHA256: str | None = "479f6707669011f99a008a9432de83b82d0bda70e6b0cb23473662cae6892f03"' in source
     assert 'EXPECTED_NEW_BRIDGE_SHA256: str | None = "8bfbbb7003e916bffd6cf4b37b1705295ecf8fd428c0ada3523ed2a19d17c12c"' in source
     assert "candidate hashes are not pinned" in source
-    assert "active DevCoveer tasks exist; inspect them before installation/restart" in source
+    assert "live or unverified DevCoveer tasks exist; inspect them before installation/restart" in source
+    assert "staleRegistryTasks" in source
+    assert "maintenanceTaskExcluded" in source
+    assert "session_status_unavailable" in source
     assert "systemctl" not in source
     assert "restartRequired" in source
 
