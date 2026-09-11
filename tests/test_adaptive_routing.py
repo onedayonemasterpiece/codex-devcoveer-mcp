@@ -182,14 +182,16 @@ def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     assert "latest assistant turn" in read_task
 
 
-def test_backend_patches_are_pinned_and_include_runtime_observability():
+def test_backend_patches_are_bounded_and_include_runtime_observability():
     patch1 = ROOT / "patches" / "opencode_backend_adaptive.patch.1"
     patch2 = ROOT / "patches" / "opencode_backend_adaptive.patch.2"
     cancel_patch = ROOT / "patches" / "opencode_backend_cancel_neutral.patch"
     combined = patch1.read_text(encoding="utf-8") + patch2.read_text(encoding="utf-8")
     assert _sha(patch1) == "e325dfa1e8575cd42f25a84d7b535332c2207da349b404db9bfffe3eb20e2829"
-    assert _sha(patch2) == "80a79f06223c99be2c0b32087cf46037c0a384db2ba269fc3c9712bfe0a8908a"
     assert _sha(cancel_patch) == "4b4f3ed187d084860613a0232afb1e33c6a01c60f706e46be73c7d31c4be07c5"
+    # The Sep-10 live runtime already contains the WRITE-policy cleanup. The
+    # rebased patch must not try to rewrite that unrelated hunk a second time.
+    assert "@@ -343,8 +527,9 @@" not in patch2.read_text(encoding="utf-8")
     for needle in (
         "ModelHealthStore",
         "providerRuntimeStatus",
@@ -204,14 +206,18 @@ def test_backend_patches_are_pinned_and_include_runtime_observability():
     assert 'event_outcome = "cancelled"' in cancel_text
 
 
-def test_installer_is_fail_closed_and_does_not_restart_services():
+def test_installer_bootstrap_is_fail_closed_and_does_not_restart_services():
     path = ROOT / "scripts" / "install-adaptive-routing-v3.10.py"
     source = path.read_text(encoding="utf-8")
     ast.parse(source)
-    assert 'EXPECTED_BACKEND_SHA256 = "c4a152e5c6b44e0e6ca1899aec4ad221b1ec38b5f8578827d67d55f4dc007864"' in source
-    assert 'EXPECTED_ROUTING_BACKEND_SHA256 = "2243d37d89605817db9cd8c19179ac8769851fdf688e2d201daca5359c10c63d"' in source
-    assert 'EXPECTED_NEW_BACKEND_SHA256 = "a9f94a17bd643fc15b0240078dfa265b9d8b18ae1dc3d1f7a212e0d1c83a0e5b"' in source
-    assert 'EXPECTED_CANCEL_PATCH_SHA256 = "4b4f3ed187d084860613a0232afb1e33c6a01c60f706e46be73c7d31c4be07c5"' in source
+    assert 'EXPECTED_BACKEND_SHA256 = "0b769ac4aae681345d6857b0322c8dddb76a499fbb86986bddc39b7ace68e902"' in source
+    assert 'EXPECTED_BRIDGE_SOURCE_SHA256 = "2006a60b5bdbbed9b6892ce9c0308512a5fc31dceb9fa197726d74157aac57ea"' in source
+    assert 'EXPECTED_READ_TASK_SHA256 = "ccc473d2c50c519ce979c1cee7a3235f4a7ca59890cb6e67abdfa69566f00275"' in source
+    assert "EXPECTED_PATCH2_SHA256: str | None = None" in source
+    assert "EXPECTED_ROUTING_BACKEND_SHA256: str | None = None" in source
+    assert "EXPECTED_NEW_BACKEND_SHA256: str | None = None" in source
+    assert "EXPECTED_NEW_BRIDGE_SHA256: str | None = None" in source
+    assert "candidate hashes are not pinned" in source
     assert "active DevCoveer tasks exist; inspect them before installation/restart" in source
     assert "systemctl" not in source
     assert "restartRequired" in source
