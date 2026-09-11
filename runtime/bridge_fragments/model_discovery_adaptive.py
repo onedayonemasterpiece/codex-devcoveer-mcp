@@ -83,10 +83,10 @@ async def _model_discovery_payload(
                         "provider_live_verified" if snapshot else
                         "connected_catalog_active"
                     )
-                    if current_runtime == "eol":
-                        availability = "eol"
-                    elif current_runtime == "temporarily_unavailable":
-                        availability = "temporarily_unavailable"
+                    # Historical receipts never overwrite fresh runtime state. In particular,
+                    # probe_due means the cooldown expired but recovery has not been proven yet.
+                    if current_runtime in {"eol", "temporarily_unavailable", "probe_due", "degraded"}:
+                        availability = current_runtime
                     elif current_runtime == "available_recent_success":
                         availability = "inference_verified_recent"
                     else:
