@@ -21,6 +21,12 @@ This repository owns the base DevCoveer execution bridge. Product-specific MCPs 
 
 GitHub Actions are intentionally not used. Verification and deployment are performed on DevCoveer using the checked-in tests and explicit rollback/readback procedures.
 
+## Operating contract
+
+The canonical development modes, model resource classes, live-stall diagnostics, short-term model-health memory and adaptive failover policy are defined in [`docs/operating-model-and-adaptive-routing.md`](docs/operating-model-and-adaptive-routing.md).
+
+This contract is deliberately stored in Git rather than relying on one ChatGPT conversation or personal memory.
+
 ## Recovery sequence
 
 1. Recover the exact currently installed `3.8.0` source and verification files from DevCoveer without changing the running installation.
