@@ -115,6 +115,12 @@ async def _model_discovery_payload(
                         "availability": availability,
                         "historicalVerification": historical,
                         "verifiedAt": verification.get("verifiedAt") if (verified or snapshot) and verification else None,
+                        "resourceClass": record.get("resourceClass") or runtime_health.get("resourceClass"),
+                        "resourcePriority": (
+                            record.get("resourcePriority")
+                            if isinstance(record.get("resourcePriority"), int)
+                            else runtime_health.get("resourcePriority")
+                        ),
                         "default": selection == DEFAULT_OPENCODE_MODEL,
                         "taskRoutingReady": availability != "eol",
                         "agentEligible": agent_eligible,
