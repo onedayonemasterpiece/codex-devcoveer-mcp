@@ -211,12 +211,12 @@ def test_installer_bootstrap_is_fail_closed_and_does_not_restart_services():
     source = path.read_text(encoding="utf-8")
     ast.parse(source)
     assert 'EXPECTED_BACKEND_SHA256 = "0b769ac4aae681345d6857b0322c8dddb76a499fbb86986bddc39b7ace68e902"' in source
-    assert 'EXPECTED_BRIDGE_SOURCE_SHA256 = "2006a60b5bdbbed9b6892ce9c0308512a5fc31dceb9fa197726d74157aac57ea"' in source
+    assert 'EXPECTED_BRIDGE_SOURCE_SHA256 = "2006a60b5bdb9b6892ce9c0308512a5fc31dceb9fa197726d74157aac57ea"' in source
     assert 'EXPECTED_READ_TASK_SHA256 = "ccc473d2c50c519ce979c1cee7a3235f4a7ca59890cb6e67abdfa69566f00275"' in source
-    assert "EXPECTED_PATCH2_SHA256: str | None = None" in source
-    assert "EXPECTED_ROUTING_BACKEND_SHA256: str | None = None" in source
-    assert "EXPECTED_NEW_BACKEND_SHA256: str | None = None" in source
-    assert "EXPECTED_NEW_BRIDGE_SHA256: str | None = None" in source
+    assert 'EXPECTED_PATCH2_SHA256: str | None = "69c782babbc234caa6aff16fcd8982e5e195c2b2d03a51c94d4fe7a717eb3918"' in source
+    assert 'EXPECTED_ROUTING_BACKEND_SHA256: str | None = "7313917544890dac03934fb0da53047012d300faafbfd5a8445b3122bfe112a2"' in source
+    assert 'EXPECTED_NEW_BACKEND_SHA256: str | None = "479f6707669011f99a008a9432de83b82d0bda70e6b0cb23473662cae6892f03"' in source
+    assert 'EXPECTED_NEW_BRIDGE_SHA256: str | None = "8bfbbb7003e916bffd6cf4b37b1705295ecf8fd428c0ada3523ed2a19d17c12c"' in source
     assert "candidate hashes are not pinned" in source
     assert "active DevCoveer tasks exist; inspect them before installation/restart" in source
     assert "systemctl" not in source
