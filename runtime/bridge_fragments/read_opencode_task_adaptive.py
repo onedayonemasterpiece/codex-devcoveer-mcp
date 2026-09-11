@@ -19,9 +19,11 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
             "unavailable", "rate_limit", "upstream", "invalid_response", "oversized_response",
         }
         if exc.category in transient_inspection_errors:
-            current_status = str(record.get("status") or "running")
+            durable_status = str(record.get("status") or "running")
+            current_status = "running" if durable_status in {"running", "cancelling"} else durable_status
             return {
                 "status": current_status,
+                "durableTaskStatus": durable_status,
                 "task": _registry_public(record),
                 "inspectionStatus": "degraded",
                 "inspectionErrorCategory": exc.category,
