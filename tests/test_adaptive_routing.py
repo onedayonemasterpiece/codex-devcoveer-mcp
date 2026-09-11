@@ -178,6 +178,8 @@ def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     assert "transient_inspection_errors" in read_task
     assert '"retry_read_before_cancel"' in read_task
     assert "The durable task state was not changed" in read_task
+    assert "for msg in reversed(messages):" in read_task
+    assert "latest assistant turn" in read_task
 
 
 def test_backend_patches_are_pinned_and_include_runtime_observability():
