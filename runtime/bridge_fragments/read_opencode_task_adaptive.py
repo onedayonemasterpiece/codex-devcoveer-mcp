@@ -1,0 +1,150 @@
+async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary") -> dict[str, Any]:
+    session_id = record.get("backendSessionId")
+    if not isinstance(session_id, str):
+        return {"status": "failed", "task": _registry_public(record),
+                "content": "OpenCode task has no valid session ID."}
+    try:
+        inspected = await OPENCODE_BACKEND.inspect(
+            session_id=session_id, directory=str(record["cwd"]),
+            include_messages=True,
+            provider_hint=record.get("provider") if isinstance(record.get("provider"), str) else None,
+            model_hint=record.get("model") if isinstance(record.get("model"), str) else None,
+            selection_hint=record.get("selection") if isinstance(record.get("selection"), str) else None,
+        )
+    except OpenCodeError as exc:
+        TASK_REGISTRY.update(record["taskId"], status="failed", errorCategory=exc.category,
+                             finishedAt=int(time.time() * 1000))
+        return {"status": "failed", "task": _registry_public(TASK_REGISTRY.get(record["taskId"]) or record),
+                "errorCategory": exc.category, "content": str(exc)}
+    status = inspected["status"]
+    inspected_error = inspected.get("error")
+    if (
+        status == "failed"
+        and isinstance(inspected_error, dict)
+        and inspected_error.get("name") == "MessageAbortedError"
+    ):
+        status = "interrupted"
+    if status == "idle" and inspected.get("finalResponse") is None:
+        if record.get("status") == "cancelling":
+            status = "interrupted"
+        elif int(time.time() * 1000) - int(record.get("createdAt") or 0) < 900_000:
+            status = "running"
+        else:
+            status = "failed"
+    changes: dict[str, Any] = {"status": status}
+    if status in {"completed", "failed", "interrupted"}:
+        changes["finishedAt"] = int(time.time() * 1000)
+    if status == "failed":
+        changes["errorCategory"] = inspected.get("providerErrorCategory") or "model_error"
+
+    acceptance_status = "not_applicable"
+    evidence_sha256 = None
+    terminal_turn_id = inspected.get("messageId")
+    is_terminal = status in {"completed", "failed", "interrupted"}
+
+    if is_terminal and record.get("backend") == "opencode":
+        existing_evidence = record.get("evidenceSha256")
+        existing_acceptance = record.get("acceptanceStatus")
+        if existing_acceptance in {"accepted", "rejected"} and existing_evidence:
+            if record.get("evidenceTurnId") == terminal_turn_id:
+                acceptance_status = existing_acceptance
+                evidence_sha256 = existing_evidence
+            else:
+                acceptance_status = "review_required"
+        else:
+            acceptance_status = "review_required"
+
+        if not EVIDENCE_STORE.has_evidence(record["taskId"], str(terminal_turn_id or "")):
+            messages = inspected.get("messages", [])
+            session_provider = str(record.get("provider", ""))
+            session_model = str(record.get("model", ""))
+            for msg in messages:
+                if isinstance(msg, dict):
+                    msg_info = msg.get("info", {})
+                    if isinstance(msg_info, dict) and msg_info.get("role") == "assistant":
+                        if msg_info.get("providerID"):
+                            session_provider = str(msg_info["providerID"])
+                        if msg_info.get("modelID"):
+                            session_model = str(msg_info["modelID"])
+                        break
+            evidence = EVIDENCE_STORE.create_snapshot(
+                record["taskId"],
+                str(terminal_turn_id or ""),
+                messages,
+                session_id=session_id,
+                provider=session_provider,
+                model=session_model,
+                access=str(record.get("access", "")),
+                created_at=record.get("createdAt"),
+                finished_at=changes.get("finishedAt"),
+            )
+            evidence_sha256 = evidence.get("safeSessionSha256")
+        elif evidence_sha256 is None:
+            evidence = EVIDENCE_STORE.load_evidence(record["taskId"], str(terminal_turn_id or ""))
+            if evidence:
+                evidence_sha256 = evidence.get("safeSessionSha256")
+
+        reg_changes: dict[str, Any] = {}
+        if acceptance_status != record.get("acceptanceStatus"):
+            reg_changes["acceptanceStatus"] = acceptance_status
+        if evidence_sha256 and evidence_sha256 != record.get("evidenceSha256"):
+            reg_changes["evidenceSha256"] = evidence_sha256
+        if terminal_turn_id and terminal_turn_id != record.get("evidenceTurnId"):
+            reg_changes["evidenceTurnId"] = terminal_turn_id
+        all_changes = {**changes, **reg_changes}
+        updated = TASK_REGISTRY.update(record["taskId"], **all_changes)
+    else:
+        updated = TASK_REGISTRY.update(record["taskId"], **changes)
+
+    payload = {
+        "status": status,
+        "task": _registry_public(updated),
+        "latestTurn": {
+            "messageId": inspected.get("messageId"),
+            "status": status,
+            "finalResponse": inspected.get("finalResponse"),
+            "error": inspected.get("error"),
+        },
+        "content": (
+            "OpenCode task is still running. Check it again with read_task."
+            if status == "running" else
+            inspected.get("finalResponse") or
+            ("OpenCode session is idle with no assistant result." if status == "idle" else "OpenCode task failed.")
+        ),
+    }
+
+    # Live, bounded operational evidence: enough to decide wait/switch/cancel
+    # without exposing the raw transcript and without declaring terminal acceptance.
+    for key in (
+        "sessionStatus", "providerState", "providerRuntimeStatus", "providerErrorCategory",
+        "retryable", "retryAfter", "resetAt", "next", "attempt", "action",
+        "observedAt", "lastMessageAt", "lastToolCallAt", "lastProgressAt",
+        "messageCount", "toolCallCount", "observedTokenTotal", "stallForMs",
+        "stallThresholdMs", "stallSuspected", "suggestedAction", "runtimeHealth",
+    ):
+        if key in inspected and inspected.get(key) is not None:
+            payload[key] = inspected.get(key)
+
+    if is_terminal and record.get("backend") == "opencode":
+        payload["executionStatus"] = status
+        payload["acceptanceStatus"] = acceptance_status
+        payload["sessionEvidenceAvailable"] = evidence_sha256 is not None
+        if evidence_sha256:
+            payload["evidenceSha256"] = evidence_sha256
+
+    if detail == "full":
+        if record.get("backend") == "opencode":
+            if status == "running":
+                payload["liveSessionSnapshot"] = inspected.get("safeLiveSnapshot", [])
+                payload["historyNote"] = (
+                    "This is a bounded redacted live snapshot for progress diagnosis. "
+                    "Terminal immutable evidence remains available only through get_task_evidence."
+                )
+            else:
+                payload["historyNote"] = (
+                    "Raw OpenCode transcripts are not exposed through MCP. "
+                    "Use get_task_evidence with scope=full_safe for terminal redacted session content."
+                )
+        else:
+            payload["history"] = inspected.get("messages", [])
+    return payload
