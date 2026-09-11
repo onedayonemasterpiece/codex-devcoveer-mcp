@@ -1,0 +1,270 @@
+# DevCoveer operating model and adaptive model routing
+
+Status: canonical product/operations contract.
+
+This document defines how ChatGPT, OpenCode/DevCoveer, DAEP, Kaggle and Codex are used together, and how OpenCode models are selected and switched at runtime. It is intentionally independent of any one ChatGPT conversation or model-memory state.
+
+## 1. Three development modes
+
+### Mode A — ChatGPT-led, GitHub-first, OpenCode-operated
+
+Default mode for interactive product development.
+
+- ChatGPT owns reasoning, source implementation, review and GitHub changes.
+- Source changes are authored by ChatGPT through GitHub, not delegated to Codex or OpenCode unless the owner explicitly changes the mode.
+- OpenCode on DevCoveer is the execution/operations plane: diagnostics, tests, environment checks, configuration, migrations, deployment, smoke and acceptance work.
+- DevCoveer MCP is the control/observability plane between ChatGPT and OpenCode.
+- Terminal OpenCode work is not trusted from self-report alone. ChatGPT reviews MCP state and session evidence and records the acceptance verdict.
+- Codex is not a hidden executor or fallback in this mode.
+
+Typical flow:
+
+`ChatGPT -> GitHub source change -> OpenCode/DevCoveer test/config/deploy -> MCP evidence -> ChatGPT acceptance`
+
+### Mode B — DAEP distributed OpenCode execution
+
+Use for a large task submitted as a prompt through OpenCode Desktop/DAEP when parallel decomposition is more valuable than ChatGPT authoring every source edit directly.
+
+- DAEP decomposes the task into logically independent units.
+- Most implementation runs in disposable/isolated Kaggle + OpenCode workers.
+- DevCoveer is primarily coordinator, integration point, merge/assembly point, final verification and deployment host; it should not become the compute bottleneck.
+- Worker outputs must be attributable and reintegrated through the project repository/evidence path.
+- DevCoveer performs final integration tests, environment-specific configuration, acceptance and production rollout.
+- Codex is not used unless the owner explicitly changes to Mode C.
+
+Typical flow:
+
+`OpenCode Desktop prompt -> DAEP decomposition -> Kaggle/OpenCode parallel workers -> Git/GitHub integration -> DevCoveer final test/deploy -> acceptance`
+
+### Mode C — Codex premium/complex execution
+
+Use explicitly for unusually complex tasks, tasks needing especially high quality/speed, or cases where the owner intentionally chooses Codex.
+
+- Codex use is explicit, never a silent fallback from OpenCode.
+- Model/reasoning selection remains visible in task metadata.
+- Existing evidence, review and production safety rules still apply where applicable.
+
+## 2. OpenCode model resource classes
+
+OpenCode routing must treat providers as different resource classes rather than as a static ordered list of model names.
+
+### Class R1 — renewable burst resource: OpenCode Zen
+
+Examples: free Zen models.
+
+Properties:
+- preferred first;
+- free;
+- quota can be exhausted temporarily;
+- quota normally recovers on a timescale materially shorter than a day;
+- quota exhaustion is temporary runtime state, not EOL and not a permanent blacklist.
+
+Default routing priority: first.
+
+### Class R2 — elastic/unpredictable resource: NVIDIA
+
+Properties:
+- normal working resource, not treated as scarce;
+- availability and latency can change quickly and non-uniformly between models;
+- one model may be fast while another is slow/429, and this can reverse later;
+- 429/rate-limit and latency observations should normally be model/endpoint scoped before being generalized to the whole provider;
+- hard 410/EOL is permanent for that exact endpoint until catalog evidence changes.
+
+Default routing priority: second.
+
+### Class R3 — metered/scarce resource
+
+Current example: GigaChat. Future examples may include quota-limited ChatGPT/Codex models such as GPT-5.6 Terra when an account limit applies.
+
+Properties:
+- expected to be comparatively reliable/fast when available;
+- consumes a limited token/quota budget;
+- do not spend on routine health probing while R1/R2 can do the work;
+- use as fallback or when quality/capability requirements justify it.
+
+Default OpenCode routing priority: third.
+
+Canonical default order for ordinary OpenCode execution:
+
+`Zen -> NVIDIA -> GigaChat/metered resource`
+
+The order is capability-aware: a provider/model that cannot satisfy required tools, context or modalities is skipped.
+
+## 3. Never cancel a merely "running" task blindly
+
+`running` alone is not evidence of progress and not evidence of a stall.
+
+Before interrupting an OpenCode turn, ChatGPT should inspect a safe live session/runtime snapshot and determine:
+
+- current provider/model;
+- provider runtime state (`busy`, `retry`, provider error, etc.);
+- timestamps of last assistant event, tool call, token/progress event and provider-state transition;
+- whether message/tool/token counters advanced since the previous observation;
+- retry attempt and provider message/category when available;
+- elapsed time since last real progress;
+- recent latency baseline for the selected model;
+- whether another active task is successfully using the same model/provider.
+
+Decision rules:
+
+1. If progress is still advancing, do not cancel merely because the wall-clock duration is long.
+2. If the provider explicitly reports quota exhaustion/429/temporary unavailability, do not keep polling indefinitely.
+3. If there has been no progress beyond a dynamic stall threshold derived from recent model latency, inspect the safe live session tail before intervention.
+4. Prefer preserving the same DevCoveer task and OpenCode session.
+5. When an active turn must be interrupted, use controlled `cancel_task` followed by `continue_task` on the same task/session with the next selected model/provider.
+6. Create a replacement task only when same-session continuation is technically impossible; preserve an explicit original/replacement link.
+
+Final acceptance evidence remains terminal and immutable. Live diagnostic snapshots are operational observations and must not be confused with terminal acceptance evidence.
+
+## 4. Required live task observability
+
+`read_task` is the primary status interface. It should expose enough safe information to avoid blind cancellation without creating another generic tool if possible.
+
+For OpenCode tasks, output semantics should include fields equivalent to:
+
+```text
+executionStatus
+acceptanceStatus
+provider
+model
+sessionId
+turnId
+providerRuntimeStatus
+providerErrorCategory
+retryable
+retryAfter
+resetAt
+observedAt
+lastProgressAt
+lastMessageAt
+lastToolCallAt
+progressSequence
+messageCount
+toolCallCount
+tokenCount
+stallForMs
+suggestedAction
+```
+
+Only provider-supplied `retryAfter/resetAt` values may be reported as such; never invent them.
+
+For `read_task(detail=full)` on a running OpenCode task, the desired behavior is a safe/redacted live session snapshot or tail with event timestamps. This is for diagnosis before cancellation. Raw unredacted sessions and secrets remain unavailable.
+
+Terminal `get_task_evidence` / `record_task_review` semantics remain separate and unchanged.
+
+## 5. Short-term model behavior memory
+
+DevCoveer should keep a small durable, non-secret runtime telemetry cache. It is operational state, not Git source and not ChatGPT memory.
+
+Track per provider+model at minimum:
+
+```text
+lastAttemptAt
+lastSuccessAt
+lastFailureAt
+lastLatencyMs
+activeTasks
+activeSessions
+lastProviderErrorCategory
+lastCapacityError
+cooldownUntil
+hardUnavailableReason
+```
+
+Maintain rolling aggregates for approximately 1h, 3h and 5h:
+
+```text
+attempts
+successes
+successRate
+p50LatencyMs
+p95LatencyMs
+rateLimitCount
+quotaExhaustedCount
+timeoutCount
+hardFailureCount
+```
+
+Observations age out automatically. Recent behavior matters more than historical verification receipts.
+
+Do not implement a global model mutex. Default concurrency policy is optimistic/parallel. Restrict only when a provider-declared or empirically demonstrated capacity constraint exists.
+
+## 6. Adaptive selection within NVIDIA
+
+Do not designate one NVIDIA model as permanently "best".
+
+First filter by task capabilities:
+- coding/agent/tool-call support;
+- reasoning requirement;
+- context/output size;
+- attachments/modalities when required;
+- current catalog/EOL state.
+
+Then rank eligible NVIDIA models using recent runtime evidence. Prefer models that are:
+- recently successful;
+- currently low-latency relative to peers;
+- not in a 429/retry cooldown;
+- not showing repeated timeouts;
+- not overloaded by current active work when equivalent alternatives are healthier.
+
+A recent fast streak is useful but decays quickly. A new sequence of 429s should demote the model immediately for a bounded cooldown without blacklisting the whole NVIDIA provider.
+
+When no useful recent telemetry exists, perform the minimum bounded probe necessary for the real task rather than probing the entire catalog.
+
+## 7. Circuit-breaker semantics
+
+### Zen quota
+
+- classify exact quota/free-usage exhaustion as temporary;
+- if evidence indicates a provider-wide shared quota, open a provider-level circuit breaker;
+- otherwise start model-scoped;
+- periodically permit a small probe after cooldown so recovered free capacity re-enters the pool automatically;
+- historical `inference_verified` never overrides a fresh quota failure.
+
+### NVIDIA
+
+- 429/rate limit: temporary model/endpoint cooldown unless broader evidence exists;
+- timeout/high latency: temporary score penalty, not EOL;
+- 410/EOL: hard endpoint exclusion until authoritative catalog state changes;
+- a healthy sibling model keeps NVIDIA available.
+
+### Metered/scarce providers
+
+- avoid routine probing;
+- use when higher-priority resource classes are unavailable/unsuitable or when capability/quality requirements justify the spend;
+- record real runtime health so a known-bad metered provider is not selected merely because it is expensive.
+
+## 8. Failover procedure for one OpenCode task
+
+1. Start with the highest-ranked eligible Zen model.
+2. Observe real progress, not just task `running` state.
+3. On suspected stall, inspect live safe session/runtime state.
+4. On confirmed Zen quota or stall with no progress, preserve the task/session and switch to the best currently ranked eligible NVIDIA model.
+5. If that NVIDIA model 429s/stalls, update short-term telemetry and try the next ranked NVIDIA model rather than abandoning the provider immediately.
+6. After bounded NVIDIA attempts, switch the same task/session to GigaChat or another eligible metered resource.
+7. No silent fallback: provider/model switches must be visible in task state/evidence.
+8. On terminal OpenCode turns, review exact terminal evidence and record accepted/rejected.
+
+## 9. Separation of static catalog, historical verification and live health
+
+These are different facts and must remain separate:
+
+```text
+catalog_listed
+provider_connected
+provider_available
+historically_verified
+currently_healthy
+temporarily_unavailable
+hard_unavailable/eol
+```
+
+A model can be catalog-listed and historically verified while currently quota-exhausted, rate-limited, slow or EOL. Routing must use current runtime health with timestamps rather than treating an old verification receipt as current availability.
+
+## 10. Persistence and source of truth
+
+- This repository is the durable source of truth for this operating contract.
+- Short-term model runtime observations belong in sanitized DevCoveer runtime state, not Git.
+- ChatGPT personal memory is optional convenience only and must not be required for correct operation.
+- Any future ChatGPT session should be able to recover this policy from the repository/MCP without the owner repeating it.
+- Product-specific source repositories remain separate; this document governs execution/routing behavior, not their implementation content.
