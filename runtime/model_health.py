@@ -192,8 +192,9 @@ class ModelHealthStore:
     def _summarize(selection: str, events: list[dict[str, Any]], now: int) -> dict[str, Any]:
         provider = selection.split("/", 1)[0] if "/" in selection else ""
         windows: dict[str, Any] = {}
+        health_events = [e for e in events if e.get("outcome") != "cancelled"]
         for label, span in WINDOWS_MS.items():
-            subset = [e for e in events if e["observedAt"] >= now - span]
+            subset = [e for e in health_events if e["observedAt"] >= now - span]
             latencies = [e["latencyMs"] for e in subset if isinstance(e.get("latencyMs"), int)]
             successes = sum(e.get("outcome") == "success" for e in subset)
             attempts = len(subset)
@@ -209,9 +210,9 @@ class ModelHealthStore:
                 "hardFailureCount": sum(e.get("category") == "eol" for e in subset),
             }
 
-        latest = max(events, key=lambda e: e["observedAt"]) if events else None
-        last_success = max((e["observedAt"] for e in events if e.get("outcome") == "success"), default=None)
-        last_failure = max((e["observedAt"] for e in events if e.get("outcome") != "success"), default=None)
+        latest = max(health_events, key=lambda e: e["observedAt"]) if health_events else None
+        last_success = max((e["observedAt"] for e in health_events if e.get("outcome") == "success"), default=None)
+        last_failure = max((e["observedAt"] for e in health_events if e.get("outcome") != "success"), default=None)
         runtime_status = "unknown"
         cooldown_until = None
         retryable = None
@@ -262,7 +263,10 @@ class ModelHealthStore:
         now = now_ms if isinstance(now_ms, int) else _now_ms()
         with self._locked():
             events = self._prune(self._read_locked(), now)
-        subset = [e for e in events if e.get("provider") == provider]
+        subset = [
+            e for e in events
+            if e.get("provider") == provider and e.get("outcome") != "cancelled"
+        ]
         latest = max(subset, key=lambda e: e["observedAt"]) if subset else None
         status = "unknown"
         category = None
@@ -275,6 +279,7 @@ class ModelHealthStore:
                 cooldown_until = int(latest["observedAt"]) + _POLICY_COOLDOWN_MS["quota_exhausted"]
                 status = "temporarily_unavailable" if cooldown_until > now else "probe_due"
             elif category == "eol":
+                # EOL is endpoint-specific and never makes the whole provider unavailable.
                 status = "degraded_model_only"
             else:
                 status = "degraded_observation"
