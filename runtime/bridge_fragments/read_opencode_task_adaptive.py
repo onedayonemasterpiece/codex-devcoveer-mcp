@@ -12,6 +12,25 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
             selection_hint=record.get("selection") if isinstance(record.get("selection"), str) else None,
         )
     except OpenCodeError as exc:
+        # An inability to inspect the localhost OpenCode runtime is not proof that
+        # the underlying task itself failed. Preserve the last durable task state
+        # for transport/upstream/readback failures and let a later read reconcile it.
+        transient_inspection_errors = {
+            "unavailable", "rate_limit", "upstream", "invalid_response", "oversized_response",
+        }
+        if exc.category in transient_inspection_errors:
+            current_status = str(record.get("status") or "running")
+            return {
+                "status": current_status,
+                "task": _registry_public(record),
+                "inspectionStatus": "degraded",
+                "inspectionErrorCategory": exc.category,
+                "suggestedAction": "retry_read_before_cancel",
+                "content": (
+                    "OpenCode session inspection is temporarily unavailable. "
+                    "The durable task state was not changed; retry read_task before cancelling or replacing it."
+                ),
+            }
         TASK_REGISTRY.update(record["taskId"], status="failed", errorCategory=exc.category,
                              finishedAt=int(time.time() * 1000))
         return {"status": "failed", "task": _registry_public(TASK_REGISTRY.get(record["taskId"]) or record),
