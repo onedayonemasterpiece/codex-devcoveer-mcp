@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Fail-closed installer for DevCoveer adaptive OpenCode routing v3.10.
 
-This script intentionally targets one known v3.9 production lineage. It never reads
-provider credentials or project .env files. Default mode is verification-only; pass
---apply to install after all preconditions succeed. Service restart is deliberately
-left to the external deployment/acceptance step.
+The installer targets the exact production 3.9 runtime observed on 2026-09-11.
+Default mode is read-only verification. During candidate re-baselining, --apply is
+refused until every generated candidate hash is explicitly pinned in this file.
+The installer never restarts services and never reads provider credentials or
+project .env files.
 """
 from __future__ import annotations
 
@@ -23,12 +24,22 @@ INSTALL_DIR = Path("/home/dev/.local/libexec/openai-codex-mcp")
 BRIDGE = INSTALL_DIR / "codex-chatgpt-bridge.py"
 BACKEND = INSTALL_DIR / "opencode_backend.py"
 HEALTH = INSTALL_DIR / "model_health.py"
-EXPECTED_BACKEND_SHA256 = "c4a152e5c6b44e0e6ca1899aec4ad221b1ec38b5f8578827d67d55f4dc007864"
-EXPECTED_ROUTING_BACKEND_SHA256 = "2243d37d89605817db9cd8c19179ac8769851fdf688e2d201daca5359c10c63d"
-EXPECTED_NEW_BACKEND_SHA256 = "a9f94a17bd643fc15b0240078dfa265b9d8b18ae1dc3d1f7a212e0d1c83a0e5b"
-EXPECTED_CANCEL_PATCH_SHA256 = "4b4f3ed187d084860613a0232afb1e33c6a01c60f706e46be73c7d31c4be07c5"
+
+# Exact live lineage reconciled from the host on 2026-09-11.
+EXPECTED_BACKEND_SHA256 = "0b769ac4aae681345d6857b0322c8dddb76a499fbb86986bddc39b7ace68e902"
+EXPECTED_BRIDGE_SOURCE_SHA256 = "2006a60b5bdbbed9b6892ce9c0308512a5fc31dceb9fa197726d74157aac57ea"
 EXPECTED_MODEL_DISCOVERY_SHA256 = "14903373ede193e18ca9fbcef92bb77ab23c5b99060d81a8e1ebd6551bcbee1a"
-EXPECTED_READ_TASK_SHA256 = "26e8ce7d2232e3a4298d57397f162124268f5d9afbe4e24f655bf398c1a2395c"
+EXPECTED_READ_TASK_SHA256 = "ccc473d2c50c519ce979c1cee7a3235f4a7ca59890cb6e67abdfa69566f00275"
+EXPECTED_PATCH1_SHA256 = "e325dfa1e8575cd42f25a84d7b535332c2207da349b404db9bfffe3eb20e2829"
+EXPECTED_CANCEL_PATCH_SHA256 = "4b4f3ed187d084860613a0232afb1e33c6a01c60f706e46be73c7d31c4be07c5"
+
+# Bootstrap gate: dry-run computes these from the exact live lineage. They MUST
+# be replaced by exact SHA-256 values and re-verified before --apply is allowed.
+EXPECTED_PATCH2_SHA256: str | None = None
+EXPECTED_ROUTING_BACKEND_SHA256: str | None = None
+EXPECTED_NEW_BACKEND_SHA256: str | None = None
+EXPECTED_NEW_BRIDGE_SHA256: str | None = None
+
 OLD_VERSION = 'BRIDGE_VERSION = "3.9.0"'
 NEW_VERSION = 'BRIDGE_VERSION = "3.10.0"'
 
@@ -149,7 +160,14 @@ def _apply_patch(patch_binary: str, tmpdir: Path, patch_text: str, label: str) -
         timeout=30,
     )
     if completed.returncode != 0:
-        raise SystemExit(f"approved {label} did not apply cleanly")
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()[:500]
+        suffix = f": {detail}" if detail else ""
+        raise SystemExit(f"approved {label} did not apply cleanly{suffix}")
+
+
+def _check_optional_pin(actual: str, expected: str | None, label: str) -> None:
+    if expected is not None and actual != expected:
+        raise SystemExit(f"{label} does not match approved source")
 
 
 def main() -> int:
@@ -161,18 +179,31 @@ def main() -> int:
     new_health = read_text(repo_root / "runtime" / "model_health.py")
     new_discovery = read_text(repo_root / "runtime" / "bridge_fragments" / "model_discovery_adaptive.py")
     new_read_task = read_text(repo_root / "runtime" / "bridge_fragments" / "read_opencode_task_adaptive.py")
-    backend_patch = (
-        read_text(repo_root / "patches" / "opencode_backend_adaptive.patch.1")
-        + read_text(repo_root / "patches" / "opencode_backend_adaptive.patch.2")
-    )
-    cancel_patch_path = repo_root / "patches" / "opencode_backend_cancel_neutral.patch"
-    cancel_patch = read_text(cancel_patch_path)
-    if sha256_bytes(cancel_patch.encode("utf-8")) != EXPECTED_CANCEL_PATCH_SHA256:
+    patch1 = read_text(repo_root / "patches" / "opencode_backend_adaptive.patch.1")
+    patch2 = read_text(repo_root / "patches" / "opencode_backend_adaptive.patch.2")
+    cancel_patch = read_text(repo_root / "patches" / "opencode_backend_cancel_neutral.patch")
+
+    patch1_sha = sha256_bytes(patch1.encode("utf-8"))
+    patch2_sha = sha256_bytes(patch2.encode("utf-8"))
+    cancel_patch_sha = sha256_bytes(cancel_patch.encode("utf-8"))
+    if patch1_sha != EXPECTED_PATCH1_SHA256:
+        raise SystemExit("adaptive backend patch part 1 hash does not match approved source")
+    _check_optional_pin(patch2_sha, EXPECTED_PATCH2_SHA256, "adaptive backend patch part 2 hash")
+    if cancel_patch_sha != EXPECTED_CANCEL_PATCH_SHA256:
         raise SystemExit("cancel-neutral backend patch hash does not match approved source")
 
     current_backend = BACKEND.read_bytes()
-    if sha256_bytes(current_backend) != EXPECTED_BACKEND_SHA256:
-        raise SystemExit("installed opencode_backend.py does not match approved v3.9 lineage")
+    backend_old_sha = sha256_bytes(current_backend)
+    if backend_old_sha != EXPECTED_BACKEND_SHA256:
+        raise SystemExit("installed opencode_backend.py does not match approved live lineage")
+
+    bridge_source = read_text(BRIDGE)
+    bridge_old_sha = sha256_bytes(bridge_source.encode("utf-8"))
+    if bridge_old_sha != EXPECTED_BRIDGE_SOURCE_SHA256:
+        raise SystemExit("installed bridge does not match approved live source")
+    if bridge_source.count(OLD_VERSION) != 1:
+        raise SystemExit("installed bridge is not the approved v3.9.0 target")
+
     patch_binary = shutil.which("patch")
     if not patch_binary:
         raise SystemExit("system patch utility is unavailable")
@@ -180,26 +211,26 @@ def main() -> int:
         tmpdir = Path(tmp)
         candidate = tmpdir / "opencode_backend.py"
         candidate.write_bytes(current_backend)
-        _apply_patch(patch_binary, tmpdir, backend_patch, "adaptive routing backend patch")
+        _apply_patch(patch_binary, tmpdir, patch1 + patch2, "adaptive routing backend patch")
         routing_backend = candidate.read_bytes()
-        if sha256_bytes(routing_backend) != EXPECTED_ROUTING_BACKEND_SHA256:
-            raise SystemExit("intermediate adaptive routing backend hash does not match approved source")
+        routing_sha = sha256_bytes(routing_backend)
+        _check_optional_pin(routing_sha, EXPECTED_ROUTING_BACKEND_SHA256,
+                            "intermediate adaptive routing backend hash")
         _apply_patch(patch_binary, tmpdir, cancel_patch, "cancel-neutral backend patch")
         new_backend = candidate.read_text(encoding="utf-8")
-    if sha256_bytes(new_backend.encode("utf-8")) != EXPECTED_NEW_BACKEND_SHA256:
-        raise SystemExit("patched OpenCode backend does not match approved v3.10 candidate hash")
-    bridge = read_text(BRIDGE)
-    if bridge.count(OLD_VERSION) != 1:
-        raise SystemExit("installed bridge is not the approved v3.9.0 target")
+    backend_new_sha = sha256_bytes(new_backend.encode("utf-8"))
+    _check_optional_pin(backend_new_sha, EXPECTED_NEW_BACKEND_SHA256,
+                        "patched OpenCode backend hash")
 
+    bridge = bridge_source
     d_start, d_end, old_discovery = function_block(bridge, "_model_discovery_payload")
     if sha256_bytes(old_discovery.encode()) != EXPECTED_MODEL_DISCOVERY_SHA256:
-        raise SystemExit("model discovery function does not match approved v3.9 lineage")
+        raise SystemExit("model discovery function does not match approved live lineage")
     bridge = bridge[:d_start] + new_discovery.rstrip() + bridge[d_end:]
 
     r_start, r_end, old_read = function_block(bridge, "_read_opencode_task")
     if sha256_bytes(old_read.encode()) != EXPECTED_READ_TASK_SHA256:
-        raise SystemExit("read_task function does not match approved v3.9 acceptance-gate lineage")
+        raise SystemExit("read_task function does not match approved live acceptance-gate lineage")
     bridge = bridge[:r_start] + new_read_task.rstrip() + bridge[r_end:]
 
     for old, new, label in (
@@ -208,9 +239,12 @@ def main() -> int:
         (CURRENT_LIST_TOOL_TEXT, ADAPTIVE_LIST_TOOL_TEXT, "list_models tool description"),
     ):
         if bridge.count(old) != 1:
-            raise SystemExit(f"{label} does not match approved v3.9 schema")
+            raise SystemExit(f"{label} does not match approved live schema")
         bridge = bridge.replace(old, new, 1)
     bridge = bridge.replace(OLD_VERSION, NEW_VERSION, 1)
+    bridge_new_sha = sha256_bytes(bridge.encode("utf-8"))
+    _check_optional_pin(bridge_new_sha, EXPECTED_NEW_BRIDGE_SHA256,
+                        "patched bridge hash")
 
     with tempfile.TemporaryDirectory(prefix="devcoveer-adaptive-") as tmp:
         tmpdir = Path(tmp)
@@ -221,19 +255,33 @@ def main() -> int:
             py_compile.compile(str(path), doraise=True)
 
     active = active_tasks()
+    candidate_pinned = all(value is not None for value in (
+        EXPECTED_PATCH2_SHA256,
+        EXPECTED_ROUTING_BACKEND_SHA256,
+        EXPECTED_NEW_BACKEND_SHA256,
+        EXPECTED_NEW_BRIDGE_SHA256,
+    ))
     report = {
         "targetBridgeVersion": "3.10.0",
-        "backendOldSha256": EXPECTED_BACKEND_SHA256,
-        "backendRoutingSha256": EXPECTED_ROUTING_BACKEND_SHA256,
-        "backendNewSha256": sha256_bytes(new_backend.encode()),
-        "backendExpectedNewSha256": EXPECTED_NEW_BACKEND_SHA256,
-        "bridgeNewSha256": sha256_bytes(bridge.encode()),
+        "backendOldSha256": backend_old_sha,
+        "bridgeOldSha256": bridge_old_sha,
+        "adaptivePatch1Sha256": patch1_sha,
+        "adaptivePatch2Sha256": patch2_sha,
+        "cancelPatchSha256": cancel_patch_sha,
+        "backendRoutingSha256": routing_sha,
+        "backendNewSha256": backend_new_sha,
+        "bridgeNewSha256": bridge_new_sha,
+        "candidatePinned": candidate_pinned,
         "activeTasks": active,
         "applyRequested": args.apply,
     }
     print(json.dumps(report, sort_keys=True))
     if not args.apply:
         return 0
+    if not candidate_pinned:
+        raise SystemExit(
+            "candidate hashes are not pinned; run dry-run, pin exact hashes in source, and rerun before --apply"
+        )
     if active:
         raise SystemExit("active DevCoveer tasks exist; inspect them before installation/restart")
 
@@ -253,8 +301,11 @@ def main() -> int:
         shutil.copy2(backups[0], BACKEND)
         shutil.copy2(backups[1], BRIDGE)
         raise
-    print(json.dumps({"status": "installed", "restartRequired": True,
-                      "backups": [p.name for p in backups]}, sort_keys=True))
+    print(json.dumps({
+        "status": "installed",
+        "restartRequired": True,
+        "backups": [p.name for p in backups],
+    }, sort_keys=True))
     return 0
 
 
