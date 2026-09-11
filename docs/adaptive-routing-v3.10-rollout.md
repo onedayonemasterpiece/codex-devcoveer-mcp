@@ -2,158 +2,151 @@
 
 Status: implementation candidate; production acceptance required before merge.
 
-This rollout implements `docs/operating-model-and-adaptive-routing.md` without introducing a new MCP method or silent provider fallback.
+The goal is a working production bridge quickly and safely, not an exhaustive model benchmark. This rollout implements `docs/operating-model-and-adaptive-routing.md` without adding an MCP method or silent provider fallback.
+
+## Live lineage reconciled on 2026-09-11
+
+The original candidate was based on an older v3.9 source checkpoint. Real production readback established the current live lineage:
+
+- bridge version: `3.9.0`;
+- installed `opencode_backend.py`: `0b769ac4aae681345d6857b0322c8dddb76a499fbb86986bddc39b7ace68e902`;
+- installed `codex-chatgpt-bridge.py`: `2006a60b5bdbbed9b6892ce9c0308512a5fc31dceb9fa197726d74157aac57ea`;
+- installed `_model_discovery_payload` block: `14903373ede193e18ca9fbcef92bb77ab23c5b99060d81a8e1ebd6551bcbee1a`;
+- installed `_read_opencode_task` block: `ccc473d2c50c519ce979c1cee7a3235f4a7ca59890cb6e67abdfa69566f00275`.
+
+The Sep-10 backend drift is legitimate: WRITE shell permission was enabled and the OpenCode `task` tool was disabled. The Sep-11 bridge drift is the Acceptance Gate hardening. Both must be preserved.
+
+The obsolete policy-text hunk was removed from `opencode_backend_adaptive.patch.2`. The installer now supports a fail-closed bootstrap dry-run: it may calculate the new candidate hashes, but `--apply` is impossible until those exact hashes are committed back into the source and re-verified.
 
 ## Scope
 
-Candidate changes:
+v3.10 must provide:
 
-- OpenCode `retry` / provider failures remain visible instead of collapsing into opaque `running`;
-- safe progress timing and bounded redacted live session snapshot are returned before a task is interrupted;
-- model runtime observations are retained for rolling 1h / 3h / 5h windows;
-- historical model verification is separate from current runtime health;
-- resource order is Zen -> NVIDIA -> metered reserve (currently GigaChat), capability-aware;
-- NVIDIA health is primarily model/endpoint scoped; one 429 does not blacklist the provider;
-- Zen free-quota exhaustion is provider-wide until recovery/probe evidence appears;
-- no global model mutex and no hidden automatic fallback;
-- final Acceptance Gate remains terminal, digest-bound and unchanged.
+- visible OpenCode retry/provider failures instead of opaque `running`;
+- progress/stall timestamps and bounded redacted live snapshots before cancellation;
+- 1h / 3h / 5h model-health memory;
+- historical verification separated from current runtime health;
+- Zen -> NVIDIA -> metered reserve routing;
+- model-local NVIDIA 429/timeout/EOL handling;
+- agent-capability filtering for generic coding tasks;
+- no global model mutex and no hidden fallback;
+- unchanged terminal Acceptance Gate semantics.
 
-## Source verification
+## Phase 1 — source verification
 
-From the repository checkout:
+From a fresh checkout of PR #2:
 
 ```bash
-python -m py_compile runtime/model_health.py \
+python3 -m py_compile runtime/model_health.py \
   runtime/bridge_fragments/model_discovery_adaptive.py \
   runtime/bridge_fragments/read_opencode_task_adaptive.py \
   scripts/install-adaptive-routing-v3.10.py
-pytest -q tests/test_adaptive_routing.py
+python3 -m pytest -q tests/test_adaptive_routing.py
 ```
 
-The installer also validates the exact known production lineage before writing anything.
+Do not touch the dirty `/home/dev/projects/my-data-hub` checkout.
 
-## Phase 1 — read-only preflight
+## Phase 2 — bootstrap dry-run and pin
 
-Do not touch the dirty `my-data-hub` checkout.
-
-From a clean checkout of this repository on DevCoveer:
+Run with **no** `--apply`:
 
 ```bash
-python scripts/install-adaptive-routing-v3.10.py
+python3 scripts/install-adaptive-routing-v3.10.py
 ```
 
 Required result:
 
-- installed `opencode_backend.py` SHA-256 exactly matches the approved v3.9 hash;
-- target bridge is exactly v3.9.0 and the two replaced functions match their approved hashes;
-- patched candidate compiles;
-- active DevCoveer task IDs are reported;
-- no files or services are changed.
+- exact live backend/bridge lineage matches the hashes above;
+- rebased adaptive patches apply cleanly to the live backend copy;
+- cancel-neutral patch applies cleanly;
+- backend, bridge and `model_health.py` candidates compile;
+- JSON reports exact `adaptivePatch2Sha256`, `backendRoutingSha256`, `backendNewSha256`, and `bridgeNewSha256`;
+- `candidatePinned=false` is expected during this bootstrap pass;
+- active task IDs are reported;
+- no installed file or service changes.
 
-If any hash or source anchor differs, stop. Re-read the actual installed source and reconcile instead of forcing the patch.
+Commit those four exact SHA values into the installer/tests, then rerun the same dry-run. The second dry-run must return `candidatePinned=true` and the same candidate hashes byte-for-byte.
 
-## Phase 2 — active-task gate
+Never use `--apply` while candidate hashes are unpinned.
 
-Before installation/restart, inspect every task reported as active through the live DevCoveer MCP.
+## Phase 3 — active-task gate
 
-Do not cancel a task merely because it is old or `running`. Use current `read_task` plus available OpenCode session state/export to determine whether progress is still occurring.
+Before installation/restart, fresh-read all tasks registered `running` or `cancelling` through the DevCoveer MCP.
 
-If meaningful work is active, postpone restart. If a task is provider-retrying/quota-exhausted, preserve its session and handle it explicitly; do not destroy it as maintenance cleanup.
+- Do not cancel merely because elapsed time is large.
+- Reconcile stale registry entries through `read_task`.
+- Preserve unrelated work from other chats.
+- Disposable rollout probes may be controlled-cancelled after repeated no-progress reads when their result is no longer needed.
+- Installer has no active-task bypass.
 
-## Phase 3 — install files, still no service restart
+If meaningful unrelated work is active, wait for a safe maintenance window rather than competing with it.
 
-Only after the active-task gate is clear:
+## Phase 4 — install and host regression
 
-```bash
-python scripts/install-adaptive-routing-v3.10.py --apply
-```
-
-The installer:
-
-- creates timestamped backups of bridge/backend;
-- writes `model_health.py`, patched backend and bridge atomically;
-- compiles all installed Python files;
-- does **not** restart services.
-
-If installation fails after writes begin, backend/bridge are restored from the timestamped backups.
-
-## Phase 4 — host verification then controlled restart
-
-Before restart:
+Only with `candidatePinned=true` and a clear active-task gate:
 
 ```bash
-python -m py_compile /home/dev/.local/libexec/openai-codex-mcp/*.py
+python3 scripts/install-adaptive-routing-v3.10.py --apply
 ```
 
-Run the existing bridge/OpenCode/Acceptance Gate verification suite plus the v3.10 adaptive-routing tests from this repository.
+The installer must create timestamped backups, atomically install the three Python files, compile them, and **not** restart anything.
 
-Then re-check that no DevCoveer task became active during verification. Restart only the existing DevCoveer MCP transport/runtime; do not start a competing server.
+Then run:
 
-After restart, verify the existing health/readiness endpoints and perform fresh MCP discovery from an independent client.
+```bash
+python3 -m py_compile /home/dev/.local/libexec/openai-codex-mcp/*.py
+```
 
-## Phase 5 — live product acceptance
+Run the existing relevant bridge/OpenCode/Acceptance Gate tests plus `tests/test_adaptive_routing.py`. Re-check the active-task gate immediately before restart.
 
-### A. Acceptance Gate regression
+## Phase 5 — controlled restart and fresh readback
 
-Confirm the existing methods remain available and functional:
+Restart/reload only the existing DevCoveer MCP instance. Do not start a second competing service.
 
-- `get_task_evidence`
-- `record_task_review`
+Fresh discovery/readback must prove:
 
-Use a tiny terminal OpenCode task and prove `review_required -> accepted/rejected` still binds to the exact evidence digest.
+- bridge reports `3.10.0`;
+- existing methods remain present;
+- `get_task_evidence` and `record_task_review` remain present and functional;
+- `read_task`, `list_models`, and `cancel_task` expose the v3.10 descriptions/output semantics;
+- input schemas remain compatible.
 
-### B. Zen quota / stall diagnostics
+Only after this readback ask the owner once to refresh ChatGPT plugin methods so subsequent chats receive the new descriptions.
 
-Use a tiny read-only Zen task while the free quota is exhausted or retrying when naturally available.
+## Phase 6 — minimum live acceptance required before merge
 
-Before any cancellation, `read_task(detail=full)` must expose safe equivalents of:
+### Acceptance Gate
 
-- provider/session state (`retry` vs generic running);
-- `providerErrorCategory=quota_exhausted` when actually observed;
-- retryability and provider-supplied timing only if present;
-- `lastProgressAt`, `lastToolCallAt`, `stallForMs`;
-- bounded redacted live snapshot;
-- a switching suggestion without automatically switching.
+Run one tiny terminal OpenCode task. Perform `read_task` -> `get_task_evidence(scope=summary)` -> external ChatGPT review -> `record_task_review`. Do not accept model self-report without evidence.
 
-No secret/provider token may appear.
+### Zen visibility
 
-### C. Same-task failover
+Use an existing quota/retry fixture or a microscopic read-only Zen task. `read_task(detail=full)` must expose safe runtime/progress data, including quota category when actually observed, retryability, `lastProgressAt`, stall fields, and a bounded redacted live snapshot. Do not cancel before inspection.
 
-Where OpenCode supports it, preserve the same DevCoveer task/OpenCode session:
+### NVIDIA adaptive routing
 
-1. inspect the stalled/retrying Zen turn;
-2. controlled interrupt only when justified;
-3. `continue_task` with the best currently healthy eligible NVIDIA model;
-4. verify the provider/model switch is visible in state/evidence.
+Use bounded real probes only. Production acceptance needs:
 
-Do not create a replacement task unless same-session continuation is technically impossible.
+- a fresh 410/EOL to override stale historical verification;
+- one healthy agent-capable NVIDIA model to complete a microscopic task;
+- failure of one NVIDIA endpoint not to blacklist siblings;
+- same DevCoveer task/session continuation to another model when switching is needed;
+- model switch attribution visible correctly in terminal evidence;
+- `list_models(provider="nvidia")` to expose current health, active usage, agent eligibility, and health-first suggestions;
+- `globalModelLock=false`.
 
-### D. NVIDIA dynamic health
+Two stale historical NVIDIA models have already produced real HTTP 410 during pre-rollout diagnostics (`nvidia/nvidia/nemotron-3-nano-30b-a3b` and `nvidia/deepseek-ai/deepseek-v4-flash`). After v3.10 deployment, verify those observations correctly demote/exclude those exact endpoints rather than the provider.
 
-Use bounded real tasks, not a full-catalog benchmark.
+### Metered reserve
 
-Verify at least two eligible NVIDIA coding/agent models. A fresh 429/timeout must demote only that model/endpoint for a bounded cooldown; a healthy sibling remains routable. A fresh 410/EOL hard-excludes the exact endpoint and overrides historical `inference_verified`.
+Do not spend GigaChat merely to fill an acceptance checklist. Use it only if Zen/NVIDIA are unsuitable or a capability requires it. Confirm the custom `giga1` provider remains present.
 
-`list_models(provider="nvidia")` should expose recent health/latency aggregates and ranking signals without performing inference itself.
+## Phase 7 — merge and post-rollout work
 
-### E. Metered reserve
+If the minimum server acceptance above passes:
 
-Use GigaChat only after Zen/NVIDIA are unsuitable/unavailable or where quality requires it. Record real runtime health but do not burn quota on routine probing.
+- update PR #2 with factual production results;
+- remove Draft and merge PR #2;
+- update/close issue #1 to match the actual result.
 
-## Phase 6 — Desktop NVIDIA divergence
-
-Only after server-side v3.10 acceptance, diagnose the owner's connected OpenCode Desktop model picker.
-
-Do not blindly delete caches or run model refresh first. Determine whether the Desktop picker is built from the remote server provider API, a server cache, or a desktop-local cache/state. Apply the minimum correction and verify:
-
-- newly expected NVIDIA models become visible/selectable;
-- GigaChat remains visible;
-- server CLI/DevCoveer/Desktop agree on the intended curated model surface.
-
-A Desktop restart/reconnect is performed only if evidence shows the client requires it.
-
-## Plugin-method refresh
-
-This implementation changes output semantics and tool descriptions but does not add a new MCP method or input field. A ChatGPT plugin method refresh is therefore not required for invocation compatibility, but after production deployment it is desirable so new conversations receive the updated descriptions.
-
-Ask the owner to refresh methods **only after** server-side v3.10 readback and fresh independent discovery succeed.
+OpenCode Desktop NVIDIA picker divergence is **post-server-acceptance work** unless it blocks the owner's immediate use. Diagnose its actual service/API/cache source before any refresh/cache deletion/config rewrite, and preserve custom `giga1`.
