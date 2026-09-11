@@ -79,7 +79,9 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
             messages = inspected.get("messages", [])
             session_provider = str(record.get("provider", ""))
             session_model = str(record.get("model", ""))
-            for msg in messages:
+            # Same-session continuation can switch models. Attribute terminal evidence
+            # to the latest assistant turn, not the first model ever used in the session.
+            for msg in reversed(messages):
                 if isinstance(msg, dict):
                     msg_info = msg.get("info", {})
                     if isinstance(msg_info, dict) and msg_info.get("role") == "assistant":
