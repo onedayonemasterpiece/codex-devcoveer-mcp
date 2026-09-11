@@ -155,8 +155,6 @@ def _apply_patch(patch_binary: str, tmpdir: Path, patch_text: str, label: str) -
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
-    parser.add_argument("--allow-active-tasks", action="store_true",
-                        help="install files but still do not restart services; intended only for controlled maintenance")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -236,7 +234,7 @@ def main() -> int:
     print(json.dumps(report, sort_keys=True))
     if not args.apply:
         return 0
-    if active and not args.allow_active_tasks:
+    if active:
         raise SystemExit("active DevCoveer tasks exist; inspect them before installation/restart")
 
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
