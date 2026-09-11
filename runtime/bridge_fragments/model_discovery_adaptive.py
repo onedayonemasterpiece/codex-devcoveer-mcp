@@ -121,7 +121,7 @@ async def _model_discovery_payload(
 
     def routing_key(item: dict[str, Any]) -> tuple[Any, ...]:
         if item.get("backend") != "opencode":
-            return (99, 1, 1.0, 10**12, str(item.get("id", "")))
+            return (1, 99, 1.0, 10**12, 10**9, str(item.get("id", "")))
         health = item.get("runtimeHealth") if isinstance(item.get("runtimeHealth"), dict) else {}
         windows = health.get("windows") if isinstance(health.get("windows"), dict) else {}
         one_hour = windows.get("1h") if isinstance(windows.get("1h"), dict) else {}
@@ -129,9 +129,12 @@ async def _model_discovery_payload(
         p95 = one_hour.get("p95LatencyMs")
         resource_priority = health.get("resourcePriority")
         recommended = item.get("routingRecommended") is not False and item.get("availability") != "eol"
+        # Current health is the hard gate. Resource class priority is applied only
+        # after an endpoint is actually eligible, so exhausted Zen never outranks
+        # a healthy NVIDIA endpoint merely because Zen is normally preferred.
         return (
-            int(resource_priority) if isinstance(resource_priority, int) else 90,
             0 if recommended else 1,
+            int(resource_priority) if isinstance(resource_priority, int) else 90,
             -(float(success_rate) if isinstance(success_rate, (int, float)) else 0.5),
             int(p95) if isinstance(p95, int) else 10**9,
             int(item.get("activeTasks") or 0),
@@ -139,7 +142,11 @@ async def _model_discovery_payload(
         )
 
     open_code_candidates = [item for item in models if item.get("backend") == "opencode"]
-    suggested = [item["id"] for item in sorted(open_code_candidates, key=routing_key)[:8]]
+    suggestable = [
+        item for item in open_code_candidates
+        if item.get("routingRecommended") is not False and item.get("availability") != "eol"
+    ]
+    suggested = [item["id"] for item in sorted(suggestable, key=routing_key)[:8]]
     overall = "ok" if provider_status and all(
         item.get("status") == "available" for item in provider_status.values()
     ) else "degraded"
