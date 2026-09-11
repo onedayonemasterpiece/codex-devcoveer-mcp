@@ -86,6 +86,25 @@ def test_zen_quota_is_provider_wide_but_nvidia_failure_is_model_local(tmp_path: 
     assert store.provider_summary("nvidia", now_ms=now + 1)["currentRuntimeStatus"] == "degraded_model_only"
 
 
+def test_controlled_cancel_is_neutral_for_model_health(tmp_path: Path):
+    store = ModelHealthStore(tmp_path / "health")
+    now = 25_000_000
+    selection = "nvidia/moonshotai/kimi-k3"
+    store.record(
+        provider="nvidia", selection=selection, outcome="success", category="ok",
+        observed_at=now - 2_000, latency_ms=9_000, event_key="success",
+    )
+    store.record(
+        provider="nvidia", selection=selection, outcome="cancelled", category="cancelled",
+        observed_at=now, event_key="cancelled",
+    )
+    summary = store.summary(selection, now_ms=now + 1)
+    assert summary["currentRuntimeStatus"] == "available_recent_success"
+    assert summary["windows"]["1h"]["attempts"] == 1
+    assert summary["windows"]["1h"]["successRate"] == 1.0
+    assert store.provider_summary("nvidia", now_ms=now + 1)["currentRuntimeStatus"] == "available_recent_success"
+
+
 def test_health_store_is_content_free_and_bounded(tmp_path: Path):
     store = ModelHealthStore(tmp_path / "health")
     store.record(
@@ -161,12 +180,14 @@ def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     assert "The durable task state was not changed" in read_task
 
 
-def test_backend_patch_contains_runtime_observability_not_silent_fallback():
+def test_backend_patches_are_pinned_and_include_runtime_observability():
     patch1 = ROOT / "patches" / "opencode_backend_adaptive.patch.1"
     patch2 = ROOT / "patches" / "opencode_backend_adaptive.patch.2"
+    cancel_patch = ROOT / "patches" / "opencode_backend_cancel_neutral.patch"
     combined = patch1.read_text(encoding="utf-8") + patch2.read_text(encoding="utf-8")
     assert _sha(patch1) == "e325dfa1e8575cd42f25a84d7b535332c2207da349b404db9bfffe3eb20e2829"
     assert _sha(patch2) == "80a79f06223c99be2c0b32087cf46037c0a384db2ba269fc3c9712bfe0a8908a"
+    assert _sha(cancel_patch) == "4b4f3ed187d084860613a0232afb1e33c6a01c60f706e46be73c7d31c4be07c5"
     for needle in (
         "ModelHealthStore",
         "providerRuntimeStatus",
@@ -176,6 +197,9 @@ def test_backend_patch_contains_runtime_observability_not_silent_fallback():
         "stallSuspected",
     ):
         assert needle in combined
+    cancel_text = cancel_patch.read_text(encoding="utf-8")
+    assert 'category, retryable, runtime_status, suggested = "cancelled"' in cancel_text
+    assert 'event_outcome = "cancelled"' in cancel_text
 
 
 def test_installer_is_fail_closed_and_does_not_restart_services():
@@ -183,7 +207,9 @@ def test_installer_is_fail_closed_and_does_not_restart_services():
     source = path.read_text(encoding="utf-8")
     ast.parse(source)
     assert 'EXPECTED_BACKEND_SHA256 = "c4a152e5c6b44e0e6ca1899aec4ad221b1ec38b5f8578827d67d55f4dc007864"' in source
-    assert 'EXPECTED_NEW_BACKEND_SHA256 = "2243d37d89605817db9cd8c19179ac8769851fdf688e2d201daca5359c10c63d"' in source
+    assert 'EXPECTED_ROUTING_BACKEND_SHA256 = "2243d37d89605817db9cd8c19179ac8769851fdf688e2d201daca5359c10c63d"' in source
+    assert 'EXPECTED_NEW_BACKEND_SHA256 = "a9f94a17bd643fc15b0240078dfa265b9d8b18ae1dc3d1f7a212e0d1c83a0e5b"' in source
+    assert 'EXPECTED_CANCEL_PATCH_SHA256 = "4b4f3ed187d084860613a0232afb1e33c6a01c60f706e46be73c7d31c4be07c5"' in source
     assert "active DevCoveer tasks exist; inspect them before installation/restart" in source
     assert "systemctl" not in source
     assert "restartRequired" in source
