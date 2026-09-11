@@ -4,8 +4,9 @@
 The installer targets the exact production 3.9 runtime observed on 2026-09-11.
 Default mode is read-only verification. During candidate re-baselining, --apply is
 refused until every generated candidate hash is explicitly pinned in this file.
-The installer never restarts services and never reads provider credentials or
-project .env files.
+The installer never restarts services, never reads provider credentials or project
+.env files, and checks the existing localhost OpenCode runtime before treating a
+registry task as live.
 """
 from __future__ import annotations
 
@@ -14,16 +15,25 @@ import hashlib
 import json
 import os
 import py_compile
+import re
 import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 INSTALL_DIR = Path("/home/dev/.local/libexec/openai-codex-mcp")
 BRIDGE = INSTALL_DIR / "codex-chatgpt-bridge.py"
 BACKEND = INSTALL_DIR / "opencode_backend.py"
 HEALTH = INSTALL_DIR / "model_health.py"
+BRIDGE_PYTHON = Path("/home/dev/.local/share/openai-codex-mcp/bridge-venv/bin/python")
+TASK_DIR = Path("/home/dev/.local/share/openai-codex-mcp/tasks")
+TASK_ID_RE = re.compile(r"^dvt_[0-9a-f]{32}$")
+SESSION_ID_RE = re.compile(r"^ses_[A-Za-z0-9]+$")
+MAINTENANCE_PROJECT = "devcoveer-opencode-smoke-fixture"
+MAINTENANCE_TITLE_MARKER = "V3.10 MAINTENANCE INSTALL"
+LIVE_SESSION_TYPES = frozenset({"busy", "retry"})
 
 # Exact live lineage reconciled from the host on 2026-09-11.
 EXPECTED_BACKEND_SHA256 = "0b769ac4aae681345d6857b0322c8dddb76a499fbb86986bddc39b7ace68e902"
@@ -132,9 +142,9 @@ def atomic_write(path: Path, text: str, mode: int) -> None:
             pass
 
 
-def active_tasks() -> list[str]:
-    root = Path("/home/dev/.local/share/openai-codex-mcp/tasks")
-    result: list[str] = []
+def registry_active_records(root: Path = TASK_DIR) -> dict[str, dict[str, Any]]:
+    """Return registry candidates only; registry status alone is not liveness."""
+    result: dict[str, dict[str, Any]] = {}
     if not root.is_dir():
         return result
     for path in root.glob("dvt_*.json"):
@@ -144,9 +154,146 @@ def active_tasks() -> list[str]:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, UnicodeError):
             continue
-        if record.get("status") in {"running", "cancelling"}:
-            result.append(str(record.get("taskId") or path.stem))
-    return sorted(result)
+        if not isinstance(record, dict) or record.get("status") not in {"running", "cancelling"}:
+            continue
+        task_id = str(record.get("taskId") or path.stem)
+        if TASK_ID_RE.fullmatch(task_id):
+            result[task_id] = record
+    return result
+
+
+def live_opencode_session_types() -> dict[str, str]:
+    """Read only current localhost OpenCode session state through the installed backend.
+
+    The helper runs in the existing bridge venv so it reuses the production localhost
+    authentication path. Only session IDs and the bounded state type are emitted; no
+    provider credential or prompt/response content crosses the subprocess boundary.
+    """
+    if not BRIDGE_PYTHON.is_file() or not BACKEND.is_file():
+        raise RuntimeError("localhost OpenCode liveness probe is unavailable")
+    helper = r'''
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+backend_path = Path(sys.argv[1])
+sys.path.insert(0, str(backend_path.parent))
+spec = importlib.util.spec_from_file_location("devcoveer_installed_backend", backend_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(2)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+backend = module.OpenCodeBackend()
+statuses = backend._request_sync("GET", "/session/status", timeout=15.0)
+if not isinstance(statuses, dict):
+    raise SystemExit(3)
+out = {}
+for session_id, state in statuses.items():
+    if not isinstance(session_id, str) or not isinstance(state, dict):
+        continue
+    state_type = state.get("type")
+    if state_type in {"busy", "retry", "idle"}:
+        out[session_id] = state_type
+print(json.dumps(out, sort_keys=True, separators=(",", ":")))
+'''
+    completed = subprocess.run(
+        [str(BRIDGE_PYTHON), "-c", helper, str(BACKEND)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=20,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("localhost OpenCode liveness probe failed")
+    try:
+        payload = json.loads(completed.stdout)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("localhost OpenCode liveness probe returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("localhost OpenCode liveness probe returned invalid state")
+    return {
+        str(session_id): str(state_type)
+        for session_id, state_type in payload.items()
+        if isinstance(session_id, str) and state_type in {"busy", "retry", "idle"}
+    }
+
+
+def classify_active_records(
+    records: dict[str, dict[str, Any]],
+    session_types: dict[str, str],
+    *,
+    maintenance_task_id: str | None = None,
+) -> tuple[list[str], list[str], list[str], str | None]:
+    """Classify registry candidates using live session state.
+
+    Unknown/non-OpenCode records remain blockers. A stale OpenCode registry record is
+    ignored only when it has a valid session id that is absent/idle in the live status
+    map. At most one explicitly named maintenance task can self-exclude, and only when
+    its own live session and marker are verified; all other live tasks still block.
+    """
+    if maintenance_task_id is not None and TASK_ID_RE.fullmatch(maintenance_task_id) is None:
+        raise SystemExit("invalid --maintenance-task-id")
+
+    active: list[str] = []
+    stale: list[str] = []
+    unverified: list[str] = []
+    maintenance_excluded: str | None = None
+
+    for task_id, record in sorted(records.items()):
+        if record.get("backend") != "opencode":
+            active.append(task_id)
+            unverified.append(task_id)
+            continue
+        session_id = record.get("session")
+        if not isinstance(session_id, str) or SESSION_ID_RE.fullmatch(session_id) is None:
+            active.append(task_id)
+            unverified.append(task_id)
+            continue
+        state_type = session_types.get(session_id)
+        if state_type not in LIVE_SESSION_TYPES:
+            stale.append(task_id)
+            continue
+
+        if task_id == maintenance_task_id:
+            title = record.get("title")
+            if (
+                record.get("status") != "running"
+                or record.get("project") != MAINTENANCE_PROJECT
+                or not isinstance(title, str)
+                or MAINTENANCE_TITLE_MARKER not in title
+            ):
+                raise SystemExit("maintenance task failed self-exclusion validation")
+            maintenance_excluded = task_id
+            continue
+        active.append(task_id)
+
+    if maintenance_task_id is not None and maintenance_excluded != maintenance_task_id:
+        raise SystemExit("maintenance task is not a verified live maintenance session")
+    return active, stale, unverified, maintenance_excluded
+
+
+def maintenance_gate(
+    *, maintenance_task_id: str | None = None,
+) -> tuple[list[str], list[str], list[str], str | None, str | None]:
+    records = registry_active_records()
+    if not records:
+        if maintenance_task_id is not None:
+            raise SystemExit("maintenance task is not present in the active registry")
+        return [], [], [], None, None
+    try:
+        session_types = live_opencode_session_types()
+    except RuntimeError:
+        # Fail closed: if runtime liveness cannot be verified, every registry candidate
+        # remains a blocker and no maintenance self-exclusion is honored.
+        return sorted(records), [], sorted(records), None, "session_status_unavailable"
+    active, stale, unverified, excluded = classify_active_records(
+        records,
+        session_types,
+        maintenance_task_id=maintenance_task_id,
+    )
+    return active, stale, unverified, excluded, None
 
 
 def _apply_patch(patch_binary: str, tmpdir: Path, patch_text: str, label: str) -> None:
@@ -173,6 +320,13 @@ def _check_optional_pin(actual: str, expected: str | None, label: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--maintenance-task-id",
+        help=(
+            "exact live DevCoveer maintenance dvt task to self-exclude; accepted only for "
+            "the dedicated marked rollout task and never hides any other live task"
+        ),
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -254,7 +408,9 @@ def main() -> int:
         for path in tmpdir.iterdir():
             py_compile.compile(str(path), doraise=True)
 
-    active = active_tasks()
+    active, stale, unverified, maintenance_excluded, liveness_error = maintenance_gate(
+        maintenance_task_id=args.maintenance_task_id,
+    )
     candidate_pinned = all(value is not None for value in (
         EXPECTED_PATCH2_SHA256,
         EXPECTED_ROUTING_BACKEND_SHA256,
@@ -273,6 +429,10 @@ def main() -> int:
         "bridgeNewSha256": bridge_new_sha,
         "candidatePinned": candidate_pinned,
         "activeTasks": active,
+        "staleRegistryTasks": stale,
+        "unverifiedTasks": unverified,
+        "maintenanceTaskExcluded": maintenance_excluded,
+        "livenessCheckError": liveness_error,
         "applyRequested": args.apply,
     }
     print(json.dumps(report, sort_keys=True))
@@ -283,7 +443,9 @@ def main() -> int:
             "candidate hashes are not pinned; run dry-run, pin exact hashes in source, and rerun before --apply"
         )
     if active:
-        raise SystemExit("active DevCoveer tasks exist; inspect them before installation/restart")
+        raise SystemExit("live or unverified DevCoveer tasks exist; inspect them before installation/restart")
+    if args.maintenance_task_id is not None and maintenance_excluded != args.maintenance_task_id:
+        raise SystemExit("maintenance task self-exclusion was not verified")
 
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     backups = []
