@@ -121,7 +121,7 @@ def test_resource_order_is_zen_then_nvidia_then_metered():
     assert resource_priority("opencode") < resource_priority("nvidia") < resource_priority("giga1")
 
 
-def test_bridge_fragments_are_parseable_and_expose_live_diagnostics():
+def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     discovery = (RUNTIME / "bridge_fragments" / "model_discovery_adaptive.py").read_text(encoding="utf-8")
     read_task = (RUNTIME / "bridge_fragments" / "read_opencode_task_adaptive.py").read_text(encoding="utf-8")
     ast.parse(discovery)
@@ -134,8 +134,15 @@ def test_bridge_fragments_are_parseable_and_expose_live_diagnostics():
         "activeTasks",
         "activeSessions",
         "routingRecommended",
+        "agentEligible",
+        "agentTaskReady",
     ):
         assert field in discovery
+    assert 'current_runtime in {"eol", "temporarily_unavailable", "probe_due", "degraded"}' in discovery
+    assert "0 if recommended else 1" in discovery
+    assert 'item.get("routingRecommended") is True' in discovery
+    assert '"genericAgentFilter": "toolcall_and_text_io"' in discovery
+
     for field in (
         "providerRuntimeStatus",
         "providerErrorCategory",
@@ -145,8 +152,13 @@ def test_bridge_fragments_are_parseable_and_expose_live_diagnostics():
         "stallSuspected",
         "safeLiveSnapshot",
         "suggestedAction",
+        "durableTaskStatus",
+        "inspectionStatus",
     ):
         assert field in read_task
+    assert "transient_inspection_errors" in read_task
+    assert '"retry_read_before_cancel"' in read_task
+    assert "The durable task state was not changed" in read_task
 
 
 def test_backend_patch_contains_runtime_observability_not_silent_fallback():
