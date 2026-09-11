@@ -24,7 +24,9 @@ BRIDGE = INSTALL_DIR / "codex-chatgpt-bridge.py"
 BACKEND = INSTALL_DIR / "opencode_backend.py"
 HEALTH = INSTALL_DIR / "model_health.py"
 EXPECTED_BACKEND_SHA256 = "c4a152e5c6b44e0e6ca1899aec4ad221b1ec38b5f8578827d67d55f4dc007864"
-EXPECTED_NEW_BACKEND_SHA256 = "2243d37d89605817db9cd8c19179ac8769851fdf688e2d201daca5359c10c63d"
+EXPECTED_ROUTING_BACKEND_SHA256 = "2243d37d89605817db9cd8c19179ac8769851fdf688e2d201daca5359c10c63d"
+EXPECTED_NEW_BACKEND_SHA256 = "a9f94a17bd643fc15b0240078dfa265b9d8b18ae1dc3d1f7a212e0d1c83a0e5b"
+EXPECTED_CANCEL_PATCH_SHA256 = "4b4f3ed187d084860613a0232afb1e33c6a01c60f706e46be73c7d31c4be07c5"
 EXPECTED_MODEL_DISCOVERY_SHA256 = "14903373ede193e18ca9fbcef92bb77ab23c5b99060d81a8e1ebd6551bcbee1a"
 EXPECTED_READ_TASK_SHA256 = "26e8ce7d2232e3a4298d57397f162124268f5d9afbe4e24f655bf398c1a2395c"
 OLD_VERSION = 'BRIDGE_VERSION = "3.9.0"'
@@ -136,6 +138,20 @@ def active_tasks() -> list[str]:
     return sorted(result)
 
 
+def _apply_patch(patch_binary: str, tmpdir: Path, patch_text: str, label: str) -> None:
+    completed = subprocess.run(
+        [patch_binary, "--batch", "--forward", "--silent", "-p0"],
+        input=patch_text.encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=tmpdir,
+        check=False,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(f"approved {label} did not apply cleanly")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
@@ -151,6 +167,10 @@ def main() -> int:
         read_text(repo_root / "patches" / "opencode_backend_adaptive.patch.1")
         + read_text(repo_root / "patches" / "opencode_backend_adaptive.patch.2")
     )
+    cancel_patch_path = repo_root / "patches" / "opencode_backend_cancel_neutral.patch"
+    cancel_patch = read_text(cancel_patch_path)
+    if sha256_bytes(cancel_patch.encode("utf-8")) != EXPECTED_CANCEL_PATCH_SHA256:
+        raise SystemExit("cancel-neutral backend patch hash does not match approved source")
 
     current_backend = BACKEND.read_bytes()
     if sha256_bytes(current_backend) != EXPECTED_BACKEND_SHA256:
@@ -162,13 +182,11 @@ def main() -> int:
         tmpdir = Path(tmp)
         candidate = tmpdir / "opencode_backend.py"
         candidate.write_bytes(current_backend)
-        completed = subprocess.run(
-            [patch_binary, "--batch", "--forward", "--silent", "-p0"],
-            input=backend_patch.encode("utf-8"),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=tmpdir, check=False, timeout=30,
-        )
-        if completed.returncode != 0:
-            raise SystemExit("approved OpenCode backend patch did not apply cleanly")
+        _apply_patch(patch_binary, tmpdir, backend_patch, "adaptive routing backend patch")
+        routing_backend = candidate.read_bytes()
+        if sha256_bytes(routing_backend) != EXPECTED_ROUTING_BACKEND_SHA256:
+            raise SystemExit("intermediate adaptive routing backend hash does not match approved source")
+        _apply_patch(patch_binary, tmpdir, cancel_patch, "cancel-neutral backend patch")
         new_backend = candidate.read_text(encoding="utf-8")
     if sha256_bytes(new_backend.encode("utf-8")) != EXPECTED_NEW_BACKEND_SHA256:
         raise SystemExit("patched OpenCode backend does not match approved v3.10 candidate hash")
@@ -208,6 +226,7 @@ def main() -> int:
     report = {
         "targetBridgeVersion": "3.10.0",
         "backendOldSha256": EXPECTED_BACKEND_SHA256,
+        "backendRoutingSha256": EXPECTED_ROUTING_BACKEND_SHA256,
         "backendNewSha256": sha256_bytes(new_backend.encode()),
         "backendExpectedNewSha256": EXPECTED_NEW_BACKEND_SHA256,
         "bridgeNewSha256": sha256_bytes(bridge.encode()),
