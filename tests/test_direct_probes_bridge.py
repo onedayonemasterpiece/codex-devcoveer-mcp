@@ -81,20 +81,28 @@ def test_installer_has_exact_lineage_and_never_restarts_services():
     assert "systemctl" not in text and "restart" in text.lower()
     assert "--maintenance-task-id" in text
     assert "maintenance_gate" in text and "live_opencode_session_types" in text
+    assert "directory=directory,timeout=15.0" in text
 
 
 def test_installer_maintenance_gate_excludes_only_verified_self(monkeypatch):
     mod = load_installer()
     self_id = "dvt_" + "1" * 32
     other_id = "dvt_" + "2" * 32
+    self_cwd = "/home/dev/projects/codex-devcoveer-mcp"
+    other_cwd = "/home/dev/projects/elsewhere"
     monkeypatch.setattr(mod, "registry_active_records", lambda: {
         self_id: {"taskId": self_id, "status": "running", "backend": "opencode", "backendSessionId": "ses_self",
-                  "project": "codex-devcoveer-mcp", "title": "DIRECT PROBES DEPLOY maintenance"},
+                  "cwd": self_cwd, "project": "codex-devcoveer-mcp", "title": "DIRECT PROBES DEPLOY maintenance"},
         other_id: {"taskId": other_id, "status": "running", "backend": "opencode", "backendSessionId": "ses_other",
-                   "project": "elsewhere", "title": "other"},
+                   "cwd": other_cwd, "project": "elsewhere", "title": "other"},
     })
-    monkeypatch.setattr(mod, "live_opencode_session_types", lambda: {"ses_self": "busy", "ses_other": "busy"})
+    observed = {}
+    def statuses(directories):
+        observed["directories"] = set(directories)
+        return {"ses_self": "busy", "ses_other": "busy"}
+    monkeypatch.setattr(mod, "live_opencode_session_types", statuses)
     gate = mod.maintenance_gate(self_id)
+    assert observed["directories"] == {self_cwd, other_cwd}
     assert gate["excluded"] == self_id
     assert gate["active"] == [other_id]
 
@@ -102,11 +110,12 @@ def test_installer_maintenance_gate_excludes_only_verified_self(monkeypatch):
 def test_installer_maintenance_gate_fails_closed_when_liveness_unavailable(monkeypatch):
     mod = load_installer()
     task_id = "dvt_" + "3" * 32
+    cwd = "/home/dev/projects/codex-devcoveer-mcp"
     monkeypatch.setattr(mod, "registry_active_records", lambda: {
         task_id: {"taskId": task_id, "status": "running", "backend": "opencode", "backendSessionId": "ses_x",
-                  "project": "codex-devcoveer-mcp", "title": "DIRECT PROBES DEPLOY maintenance"},
+                  "cwd": cwd, "project": "codex-devcoveer-mcp", "title": "DIRECT PROBES DEPLOY maintenance"},
     })
-    def boom():
+    def boom(_directories):
         raise RuntimeError("down")
     monkeypatch.setattr(mod, "live_opencode_session_types", boom)
     gate = mod.maintenance_gate(task_id)
