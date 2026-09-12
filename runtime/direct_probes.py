@@ -10,14 +10,15 @@ from direct_probe_core import (
     BATCH_DEADLINE_SECONDS, CHECK_TIMEOUT_SECONDS, DEFAULT_CONFIG_PATH, HOST_PROBE_INPUT_SCHEMA,
     MAX_CHECKS, MAX_RESPONSE_BYTES, PROJECT_PROBE_INPUT_SCHEMA, ProcessResult, ProbeError,
     _binding, _load_config, _now_iso, _redact_text, _run_process, _safe_worktree_path,
-    _validate_ref,
+    _validate_alias, _validate_ref,
 )
 from direct_probe_project import (
     _diff, _file_list, _file_sha, _file_stat, _git_blob, _git_log, _git_state, _github_status,
     _read_text, _remote_head, _search, _tree, _worktree_list,
 )
 from direct_probe_host import (
-    _config_presence, _health, _inventory, _listeners, _logs, _resources, _runtime, _runtime_file, _systemctl_show,
+    _config_presence, _health, _host_section, _inventory, _listeners, _logs, _resources, _runtime,
+    _runtime_file, _systemctl_show,
 )
 
 def _base_result(check: dict[str, Any], started: float) -> dict[str, Any]:
