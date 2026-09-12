@@ -88,9 +88,9 @@ def test_installer_maintenance_gate_excludes_only_verified_self(monkeypatch):
     self_id = "dvt_" + "1" * 32
     other_id = "dvt_" + "2" * 32
     monkeypatch.setattr(mod, "registry_active_records", lambda: {
-        self_id: {"taskId": self_id, "status": "running", "backend": "opencode", "session": "ses_self",
+        self_id: {"taskId": self_id, "status": "running", "backend": "opencode", "backendSessionId": "ses_self",
                   "project": "codex-devcoveer-mcp", "title": "DIRECT PROBES DEPLOY maintenance"},
-        other_id: {"taskId": other_id, "status": "running", "backend": "opencode", "session": "ses_other",
+        other_id: {"taskId": other_id, "status": "running", "backend": "opencode", "backendSessionId": "ses_other",
                    "project": "elsewhere", "title": "other"},
     })
     monkeypatch.setattr(mod, "live_opencode_session_types", lambda: {"ses_self": "busy", "ses_other": "busy"})
@@ -103,7 +103,7 @@ def test_installer_maintenance_gate_fails_closed_when_liveness_unavailable(monke
     mod = load_installer()
     task_id = "dvt_" + "3" * 32
     monkeypatch.setattr(mod, "registry_active_records", lambda: {
-        task_id: {"taskId": task_id, "status": "running", "backend": "opencode", "session": "ses_x",
+        task_id: {"taskId": task_id, "status": "running", "backend": "opencode", "backendSessionId": "ses_x",
                   "project": "codex-devcoveer-mcp", "title": "DIRECT PROBES DEPLOY maintenance"},
     })
     def boom():
