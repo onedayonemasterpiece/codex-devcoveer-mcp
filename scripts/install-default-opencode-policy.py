@@ -92,7 +92,7 @@ NEW_ROUTING = """async def _routing_decision(
                 "model": selected["nativeModelId"], "selection": selected["selection"],
                 "reasoningEffort": None, "reason": "explicit_opencode_provider"}
     selected = await OPENCODE_BACKEND.resolve_model(
-        provider=None, model=model, directory=project.path,
+        provider="opencode" if model is None else None, model=model, directory=project.path,
     )
     _assert_model_not_excluded(selected["selection"])
     reason = "default_opencode" if model is None else "opencode_model_match"

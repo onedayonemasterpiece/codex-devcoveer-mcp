@@ -32,7 +32,7 @@ def test_transform_enforces_explicit_codex_and_default_opencode():
     assert "default_codex" not in transformed
     assert "codex_model_match" not in transformed
     assert "default_opencode" in transformed
-    assert "provider=None, model=model, directory=project.path" in transformed
+    assert 'provider="opencode" if model is None else None, model=model, directory=project.path' in transformed
     assert 'explicit provider="codex"' in transformed
     assert "Never silently fall back from OpenCode to native Codex" in transformed
 
