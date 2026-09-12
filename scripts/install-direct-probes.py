@@ -125,7 +125,7 @@ def maintenance_gate(maintenance_task_id: str | None) -> dict[str, object]:
     active=[]; stale=[]; unverified=[]; excluded=None
     for task_id, record in sorted(records.items()):
         if record.get("backend") != "opencode": active.append(task_id); unverified.append(task_id); continue
-        session_id=record.get("session")
+        session_id=record.get("backendSessionId") or record.get("session")
         if not isinstance(session_id,str) or SESSION_ID_RE.fullmatch(session_id) is None: active.append(task_id); unverified.append(task_id); continue
         state=states.get(session_id)
         if state not in LIVE_SESSION_TYPES: stale.append(task_id); continue
