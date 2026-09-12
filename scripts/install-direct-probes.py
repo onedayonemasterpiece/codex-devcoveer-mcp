@@ -89,15 +89,10 @@ def registry_active_records(root: Path = TASK_DIR) -> dict[str, dict]:
             records[task_id] = record
     return records
 
-def live_opencode_session_types(records: dict[str, dict]) -> dict[str, str]:
+def live_opencode_session_types(directories: list[str] | set[str]) -> dict[str, str]:
     bridge_python = Path("/home/dev/.local/share/openai-codex-mcp/bridge-venv/bin/python")
     if not bridge_python.is_file() or not BACKEND.is_file(): raise RuntimeError("OpenCode liveness probe unavailable")
-    directories = sorted({
-        cwd for record in records.values()
-        if record.get("backend") == "opencode"
-        and isinstance((cwd := record.get("cwd")), str)
-        and cwd.startswith("/")
-    })
+    directories = sorted(directories)
     if not directories: return {}
     helper = """
 import importlib.util, json, sys
@@ -130,7 +125,13 @@ def maintenance_gate(maintenance_task_id: str | None) -> dict[str, object]:
     if not records:
         if maintenance_task_id is not None: raise SystemExit("maintenance task is not present in active registry")
         return {"active":[],"stale":[],"unverified":[],"excluded":None,"livenessError":None}
-    try: states=live_opencode_session_types(records)
+    directories=sorted({
+        cwd for record in records.values()
+        if record.get("backend") == "opencode"
+        and isinstance((cwd := record.get("cwd")), str)
+        and cwd.startswith("/")
+    })
+    try: states=live_opencode_session_types(directories)
     except (RuntimeError, ValueError, json.JSONDecodeError):
         return {"active":sorted(records),"stale":[],"unverified":sorted(records),"excluded":None,"livenessError":"session_status_unavailable"}
     active=[]; stale=[]; unverified=[]; excluded=None
