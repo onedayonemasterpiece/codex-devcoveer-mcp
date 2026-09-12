@@ -9,6 +9,18 @@ from typing import Any
 
 from direct_probe_core import MAX_LOG_LINES, MAX_TEXT_BYTES, ProbeError, _redact_text, _run_process, _validate_alias
 
+def _systemd_env(scope: str) -> dict[str, str]:
+    env = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": os.environ.get("HOME", "/home/dev"),
+        "LANG": "C.UTF-8",
+    }
+    if scope == "user":
+        runtime_dir = f"/run/user/{os.getuid()}"
+        env["XDG_RUNTIME_DIR"] = runtime_dir
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={runtime_dir}/bus"
+    return env
+
 def _host_section(binding: dict[str, Any], name: str) -> dict[str, Any]:
     section = binding.get(name) or {}
     if not isinstance(section, dict):
@@ -20,7 +32,7 @@ async def _systemctl_show(service: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(unit, str) or not re.fullmatch(r"[A-Za-z0-9_.@:-]+\.service", unit) or scope not in {"user","system"}:
         raise ProbeError("config", "service binding is invalid")
     argv = ["/usr/bin/systemctl"] + (["--user"] if scope == "user" else []) + ["show", unit, "--no-pager", "--property=LoadState,ActiveState,SubState,MainPID,ExecMainStartTimestamp,NRestarts,FragmentPath,WorkingDirectory"]
-    result = await _run_process(argv, env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":os.environ.get("HOME","/home/dev"),"LANG":"C.UTF-8"}, timeout=4.0, output_limit=16*1024)
+    result = await _run_process(argv, env=_systemd_env(scope), timeout=4.0, output_limit=16*1024)
     if result.exit_code != 0:
         err = result.stderr.decode("utf-8","replace")
         raise ProbeError("service", err.strip() or f"systemctl exited {result.exit_code}", exit_code=result.exit_code)
@@ -87,7 +99,7 @@ async def _logs(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any
         if not isinstance(service_cfg,dict): raise ProbeError("config","journal log refers to unknown service")
         unit=service_cfg["unit"]; scope=service_cfg.get("scope","user")
         argv=["/usr/bin/journalctl"]+(["--user"] if scope=="user" else [])+["--unit",unit,"--no-pager","--output=short-iso","-n",str(lines),"--since",f"-{since_seconds} seconds"]
-        result=await _run_process(argv,env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":os.environ.get("HOME","/home/dev"),"LANG":"C.UTF-8"},timeout=10,output_limit=MAX_TEXT_BYTES)
+        result=await _run_process(argv,env=_systemd_env(scope),timeout=10,output_limit=MAX_TEXT_BYTES)
         if result.exit_code!=0: raise ProbeError("logs",result.stderr.decode("utf-8","replace")[-1000:],exit_code=result.exit_code)
         text=result.stdout.decode("utf-8","replace"); truncated=result.truncated; source=f"journal:{unit}"
     elif cfg.get("type")=="file":
