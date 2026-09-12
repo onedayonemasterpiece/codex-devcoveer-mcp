@@ -12,7 +12,7 @@ A probe batch has a 60-second safety ceiling and a 64 KiB response ceiling. Chec
 
 ## Security boundary
 
-Server code constructs argv for a small set of trusted executables and never uses a shell. Git runs with optional index writes, pagers, external diff/textconv, hooks, extension transports and LFS process/smudge execution disabled in probe invocations. Fresh remote reads use a server-configured GitHub repository through the existing `gh` credentials; they never fetch, checkout, clone or materialize the project and bind remote content reads to an exact resolved SHA.
+The implementation keeps one shared bounded runner with small project/host handler modules; this is file-level separation, not a plugin architecture. Server code constructs argv for a small set of trusted executables and never uses a shell. Git runs with optional index writes, pagers, external diff/textconv, hooks, extension transports and LFS process/smudge execution disabled in probe invocations. Fresh remote reads use a server-configured GitHub repository through the existing `gh` credentials; they never fetch, checkout, clone or materialize the project and bind remote content reads to an exact resolved SHA.
 
 Project paths are repository-relative and reject traversal, symlinks, special files, secret/config/session/database paths and option injection. The same path policy is applied before historical blob/diff content can be returned. Code search prunes dependency/cache/state trees and treats the query literally by default. Binary content is not returned.
 
@@ -28,4 +28,4 @@ The VibePublish and Dataset Loop health aliases are diagnostic observations only
 
 ## Deployment
 
-`scripts/install-direct-probes.py` is fail-closed against exact observed production lineage. Dry-run transforms the installed bridge in memory and compiles the candidate. `--apply` atomically installs only the bridge integration plus `direct_probes.py` and its trusted config, keeping timestamped rollback copies for pre-existing touched files. The installer never restarts a service. Restart/reload must follow the existing DevCoveer maintenance procedure and must not interrupt active tasks.
+`scripts/install-direct-probes.py` is fail-closed against exact observed production lineage. Dry-run transforms the installed bridge in memory and compiles the candidate together with every direct-probe runtime helper. `--apply` atomically installs only the bridge integration, the bounded direct-probe runtime modules and the trusted config, keeping timestamped rollback copies for pre-existing touched files. The installer never restarts a service. Restart/reload must follow the existing DevCoveer maintenance procedure and must not interrupt active tasks.
