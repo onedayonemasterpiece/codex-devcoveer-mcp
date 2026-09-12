@@ -89,25 +89,36 @@ def registry_active_records(root: Path = TASK_DIR) -> dict[str, dict]:
             records[task_id] = record
     return records
 
-def live_opencode_session_types() -> dict[str, str]:
+def live_opencode_session_types(records: dict[str, dict]) -> dict[str, str]:
     bridge_python = Path("/home/dev/.local/share/openai-codex-mcp/bridge-venv/bin/python")
     if not bridge_python.is_file() or not BACKEND.is_file(): raise RuntimeError("OpenCode liveness probe unavailable")
+    directories = sorted({
+        cwd for record in records.values()
+        if record.get("backend") == "opencode"
+        and isinstance((cwd := record.get("cwd")), str)
+        and cwd.startswith("/")
+    })
+    if not directories: return {}
     helper = """
 import importlib.util, json, sys
 from pathlib import Path
-path=Path(sys.argv[1]); sys.path.insert(0,str(path.parent))
+path=Path(sys.argv[1]); directories=json.loads(sys.argv[2]); sys.path.insert(0,str(path.parent))
 spec=importlib.util.spec_from_file_location('probe_backend',path)
 if spec is None or spec.loader is None: raise SystemExit(2)
 mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-backend=mod.OpenCodeBackend(); payload=backend._request_sync('GET','/session/status',timeout=15.0)
-if not isinstance(payload,dict): raise SystemExit(3)
-out={}
-for sid,state in payload.items():
-    if isinstance(sid,str) and isinstance(state,dict) and state.get('type') in {'busy','retry','idle'}: out[sid]=state['type']
+backend=mod.OpenCodeBackend(); out={}
+for directory in directories:
+    payload=backend._request_sync('GET','/session/status',directory=directory,timeout=15.0)
+    if not isinstance(payload,dict): raise SystemExit(3)
+    for sid,state in payload.items():
+        if isinstance(sid,str) and isinstance(state,dict) and state.get('type') in {'busy','retry','idle'}: out[sid]=state['type']
 print(json.dumps(out,sort_keys=True,separators=(',',':')))
 """
-    completed = subprocess.run([str(bridge_python), "-c", helper, str(BACKEND)], stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, check=False, timeout=20, text=True)
+    completed = subprocess.run(
+        [str(bridge_python), "-c", helper, str(BACKEND), json.dumps(directories, separators=(",", ":"))],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+        timeout=20 + 16 * len(directories), text=True,
+    )
     if completed.returncode != 0: raise RuntimeError("OpenCode liveness probe failed")
     payload = json.loads(completed.stdout)
     if not isinstance(payload, dict): raise RuntimeError("OpenCode liveness probe returned invalid state")
@@ -119,12 +130,14 @@ def maintenance_gate(maintenance_task_id: str | None) -> dict[str, object]:
     if not records:
         if maintenance_task_id is not None: raise SystemExit("maintenance task is not present in active registry")
         return {"active":[],"stale":[],"unverified":[],"excluded":None,"livenessError":None}
-    try: states=live_opencode_session_types()
+    try: states=live_opencode_session_types(records)
     except (RuntimeError, ValueError, json.JSONDecodeError):
         return {"active":sorted(records),"stale":[],"unverified":sorted(records),"excluded":None,"livenessError":"session_status_unavailable"}
     active=[]; stale=[]; unverified=[]; excluded=None
     for task_id, record in sorted(records.items()):
         if record.get("backend") != "opencode": active.append(task_id); unverified.append(task_id); continue
+        cwd=record.get("cwd")
+        if not isinstance(cwd,str) or not cwd.startswith("/"): active.append(task_id); unverified.append(task_id); continue
         session_id=record.get("backendSessionId") or record.get("session")
         if not isinstance(session_id,str) or SESSION_ID_RE.fullmatch(session_id) is None: active.append(task_id); unverified.append(task_id); continue
         state=states.get(session_id)
