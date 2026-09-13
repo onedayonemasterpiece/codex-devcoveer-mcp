@@ -149,10 +149,21 @@ async def _model_discovery_payload(
 
     def routing_key(item: dict[str, Any]) -> tuple[Any, ...]:
         if item.get("backend") != "opencode":
-            return (1, 99, 1.0, 10**12, 10**9, str(item.get("id", "")))
+            return (1, 99, 9, 99, 1.0, 10**12, 10**9, str(item.get("id", "")))
         health = item.get("runtimeHealth") if isinstance(item.get("runtimeHealth"), dict) else {}
         windows = health.get("windows") if isinstance(health.get("windows"), dict) else {}
         one_hour = windows.get("1h") if isinstance(windows.get("1h"), dict) else {}
+        provider_id = str(item.get("provider") or "")
+        native_model = str(item.get("nativeModelId") or "")
+        groq_model_rank = 9
+        groq_key_rank = 99
+        if provider_id.startswith("groq"):
+            groq_model_rank = (
+                0 if native_model == "openai/gpt-oss-120b"
+                else 1 if native_model == "openai/gpt-oss-20b"
+                else 9
+            )
+            groq_key_rank = {"groq": 0, "groq2": 1, "groq3": 2}.get(provider_id, 50)
         success_rate = one_hour.get("successRate")
         p95 = one_hour.get("p95LatencyMs")
         resource_priority = health.get("resourcePriority")
@@ -163,6 +174,8 @@ async def _model_discovery_payload(
         return (
             0 if recommended else 1,
             int(resource_priority) if isinstance(resource_priority, int) else 90,
+            groq_model_rank,
+            groq_key_rank,
             -(float(success_rate) if isinstance(success_rate, (int, float)) else 0.5),
             int(p95) if isinstance(p95, int) else 10**9,
             int(item.get("activeTasks") or 0),
@@ -186,7 +199,7 @@ async def _model_discovery_payload(
         "count": len(models),
         "models": models,
         "routing": {
-            "policy": "zen_then_nvidia_then_metered",
+            "policy": "zen_then_groq_then_nvidia_then_metered",
             "automaticFallback": False,
             "globalModelLock": False,
             "genericAgentFilter": "toolcall_and_text_io",

@@ -63,6 +63,8 @@ def _percentile(values: list[int], p: float) -> int | None:
 def resource_class(provider: str) -> str:
     if provider == "opencode":
         return "renewable_free_burst"
+    if provider.startswith("groq"):
+        return "renewable_key_pool"
     if provider == "nvidia":
         return "elastic_nonscarce"
     if provider.startswith("giga"):
@@ -74,6 +76,7 @@ def resource_priority(provider: str) -> int:
     cls = resource_class(provider)
     return {
         "renewable_free_burst": 10,
+        "renewable_key_pool": 15,
         "elastic_nonscarce": 20,
         "metered_reserve": 30,
         "metered_or_unknown": 40,
