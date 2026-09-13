@@ -1,3 +1,60 @@
+_GROQ_KEY_ORDER = ("groq", "groq2", "groq3")
+_GROQ_CAPACITY_CATEGORIES = {"rate_limited", "quota_exhausted"}
+
+
+async def _maybe_auto_groq_fallback(
+    record: dict[str, Any], inspected: dict[str, Any], *, status: str,
+) -> dict[str, Any] | None:
+    provider = record.get("provider")
+    category = inspected.get("providerErrorCategory")
+    session_status = inspected.get("sessionStatus")
+    if (
+        provider not in _GROQ_KEY_ORDER
+        or category not in _GROQ_CAPACITY_CATEGORIES
+        or not (status == "failed" or session_status == "retry")
+    ):
+        return None
+    index = _GROQ_KEY_ORDER.index(provider)
+    if index + 1 >= len(_GROQ_KEY_ORDER):
+        return None
+    model = record.get("model")
+    session_id = record.get("backendSessionId")
+    if not isinstance(model, str) or not isinstance(session_id, str):
+        return None
+    next_provider = _GROQ_KEY_ORDER[index + 1]
+    selected = await OPENCODE_BACKEND.resolve_model(
+        provider=next_provider, model=model, directory=str(record["cwd"]),
+    )
+    if session_status == "retry":
+        await OPENCODE_BACKEND.request(
+            "POST", f"/session/{session_id}/abort",
+            directory=str(record["cwd"]), timeout=15,
+        )
+    await OPENCODE_BACKEND.request(
+        "POST", f"/session/{session_id}/prompt_async",
+        directory=str(record["cwd"]), timeout=15,
+        payload={
+            "agent": "build",
+            "model": {"providerID": selected["provider"], "modelID": selected["nativeModelId"]},
+            "parts": [{"type": "text", "text": (
+                "Continue the current task. The previous Groq key hit a capacity limit. "
+                "Do not repeat completed side effects."
+            )}],
+        },
+    )
+    updated = TASK_REGISTRY.update(
+        record["taskId"], status="running", provider=selected["provider"],
+        model=selected["nativeModelId"], selection=selected["selection"],
+        errorCategory=None, routingReason="automatic_groq_key_fallback",
+    )
+    return {
+        "status": "running", "task": _registry_public(updated),
+        "automaticFallback": True, "fallbackFrom": provider,
+        "fallbackTo": next_provider, "suggestedAction": "wait",
+        "content": "Groq capacity limit: continued on the next key.",
+    }
+
+
 async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary") -> dict[str, Any]:
     session_id = record.get("backendSessionId")
     if not isinstance(session_id, str):
@@ -52,6 +109,10 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
             status = "running"
         else:
             status = "failed"
+
+    groq_fallback = await _maybe_auto_groq_fallback(record, inspected, status=status)
+    if groq_fallback is not None:
+        return groq_fallback
     changes: dict[str, Any] = {"status": status}
     if status in {"completed", "failed", "interrupted"}:
         changes["finishedAt"] = int(time.time() * 1000)
