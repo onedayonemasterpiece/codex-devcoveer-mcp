@@ -166,6 +166,10 @@ def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     assert 'provider_id.startswith("groq")' in discovery
     assert '{"groq": 0, "groq2": 1, "groq3": 2}' in discovery
     assert '"policy": "zen_then_groq_then_nvidia_then_metered"' in discovery
+    assert '"automaticFallback": True' in discovery
+    assert '"automaticFallbackScope": "groq_key_pool"' in discovery
+    assert '"groqKeyOrder": ["groq", "groq2", "groq3"]' in discovery
+    assert "Do not ask the user to restate the task." in read_task
 
     for field in (
         "providerRuntimeStatus",

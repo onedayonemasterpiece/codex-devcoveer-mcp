@@ -200,9 +200,11 @@ async def _model_discovery_payload(
         "models": models,
         "routing": {
             "policy": "zen_then_groq_then_nvidia_then_metered",
-            "automaticFallback": False,
+            "automaticFallback": True,
+            "automaticFallbackScope": "groq_key_pool",
             "globalModelLock": False,
             "genericAgentFilter": "toolcall_and_text_io",
+            "groqKeyOrder": ["groq", "groq2", "groq3"],
             "suggestedSelections": suggested,
         },
         "warnings": warnings,

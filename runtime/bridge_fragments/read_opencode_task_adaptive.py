@@ -37,8 +37,9 @@ async def _maybe_auto_groq_fallback(
             "agent": "build",
             "model": {"providerID": selected["provider"], "modelID": selected["nativeModelId"]},
             "parts": [{"type": "text", "text": (
-                "Continue the current task. The previous Groq key hit a capacity limit. "
-                "Do not repeat completed side effects."
+                "Continue the most recent unfinished user request using the existing session history. "
+                "The previous Groq key hit a capacity limit. Do not ask the user to restate the task. "
+                "Do not repeat completed side effects; finish only the remaining work."
             )}],
         },
     )
