@@ -25,14 +25,16 @@ def _fixture(module) -> str:
         + "\n# end\n"
     )
 
-def test_transform_enforces_explicit_codex_and_default_opencode():
+def test_transform_enforces_explicit_codex_and_adaptive_opencode():
     module = _load()
     transformed = module.transform_bridge(_fixture(module))
     assert '"reason": "explicit_codex_provider"' in transformed
     assert "default_codex" not in transformed
     assert "codex_model_match" not in transformed
-    assert "default_opencode" in transformed
-    assert 'provider="opencode" if model is None else None, model=model, directory=project.path' in transformed
+    assert "adaptive_opencode_default" in transformed
+    assert "default_opencode_fallback" in transformed
+    assert "_model_discovery_payload(history, None, False)" in transformed
+    assert 'provider=None if adaptive_model is not None else "opencode"' in transformed
     assert 'explicit provider="codex"' in transformed
     assert "Never silently fall back from OpenCode to native Codex" in transformed
 

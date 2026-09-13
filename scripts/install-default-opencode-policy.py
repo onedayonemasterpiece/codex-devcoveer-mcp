@@ -91,11 +91,26 @@ NEW_ROUTING = """async def _routing_decision(
         return {"backend": "opencode", "provider": selected["provider"],
                 "model": selected["nativeModelId"], "selection": selected["selection"],
                 "reasoningEffort": None, "reason": "explicit_opencode_provider"}
-    selected = await OPENCODE_BACKEND.resolve_model(
-        provider="opencode" if model is None else None, model=model, directory=project.path,
-    )
+    if model is None:
+        discovery = await _model_discovery_payload(history, None, False)
+        routing = discovery.get("routing") if isinstance(discovery, dict) else {}
+        suggestions = routing.get("suggestedSelections") if isinstance(routing, dict) else []
+        adaptive_model = (
+            suggestions[0]
+            if isinstance(suggestions, list) and suggestions and isinstance(suggestions[0], str)
+            else None
+        )
+        selected = await OPENCODE_BACKEND.resolve_model(
+            provider=None if adaptive_model is not None else "opencode",
+            model=adaptive_model, directory=project.path,
+        )
+        reason = "adaptive_opencode_default" if adaptive_model is not None else "default_opencode_fallback"
+    else:
+        selected = await OPENCODE_BACKEND.resolve_model(
+            provider=None, model=model, directory=project.path,
+        )
+        reason = "opencode_model_match"
     _assert_model_not_excluded(selected["selection"])
-    reason = "default_opencode" if model is None else "opencode_model_match"
     return {"backend": "opencode", "provider": selected["provider"],
             "model": selected["nativeModelId"], "selection": selected["selection"],
             "reasoningEffort": None, "reason": reason}
