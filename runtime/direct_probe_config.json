@@ -33,7 +33,10 @@
       },
       "roots": {
         "source": "/home/dev/projects/codex-devcoveer-mcp",
-        "runtime": "/home/dev/.local/libexec/openai-codex-mcp"
+        "runtime": "/home/dev/.local/libexec/openai-codex-mcp",
+        "home_codex": "/home/dev/.codex",
+        "home_local": "/home/dev/.local",
+        "projects": "/home/dev/projects"
       },
       "health": {},
       "runtimes": {
