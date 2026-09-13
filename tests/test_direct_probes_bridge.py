@@ -51,6 +51,10 @@ def test_transform_adds_only_direct_probe_surface_and_preserves_existing_paths()
     assert 'Draft202012Validator(PROJECT_PROBE_INPUT_SCHEMA)' in out
     assert 'Draft202012Validator(HOST_PROBE_INPUT_SCHEMA)' in out
     assert 'await _run_project_probe(' in out and 'await _run_host_probe(' in out
+    assert "ProbeError," in out
+    assert out.count("except ProbeError as exc:") == 2
+    assert '"errorCategory": exc.category' in out
+    assert out.count("return _tool_result(payload, error=True)") == 2
     assert 'project, project_payload = _project_selection(arguments["project"])' in out
     assert 'if name == "stage_source_handoff":\n            return old_stage()' in out
     assert 'if name == "start_task":\n            return old_start()' in out
