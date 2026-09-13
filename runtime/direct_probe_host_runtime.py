@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from direct_probe_core import ProbeError, _redact_text, _run_process, _sha256_path, _validate_alias
+from direct_probe_disk_forensics import resolve_resource_target, run_resource_profile
 from direct_probe_host_services import _host_section
 
 def _disk_usage(path: Path) -> dict[str, int]:
@@ -45,7 +46,7 @@ async def _resources(binding: dict[str, Any], check: dict[str, Any]) -> dict[str
         raw = roots.get(alias)
         if raw is None:
             raise ProbeError("target_denied", "resource root is not registered", status="denied")
-        path = Path(str(raw)).resolve(strict=True)
+        path, profile = resolve_resource_target(raw)
         result["root"] = {"alias": alias, **_disk_usage(path)}
         largest = min(int(check.get("largest", 10)), 30)
         if largest:
@@ -64,8 +65,14 @@ async def _resources(binding: dict[str, Any], check: dict[str, Any]) -> dict[str
                 items.sort(key=lambda x: x["bytes"], reverse=True)
                 result["largest_immediate"] = items[:largest]
                 result["largest_complete"] = not du.truncated
+        if profile is not None:
+            result["profile_data"] = await run_resource_profile(profile, path)
     else:
-        result["roots"] = {name: _disk_usage(Path(str(path)).resolve(strict=True)) for name, path in roots.items()}
+        resolved = {}
+        for name, raw in roots.items():
+            path, _profile = resolve_resource_target(raw)
+            resolved[name] = _disk_usage(path)
+        result["roots"] = resolved
     return result
 
 def _health_request(url: str, method: str, timeout: float, body_limit: int) -> dict[str, Any]:

@@ -36,7 +36,15 @@
         "runtime": "/home/dev/.local/libexec/openai-codex-mcp",
         "home_codex": "/home/dev/.codex",
         "home_local": "/home/dev/.local",
-        "projects": "/home/dev/projects"
+        "projects": "/home/dev/projects",
+        "codex_sessions": {
+          "path": "/home/dev/.codex/sessions",
+          "profile": "codex_sessions"
+        },
+        "codex_worktrees": {
+          "path": "/home/dev/.codex/worktrees",
+          "profile": "codex_worktrees"
+        }
       },
       "health": {},
       "runtimes": {
