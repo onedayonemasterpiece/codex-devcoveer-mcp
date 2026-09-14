@@ -139,8 +139,11 @@ NEW_START_TOOL = """    types.Tool(name="start_task", title="Start DevCoveer tas
             "review, reading, planning, and status; infer access=write for implementation, fixes, "
             "creation, and updates. Before start_task for deterministic Git/host/runtime/model/task-state "
             "checks, use direct tools first: project_probe, host_probe, list_models, and list_tasks/read_task. "
-            "start_task is for work that actually needs an agent. Use read_task later to check status and "
-            "obtain the result."),
+            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to "
+            "OpenCode. ChatGPT should author the exact code/docs change itself and use stage_source_handoff "
+            "when direct repository writing is unavailable; the handoff agent should verify, test, commit, "
+            "push, or deploy the supplied patch rather than rewrite source/docs. start_task is for work that "
+            "actually needs an agent. Use read_task later to check status and obtain the result."),
         input_schema=START_TASK_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
             idempotent_hint=False, open_world_hint=True)),"""
@@ -162,10 +165,11 @@ NEW_HANDOFF_TOOL = """    types.Tool(name="stage_source_handoff", title="Stage s
             "Use this direct transport when ChatGPT has uncommitted source and the ChatGPT-side "
             "GitHub connector cannot reliably write it. Materialize an exact-base Git patch in an "
             "isolated worktree; the patch is consumed through stdin and is never persisted. Returns "
-            "a handoff:<id> project for start_task, which defaults to OpenCode. After OpenCode work, "
-            "commit and push through stable DevCoveer git/gh, review task evidence, then call "
-            "cleanup_source_handoff after acceptance. Do not create an archive, persistent patch "
-            "storage, or a separate venv for Source Handoff."
+            "a handoff:<id> project for start_task, which defaults to OpenCode. The patch is authored "
+            "by ChatGPT; the handoff agent should verify/test/commit/push/deploy it, not independently "
+            "rewrite repository code or documentation. If verification finds a source defect, return "
+            "evidence to ChatGPT for a revised handoff. After acceptance, call cleanup_source_handoff. "
+            "Do not create an archive, persistent patch storage, or a separate venv for Source Handoff."
         ),
         input_schema=STAGE_SOURCE_HANDOFF_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,

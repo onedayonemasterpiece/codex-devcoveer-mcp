@@ -40,6 +40,10 @@ def test_transform_enforces_explicit_codex_and_adaptive_opencode():
     assert "deterministic Git/host/runtime/model/task-state" in transformed
     assert "project_probe" in transformed and "host_probe" in transformed
     assert "list_models" in transformed and "list_tasks/read_task" in transformed
+    assert "do not delegate repository code or documentation authoring" in transformed
+    assert "ChatGPT should author the exact code/docs change itself" in transformed
+    assert "stage_source_handoff" in transformed
+    assert "rather than rewrite source/docs" in transformed
 
 def test_transform_advertises_source_handoff_fallback():
     module = _load()
@@ -47,7 +51,9 @@ def test_transform_advertises_source_handoff_fallback():
     assert "ChatGPT-side" in transformed
     assert "GitHub connector" in transformed
     assert "handoff:<id>" in transformed
-    assert "DevCoveer git/gh" in transformed
+    assert "the patch is authored" in transformed.lower()
+    assert "verify/test/commit/push/deploy" in transformed
+    assert "evidence to ChatGPT for a revised handoff" in transformed
     assert "cleanup_source_handoff" in transformed
     assert "separate venv" in transformed
     assert "persistent patch" in transformed
