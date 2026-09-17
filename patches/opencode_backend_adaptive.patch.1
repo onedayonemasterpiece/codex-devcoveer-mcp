@@ -1,0 +1,215 @@
+--- opencode_backend.py
++++ opencode_backend.py
+@@ -23,6 +23,9 @@
+ 
+ import anyio
+ 
++from model_health import ModelHealthStore
++from session_evidence import redact_recursive, redact_session
++
+ OPENCODE_URL = "http://127.0.0.1:4097"
+ AUTH_FILE = Path("/home/dev/.config/openai-codex-mcp/opencode-server.env")
+ TASK_DIR = Path("/home/dev/.local/share/openai-codex-mcp/tasks")
+@@ -182,11 +185,158 @@
+         return None
+ 
+ 
++
++def _primitive(value: Any, *, limit: int = 1000) -> Any:
++    if isinstance(value, str):
++        return value[:limit]
++    if isinstance(value, (int, float, bool)) or value is None:
++        return value
++    return None
++
++
++def _provider_state_safe(state: Any) -> dict[str, Any]:
++    if not isinstance(state, dict):
++        return {"type": "idle"}
++    result: dict[str, Any] = {}
++    for key in ("type", "attempt", "message", "action", "next", "retryAfter", "resetAt"):
++        value = _primitive(state.get(key))
++        if value is not None:
++            result[key] = redact_recursive(value)
++    result.setdefault("type", "idle")
++    return result
++
++
++def _error_fragments(value: Any, *, depth: int = 0) -> list[str]:
++    if depth > 3:
++        return []
++    if isinstance(value, str):
++        return [value[:1000]]
++    if isinstance(value, dict):
++        result: list[str] = []
++        for key in ("message", "name", "code", "type", "error", "data"):
++            if key in value:
++                result.extend(_error_fragments(value[key], depth=depth + 1))
++        return result
++    if isinstance(value, list):
++        result: list[str] = []
++        for item in value[:10]:
++            result.extend(_error_fragments(item, depth=depth + 1))
++        return result
++    return []
++
++
++def _classify_runtime(state: dict[str, Any], error: Any, *, provider: str | None) -> dict[str, Any]:
++    text = " ".join(_error_fragments(state) + _error_fragments(error)).casefold()
++    state_type = str(state.get("type") or "idle")
++    category = None
++    retryable: bool | None = None
++    runtime_status = "available"
++    suggested = "continue"
++    status_code = None
++    if "410" in text or "gone" in text or "end of life" in text or " eol" in text:
++        category, retryable, runtime_status, suggested, status_code = "eol", False, "eol", "switch_model", 410
++    elif any(x in text for x in ("free usage exceeded", "free quota", "quota exceeded", "quota_exhausted", "usage limit exceeded")):
++        category, retryable, runtime_status = "quota_exhausted", True, "temporarily_unavailable"
++        suggested = "switch_provider" if provider == "opencode" else "switch_model"
++    elif "429" in text or "ratelimit" in text or "rate limit" in text or "too many requests" in text:
++        category, retryable, runtime_status, suggested, status_code = "rate_limited", True, "temporarily_unavailable", "switch_model", 429
++    elif "timeout" in text or "timed out" in text:
++        category, retryable, runtime_status, suggested = "timeout", True, "temporarily_unavailable", "switch_model"
++    elif state_type == "retry":
++        category, retryable, runtime_status, suggested = "upstream_error", True, "retrying", "inspect_then_switch_if_no_progress"
++    elif error is not None:
++        category, retryable, runtime_status, suggested = "model_error", False, "degraded", "switch_model"
++    elif state_type == "busy":
++        runtime_status, suggested = "active", "wait"
++    return {
++        "providerRuntimeStatus": runtime_status,
++        "providerErrorCategory": category,
++        "retryable": retryable,
++        "suggestedAction": suggested,
++        "statusCode": status_code,
++    }
++
++
++def _progress_from_messages(messages: list[Any]) -> dict[str, Any]:
++    last_message_at = None
++    last_tool_at = None
++    last_progress_at = None
++    message_count = 0
++    tool_count = 0
++    total_tokens = 0
++    for message in messages:
++        if not isinstance(message, dict):
++            continue
++        message_count += 1
++        info = message.get("info") if isinstance(message.get("info"), dict) else {}
++        times = info.get("time") if isinstance(info.get("time"), dict) else {}
++        for key in ("created", "completed"):
++            value = times.get(key)
++            if isinstance(value, int):
++                last_message_at = max(last_message_at or value, value)
++                last_progress_at = max(last_progress_at or value, value)
++        tokens = info.get("tokens") if isinstance(info.get("tokens"), dict) else {}
++        for key in ("input", "output", "reasoning", "total"):
++            value = tokens.get(key)
++            if isinstance(value, int) and value >= 0:
++                total_tokens += value if key == "total" else 0
++        for part in message.get("parts", []):
++            if not isinstance(part, dict) or part.get("type") != "tool":
++                continue
++            tool_count += 1
++            state = part.get("state") if isinstance(part.get("state"), dict) else {}
++            time_value = state.get("time") if isinstance(state.get("time"), dict) else {}
++            candidates: list[int] = []
++            for key in ("start", "end", "created", "completed"):
++                value = time_value.get(key)
++                if isinstance(value, int):
++                    candidates.append(value)
++            part_time = part.get("time") if isinstance(part.get("time"), dict) else {}
++            for key in ("start", "end", "created", "completed"):
++                value = part_time.get(key)
++                if isinstance(value, int):
++                    candidates.append(value)
++            if candidates:
++                value = max(candidates)
++                last_tool_at = max(last_tool_at or value, value)
++                last_progress_at = max(last_progress_at or value, value)
++    return {
++        "lastMessageAt": last_message_at,
++        "lastToolCallAt": last_tool_at,
++        "lastProgressAt": last_progress_at,
++        "messageCount": message_count,
++        "toolCallCount": tool_count,
++        "observedTokenTotal": total_tokens or None,
++    }
++
++
++def _bounded_safe_snapshot(messages: list[Any], *, max_messages: int = 12, max_chars: int = 60_000) -> list[dict[str, Any]]:
++    candidates = [m for m in messages if isinstance(m, dict)][-max_messages:]
++    safe = redact_session(candidates)
++
++    def bound(value: Any, depth: int = 0) -> Any:
++        if depth > 8:
++            return "<truncated>"
++        if isinstance(value, str):
++            return value[:4000] + ("…" if len(value) > 4000 else "")
++        if isinstance(value, list):
++            return [bound(x, depth + 1) for x in value[:30]]
++        if isinstance(value, dict):
++            return {str(k)[:120]: bound(v, depth + 1) for k, v in list(value.items())[:50]}
++        return value
++
++    bounded = [bound(x) for x in safe]
++    while bounded and len(json.dumps(bounded, ensure_ascii=False)) > max_chars:
++        bounded.pop(0)
++    return bounded
++
++
+ class OpenCodeBackend:
+-    def __init__(self, base_url: str = OPENCODE_URL) -> None:
++    def __init__(self, base_url: str = OPENCODE_URL, *, health_store: ModelHealthStore | None = None) -> None:
+         if base_url != OPENCODE_URL:
+             raise ValueError("OpenCode URL is fixed")
+         self.base_url = base_url
++        self.health_store = health_store or ModelHealthStore()
+ 
+     def _request_sync(self, method: str, path: str, *, directory: str | None = None,
+                       payload: dict[str, Any] | None = None, timeout: float = 30.0) -> Any:
+@@ -256,6 +406,9 @@
+                     continue
+                 capabilities = model.get("capabilities") if isinstance(model.get("capabilities"), dict) else {}
+                 cost = model.get("cost") if isinstance(model.get("cost"), dict) else {}
++                input_caps = capabilities.get("input") if isinstance(capabilities.get("input"), dict) else {}
++                output_caps = capabilities.get("output") if isinstance(capabilities.get("output"), dict) else {}
++                limits = model.get("limit") if isinstance(model.get("limit"), dict) else {}
+                 records.append({
+                     "id": selection,
+                     "selection": selection,
+@@ -267,19 +420,50 @@
+                     "capabilities": {
+                         "reasoning": capabilities.get("reasoning") is True,
+                         "toolcall": capabilities.get("toolcall") is True,
++                        "attachment": capabilities.get("attachment") is True,
++                        "modalities": {
++                            "input": sorted(k for k, v in input_caps.items() if v is True),
++                            "output": sorted(k for k, v in output_caps.items() if v is True),
++                        },
++                    },
++                    "limits": {
++                        "context": limits.get("context") if isinstance(limits.get("context"), int) else None,
++                        "output": limits.get("output") if isinstance(limits.get("output"), int) else None,
+                     },
+                     "variants": sorted(str(x) for x in (model.get("variants") or {}).keys())[:32] if isinstance(model.get("variants"), dict) else [],
+-                    # NVIDIA NIM usage is credentialed/billable even when the
+-                    # generic models.dev price fields are zero or incomplete.
++                    # NVIDIA is a normal non-scarce operational resource for this owner,
++                    # but it is still credentialed; generic models.dev zero prices do not
++                    # make it a Zen-style free burst resource.
+                     "free": (
+                         provider_id != "nvidia"
+                         and cost.get("input") == 0
+                         and cost.get("output") == 0
+                     ),
+                     "providerConnected": True,
+-                    "taskRoutingReady": True,
+                 })
+-        return {"connected": sorted(allowed), "models": sorted(records, key=lambda x: x["id"])}
++        health_by_selection = self.health_store.all_summaries([r["selection"] for r in records])
++        provider_health = {provider_id: self.health_store.provider_summary(provider_id) for provider_id in allowed}
++        for record in records:
++            health = health_by_selection[record["selection"]]

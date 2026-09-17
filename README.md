@@ -4,35 +4,50 @@ Private source-of-truth repository for the DevCoveer execution MCP used by ChatG
 
 ## Current state
 
-The live host currently has a newer runtime than the historical Git snapshot available for import. The live runtime must be recovered byte-for-byte before this repository becomes deployment authority.
+The original DevCoveer host is unavailable after the hosting failure, so recovery cannot depend on copying host-local bytes. The repository now carries the latest accepted source lineage needed to rebuild the control plane on DevCoveer2:
 
-- known live bridge version: `3.8.0` (host-local; exact bytes not yet imported here)
-- historical Git snapshot: `3.6.1` from `onedayonemasterpiece/my-data-hub@c15688a9f16df9d9acf4478ebe854993c03b2679`
-- installed host path: `/home/dev/.local/libexec/openai-codex-mcp/`
-- public entrypoint on host: `/home/dev/.local/bin/codex-mcp-server`
-- transport: `codex-devserver-tunnel.service` via the OpenAI secure tunnel
-- OpenCode backend: authenticated localhost service (`opencode-devcoveer.service`)
+- adaptive OpenCode routing v3.10 and model-health logic;
+- source handoff support;
+- default OpenCode policy;
+- bounded direct project/host probes;
+- fail-closed installers and regression tests for those layers.
 
-**Do not deploy the historical snapshot as current.** It is provenance only.
+Historical `3.6.1` material remains provenance only and must not be deployed as the current runtime.
+
+Canonical host locations remain:
+
+- runtime: `/home/dev/.local/libexec/openai-codex-mcp/`;
+- public entrypoint: `/home/dev/.local/bin/codex-mcp-server`;
+- secure transport service: `codex-devserver-tunnel.service`;
+- OpenCode backend: authenticated localhost service `opencode-devcoveer.service`.
 
 ## Repository policy
 
-This repository owns the base DevCoveer execution bridge. Product-specific MCPs and adapters stay in their own repositories (for example Dataset Loop). Secrets, credentials, task state, tunnel credentials/IDs, generated runtime state, and user data must never be committed.
+This repository owns the base DevCoveer execution bridge. Product-specific MCPs and adapters stay in their own repositories. Secrets, credentials, task state, tunnel credentials/IDs, generated runtime state and user data must never be committed.
 
-GitHub Actions are intentionally not used. Verification and deployment are performed on DevCoveer using the checked-in tests and explicit rollback/readback procedures.
+Production runtime must be built from a validated `main` commit (or a release tag pointing to such a commit), not from a long-lived feature branch. GitHub Actions are intentionally not required for this repository; source verification and deployment are performed on DevCoveer using checked-in tests plus explicit rollback/readback procedures.
+
+## Source verification
+
+The checked-in regression environment is declared in `requirements-test.txt`. On a clean DevCoveer host run:
+
+```bash
+bash scripts/verify-source.sh
+```
+
+The verifier creates an ephemeral `uv run` environment using Python 3.12.3, runs the complete `tests/` suite and compile-checks `runtime/`, `scripts/` and `tests/`.
 
 ## Operating contract
 
 The canonical development modes, model resource classes, live-stall diagnostics, short-term model-health memory and adaptive failover policy are defined in [`docs/operating-model-and-adaptive-routing.md`](docs/operating-model-and-adaptive-routing.md).
 
-This contract is deliberately stored in Git rather than relying on one ChatGPT conversation or personal memory.
+Source-handoff behavior is defined in [`docs/source-handoff-p0.md`](docs/source-handoff-p0.md), and direct diagnostics in [`docs/direct-probes.md`](docs/direct-probes.md).
 
-## Recovery sequence
+## DevCoveer2 recovery sequence
 
-1. Recover the exact currently installed `3.8.0` source and verification files from DevCoveer without changing the running installation.
-2. Redact/omit credentials and runtime state; compare hashes with the installed files.
-3. Commit those exact source bytes as the first current source checkpoint.
-4. Run local regression tests on DevCoveer.
-5. Only after exact readback, make this repository the deployment source-of-truth.
-
-See `docs/provenance.md` after the historical import.
+1. Validate the exact candidate source on DevCoveer2 with `bash scripts/verify-source.sh`.
+2. Merge only the validated candidate into `main` and fresh-read the resulting main SHA.
+3. Reconstruct the runtime under `/home/dev/.local/libexec/openai-codex-mcp/` from that main SHA using the checked-in fail-closed installers; do not restore obsolete historical snapshots.
+4. Start the authenticated localhost OpenCode service and the MCP runtime under `dev`; use root only for system-level service/install operations where required.
+5. Recreate secure-tunnel credentials/state explicitly, then run local and external readback acceptance before treating the service as restored.
+6. Preserve the old successful deployment behavior as a regression baseline, while preferring the current source contract when it is demonstrably better and passes acceptance.

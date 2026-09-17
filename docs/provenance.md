@@ -1,57 +1,59 @@
-# Provenance and recovery
+# Provenance and DevCoveer2 recovery
 
-## What is known
+## Recovery boundary
 
-The DevCoveer execution MCP existed and operated before this repository was created. Its installed executable source is host-local rather than a Git checkout.
+The original DevCoveer host is unavailable after the hosting failure. Its host-local installed runtime and runtime state therefore cannot be treated as a donor or read back during this recovery.
 
-Known host paths and services:
+The repository and its Git history are the durable evidence available for reconstruction. Historical host observations remain useful regression evidence, but any path that requires reading or copying files from the old host is obsolete.
 
-- source: `/home/dev/.local/libexec/openai-codex-mcp/`
-- entrypoint: `/home/dev/.local/bin/codex-mcp-server`
-- secure transport: `codex-devserver-tunnel.service`
-- native Codex backend: persistent `codex app-server --stdio`
-- OpenCode backend: authenticated localhost `opencode-devcoveer.service`
+Canonical runtime/service locations remain:
 
-The current live bridge has been observed as version `3.8.0`, but its exact current bytes have not yet been imported into this repository. Until that readback is complete, this repository is **not** deployment authority.
+- runtime: `/home/dev/.local/libexec/openai-codex-mcp/`;
+- public entrypoint: `/home/dev/.local/bin/codex-mcp-server`;
+- secure transport: `codex-devserver-tunnel.service`;
+- native Codex backend: persistent `codex app-server --stdio`;
+- OpenCode backend: authenticated localhost `opencode-devcoveer.service`.
 
-## Historical Git snapshot
+## Historical baseline
 
-A safe snapshot of the installed MCP was committed on 2026-09-01 to:
+A safe snapshot of the earlier installed MCP was committed on 2026-09-01 to:
 
-- repository: `onedayonemasterpiece/my-data-hub`
-- branch: `feat/devcoveer-opencode-dataset-loop-20260901`
-- commit: `c15688a9f16df9d9acf4478ebe854993c03b2679`
-- path: `integrations/devcoveer/openai-codex-mcp/baseline/`
-- observed bridge version: `3.6.1`
-- observed OpenCode version: `1.18.15`
+- repository: `onedayonemasterpiece/my-data-hub`;
+- branch: `feat/devcoveer-opencode-dataset-loop-20260901`;
+- commit: `c15688a9f16df9d9acf4478ebe854993c03b2679`;
+- path: `integrations/devcoveer/openai-codex-mcp/baseline/`;
+- observed bridge version: `3.6.1`;
+- observed OpenCode version: `1.18.15`.
 
-The source snapshot contains at least `codex-chatgpt-bridge.py`, `opencode_backend.py`, `README.md`, and `run-codex-mcp`. Its original SHA-256 manifest is preserved under `historical/3.6.1/BASELINE_MANIFEST.json`.
+That snapshot contains `codex-chatgpt-bridge.py`, `opencode_backend.py`, `README.md` and `run-codex-mcp`; its original SHA-256 manifest is preserved under `historical/3.6.1/BASELINE_MANIFEST.json`.
 
-This snapshot is historical evidence only. It must not overwrite the newer live runtime.
+It is a regression/reconstruction baseline, not a production version to deploy unchanged.
+
+## Later accepted lineage
+
+Subsequent checked-in work records the later DevCoveer behavior that existed after the historical snapshot, including:
+
+- adaptive OpenCode routing v3.10 and bounded model-health memory;
+- Acceptance Gate-aware task semantics retained by the v3.10 rollout lineage;
+- source handoff;
+- default OpenCode policy;
+- bounded direct project and host probes.
+
+The associated installers contain exact hashes from the previously observed host and are valuable verification evidence. On DevCoveer2 they must not be interpreted as proof that their old host-local base files already exist. Clean-host runtime reconstruction must first establish a complete source-controlled base and then apply/verify the later behavior without regressing the historical and accepted contracts.
 
 ## Related lineage
 
-`onedayonemasterpiece/ArtKodex` contains an earlier native Codex app-server integration (`src/artkodex/codex_app_server.py`) with `codex app-server --stdio`, turn lifecycle handling and session recovery. It is useful lineage but is not the source owner of the present DevCoveer bridge.
+`onedayonemasterpiece/ArtKodex` contains an earlier native Codex app-server integration (`src/artkodex/codex_app_server.py`) with `codex app-server --stdio`, turn lifecycle handling and session recovery. It is useful lineage but is not by itself the current bridge.
 
-`onedayonemasterpiece/dataset-loop-mcp` contains source-controlled Dataset Loop-specific DevCoveer operator/runtime adapters. Those are downstream/product-specific and are not the base Codex DevCoveer MCP.
+`onedayonemasterpiece/dataset-loop-mcp` owns Dataset Loop-specific DevCoveer adapters and remains downstream of the base execution bridge.
 
-`onedayonemasterpiece/events-bot-new` contains the 2026-09-03 transport incident record documenting the live secure-tunnel topology and confirming that the installed bridge was operational state under `~/.local`, not a Git checkout.
+`onedayonemasterpiece/events-bot-new` contains the 2026-09-03 secure-tunnel incident record and topology evidence.
 
-## Recovery rule
+## Current recovery rule
 
-The first current source checkpoint in this repository must be produced from the **actual installed runtime**, not reconstructed from the 3.6.1 snapshot.
-
-Use `scripts/recover-live-runtime.py` on DevCoveer. The utility is deliberately read-only with respect to the installed runtime: it inventories regular files, hashes them, rejects symlinks and secret-looking content, and copies eligible source text only into an ignored local `.recovery/` staging directory.
-
-Required sequence:
-
-1. Ensure no source mutation, service restart, deploy, or task cancellation is part of the recovery step.
-2. Run the recovery utility against the fixed installed source directory.
-3. Confirm the observed bridge version is exactly the expected live version.
-4. Review the generated inventory and candidate files for secrets/runtime state.
-5. Compare hashes to the installed files independently.
-6. Promote reviewed source into the repository in a normal branch/commit.
-7. Run the existing DevCoveer verification suite against the recovered source.
-8. Only then define a source-controlled install/rollback procedure and make this repository deployment authority.
-
-No GitHub Actions are required or planned for this repository.
+1. `main` is the intended source-of-truth. Long-lived feature branches are not production deployment sources.
+2. Validate candidate source on DevCoveer2 with the checked-in regression suite before promotion.
+3. Use the 3.6.1 snapshot and later accepted host evidence as regression baselines; do not blindly restore either old implementation.
+4. Do not invent old runtime state, credentials, task records, tunnel credentials or provider sessions. Recreate those explicitly where required.
+5. Before activating the execution MCP on DevCoveer2, establish a complete clean-host runtime source rather than relying on installers that assume the unavailable old 3.9 installation.
+6. After activation, prove localhost OpenCode/Codex execution, MCP discovery, task lifecycle, direct probes and secure-tunnel readback on the new host.

@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "projects": {
+    "codex-devcoveer-mcp": {
+      "github_repo": "onedayonemasterpiece/codex-devcoveer-mcp",
+      "remotes": {
+        "origin": "onedayonemasterpiece/codex-devcoveer-mcp"
+      },
+      "executables": {
+        "gh": "/usr/local/bin/gh"
+      },
+      "services": {
+        "mcp_tunnel": {
+          "unit": "codex-devserver-tunnel.service",
+          "scope": "user",
+          "ports": []
+        },
+        "opencode": {
+          "unit": "opencode-devcoveer.service",
+          "scope": "user",
+          "ports": []
+        }
+      },
+      "logs": {
+        "mcp_tunnel": {
+          "type": "journal",
+          "service": "mcp_tunnel"
+        },
+        "opencode": {
+          "type": "journal",
+          "service": "opencode"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/codex-devcoveer-mcp",
+        "runtime": "/home/dev/.local/libexec/openai-codex-mcp",
+        "home_codex": "/home/dev/.codex",
+        "home_local": "/home/dev/.local",
+        "projects": "/home/dev/projects",
+        "codex_sessions": {
+          "path": "/home/dev/.codex/sessions",
+          "profile": "codex_sessions"
+        },
+        "codex_worktrees": {
+          "path": "/home/dev/.codex/worktrees",
+          "profile": "codex_worktrees"
+        }
+      },
+      "health": {},
+      "runtimes": {
+        "bridge_python": {
+          "type": "cli",
+          "argv": [
+            "/home/dev/.local/share/openai-codex-mcp/bridge-venv/bin/python",
+            "--version"
+          ]
+        },
+        "mcp_package": {
+          "type": "package",
+          "python": "/home/dev/.local/share/openai-codex-mcp/bridge-venv/bin/python",
+          "distribution": "mcp"
+        }
+      },
+      "runtime_files": {
+        "bridge": "/home/dev/.local/libexec/openai-codex-mcp/codex-chatgpt-bridge.py",
+        "opencode_backend": "/home/dev/.local/libexec/openai-codex-mcp/opencode_backend.py",
+        "model_health": "/home/dev/.local/libexec/openai-codex-mcp/model_health.py",
+        "source_handoff": "/home/dev/.local/libexec/openai-codex-mcp/source_handoff.py"
+      },
+      "config_presence": {}
+    },
+    "vibepublish": {
+      "github_repo": "onedayonemasterpiece/vibepublish",
+      "remotes": {
+        "origin": "onedayonemasterpiece/vibepublish"
+      },
+      "executables": {
+        "gh": "/usr/local/bin/gh"
+      },
+      "services": {
+        "server": {
+          "unit": "vibepublish-acceptance-20260905-server.service",
+          "scope": "user",
+          "ports": [
+            18766
+          ],
+          "executable": "/home/dev/projects/vibepublish-acceptance-20260905/.venv/bin/python",
+          "working_directory": "/home/dev/projects/vibepublish-acceptance-20260905"
+        },
+        "worker": {
+          "unit": "vibepublish-acceptance-20260905-worker.service",
+          "scope": "user",
+          "ports": [],
+          "executable": "/home/dev/projects/vibepublish-acceptance-20260905/.venv/bin/python",
+          "working_directory": "/home/dev/projects/vibepublish-acceptance-20260905"
+        }
+      },
+      "logs": {
+        "server": {
+          "type": "journal",
+          "service": "server"
+        },
+        "worker": {
+          "type": "journal",
+          "service": "worker"
+        }
+      },
+      "roots": {
+        "runtime_source": "/home/dev/projects/vibepublish-acceptance-20260905",
+        "runtime_state": "/home/dev/.local/state/vibepublish-acceptance-20260905"
+      },
+      "health": {
+        "server": {
+          "url": "http://127.0.0.1:18766/health",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 2.0,
+          "body_bytes": 4096
+        }
+      },
+      "runtimes": {
+        "python": {
+          "type": "cli",
+          "argv": [
+            "/home/dev/projects/vibepublish-acceptance-20260905/.venv/bin/python",
+            "--version"
+          ]
+        },
+        "telethon": {
+          "type": "package",
+          "python": "/home/dev/projects/vibepublish-acceptance-20260905/.venv/bin/python",
+          "distribution": "Telethon"
+        }
+      },
+      "runtime_files": {
+        "server_source": "/home/dev/projects/vibepublish-acceptance-20260905/deploy/devcoveer/serve.py",
+        "worker_source": "/home/dev/projects/vibepublish-acceptance-20260905/deploy/devcoveer/native_worker.py"
+      },
+      "config_presence": {}
+    },
+    "dataset-loop-mcp": {
+      "github_repo": "onedayonemasterpiece/dataset-loop-mcp",
+      "remotes": {
+        "origin": "onedayonemasterpiece/dataset-loop-mcp"
+      },
+      "executables": {
+        "gh": "/usr/local/bin/gh"
+      },
+      "services": {
+        "mcp": {
+          "unit": "dataset-loop-mcp.service",
+          "scope": "user",
+          "ports": [
+            8147
+          ]
+        }
+      },
+      "logs": {
+        "mcp": {
+          "type": "journal",
+          "service": "mcp"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/dataset-loop-mcp"
+      },
+      "health": {
+        "mcp": {
+          "url": "http://127.0.0.1:8147/health",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 2.0,
+          "body_bytes": 4096
+        }
+      },
+      "runtimes": {},
+      "runtime_files": {},
+      "config_presence": {}
+    }
+  }
+}

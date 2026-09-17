@@ -1,0 +1,5 @@
+# Minimal dependencies for the checked-in DevCoveer source/regression suite.
+# Runtime/provider credentials are intentionally not part of this file.
+anyio
+jsonschema
+pytest

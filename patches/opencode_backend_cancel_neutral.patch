@@ -1,0 +1,24 @@
+--- opencode_backend.py
++++ opencode_backend.py
+@@ -233,7 +233,9 @@
+     runtime_status = "available"
+     suggested = "continue"
+     status_code = None
+-    if "410" in text or "gone" in text or "end of life" in text or " eol" in text:
++    if "messageabortederror" in text or "message aborted" in text:
++        category, retryable, runtime_status, suggested = "cancelled", None, "available", "continue"
++    elif "410" in text or "gone" in text or "end of life" in text or " eol" in text:
+         category, retryable, runtime_status, suggested, status_code = "eol", False, "eol", "switch_model", 410
+     elif any(x in text for x in ("free usage exceeded", "free quota", "quota exceeded", "quota_exhausted", "usage limit exceeded")):
+         category, retryable, runtime_status = "quota_exhausted", True, "temporarily_unavailable"
+@@ -654,7 +656,9 @@
+         if selection and observed_provider and SELECTION_RE.fullmatch(selection):
+             category = runtime.get("providerErrorCategory")
+             event_outcome = None
+-            if status == "completed":
++            if category == "cancelled":
++                event_outcome = "cancelled"
++            elif status == "completed":
+                 event_outcome = "success"
+                 category = "ok"
+             elif category == "timeout":

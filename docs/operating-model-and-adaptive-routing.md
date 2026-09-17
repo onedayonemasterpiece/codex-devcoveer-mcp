@@ -268,3 +268,29 @@ A model can be catalog-listed and historically verified while currently quota-ex
 - ChatGPT personal memory is optional convenience only and must not be required for correct operation.
 - Any future ChatGPT session should be able to recover this policy from the repository/MCP without the owner repeating it.
 - Product-specific source repositories remain separate; this document governs execution/routing behavior, not their implementation content.
+
+## 11. Rolling 24-hour operating success criteria
+
+The operating model is considered healthy only when a rolling 24-hour retrospective of the real DevCoveer task registry and terminal evidence shows that ChatGPT is using the control plane as designed, not merely describing the policy correctly.
+
+Success criteria for default Mode A:
+
+1. **Direct-read routing:** zero OpenCode tasks whose primary purpose is to obtain deterministic facts already supported by `project_probe`, `host_probe`, `list_models`, `list_tasks`, `read_task`, or `get_task_evidence`. Unsupported read-only operations are allowed, but the missing direct capability should be explicit.
+2. **ChatGPT source authorship:** repository code changes are authored by ChatGPT. When ChatGPT cannot write the repository directly, `stage_source_handoff` is the normal transport for the exact ChatGPT-authored patch. The handoff executor may verify, test, commit, push, or deploy; it should not independently rewrite the supplied source.
+3. **ChatGPT documentation authorship:** zero OpenCode tasks whose primary purpose is writing or rewriting repository documentation (`README`, Markdown, operator docs, runbooks, or similar source-controlled prose). Documentation is source and follows the same authorship rule as code.
+4. **Source Handoff coverage:** for repository changes that require DevCoveer transport because no reliable ChatGPT-side write path is available, Source Handoff coverage should be 100%. A normal handoff task should show validation/execution activity, not model-authored source edits.
+
+Allowed exceptions are explicit owner-selected DAEP/Codex/agent-authoring modes, runtime configuration or mutation, service restart/deployment, actual model inference/smoke tests, and unsupported operations that genuinely require an executor.
+
+The retrospective should use `list_tasks` plus terminal evidence for suspected violations and report at least:
+
+```text
+direct_read_agent_violations
+source_authoring_agent_violations
+documentation_authoring_agent_violations
+source_handoff_required
+source_handoff_used
+source_handoff_coverage
+```
+
+A successful next-day check targets zero for the three violation counters and 100% `source_handoff_coverage` whenever Source Handoff was required. If a violation occurs, fix the routing/reminder/tool contract rather than relying on the owner to repeat the rule in every chat.
