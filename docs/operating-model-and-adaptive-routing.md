@@ -61,7 +61,20 @@ Properties:
 
 Default routing priority: first.
 
-### Class R2 — elastic/unpredictable resource: NVIDIA
+### Class R2 — bounded free resource: Groq GPT-OSS-120B pool
+
+Current provider IDs: `groq`, `groq2`, `groq3`, all serving GPT-OSS-120B.
+
+Properties:
+- preferred immediately after Zen;
+- three separately configured owner credentials are available to the router;
+- each key is independently rate-limited and must use the existing limiter/health accounting;
+- provider/key rotation is `groq -> groq2 -> groq3`;
+- a rate limit on one key does not justify skipping the remaining admitted keys.
+
+Default routing priority: second.
+
+### Class R3 — elastic/unpredictable resource: NVIDIA
 
 Properties:
 - normal working resource, not treated as scarce;
@@ -70,11 +83,11 @@ Properties:
 - 429/rate-limit and latency observations should normally be model/endpoint scoped before being generalized to the whole provider;
 - hard 410/EOL is permanent for that exact endpoint until catalog evidence changes.
 
-Default routing priority: second.
+Default routing priority: third.
 
-### Class R3 — metered/scarce resource
+### Class R4 — metered/scarce resource
 
-Current example: GigaChat. Future examples may include quota-limited ChatGPT/Codex models such as GPT-5.6 Terra when an account limit applies.
+Current example: GigaChat. Future examples may include other explicitly metered providers.
 
 Properties:
 - expected to be comparatively reliable/fast when available;
@@ -86,7 +99,7 @@ Default OpenCode routing priority: third.
 
 Canonical default order for ordinary OpenCode execution:
 
-`Zen -> NVIDIA -> GigaChat/metered resource`
+`Zen -> Groq GPT-OSS-120B (groq -> groq2 -> groq3) -> NVIDIA -> GigaChat`
 
 The order is capability-aware: a provider/model that cannot satisfy required tools, context or modalities is skipped.
 
@@ -239,11 +252,13 @@ When no useful recent telemetry exists, perform the minimum bounded probe necess
 1. Start with the highest-ranked eligible Zen model.
 2. Observe real progress, not just task `running` state.
 3. On suspected stall, inspect live safe session/runtime state.
-4. On confirmed Zen quota or stall with no progress, preserve the task/session and switch to the best currently ranked eligible NVIDIA model.
-5. If that NVIDIA model 429s/stalls, update short-term telemetry and try the next ranked NVIDIA model rather than abandoning the provider immediately.
-6. After bounded NVIDIA attempts, switch the same task/session to GigaChat or another eligible metered resource.
-7. No silent fallback: provider/model switches must be visible in task state/evidence.
-8. On terminal OpenCode turns, review exact terminal evidence and record accepted/rejected.
+4. On confirmed Zen quota or stall with no progress, preserve the task/session and switch to the Groq GPT-OSS-120B pool.
+5. Rotate the admitted Groq credentials in order `groq -> groq2 -> groq3`, respecting per-key limiter/health state.
+6. After bounded Groq attempts, switch to the best currently ranked eligible NVIDIA model.
+7. If that NVIDIA model 429s/stalls, update short-term telemetry and try the next ranked NVIDIA model rather than abandoning the provider immediately.
+8. After bounded NVIDIA attempts, switch the same task/session to GigaChat.
+9. No silent fallback: provider/model switches must be visible in task state/evidence.
+10. On terminal OpenCode turns, review exact terminal evidence and record accepted/rejected.
 
 ## 9. Separation of static catalog, historical verification and live health
 
