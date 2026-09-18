@@ -331,6 +331,38 @@ def secret_like(name: str) -> bool:
     return any(re.search(pattern, n) for pattern in credential_patterns)
 
 
+def owner_managed_credential(name: str) -> bool:
+    """Return True only for credentials the owner intentionally maintains.
+
+    CLI/service login state (gh/fly/etc.) and locally generated control-plane
+    secrets stay out of /home/dev/.env. External provider/account credentials
+    remain owner-managed even when consumed by MCP code.
+    """
+    n = canonical(name)
+    if not secret_like(n):
+        return False
+    if n in DERIVED_AUTH_STATE_NAMES:
+        return False
+
+    family = credential_family(n)
+
+    # Provider credentials remain owner inputs even when their consumer is an MCP.
+    if family in {"TELEGRAM", "VK", "MAX"}:
+        return True
+
+    # Internal/local service credentials are generated or recovered elsewhere.
+    if any(pattern.search(n) for pattern in INTERNAL_RUNTIME_SECRET_PATTERNS):
+        return False
+    if "_MCP_" in n or n.startswith("MCP_"):
+        return False
+
+    # Generic GitHub/Fly credentials come from CLI login / CI auth state.
+    if family in {"GITHUB", "FLY.IO", "OAUTH / MCP"}:
+        return False
+
+    return True
+
+
 def credential_family(name: str) -> str:
     n = canonical(name)
     # Specific embedded providers win over a broader prefix. Example:
@@ -347,6 +379,8 @@ def credential_family(name: str) -> str:
         return "GIGACHAT"
     if n.startswith("GROQ") or "_GROQ" in n:
         return "GROQ"
+    if n.startswith("FOUR_") or "_FOUR_" in n:
+        return "OPENAI / 4O"
     if n.startswith("OPENAI_") or n.startswith("CODEX_") or "_OPENAI_" in n:
         return "OPENAI / CODEX"
     if n.startswith("KAGGLE_") or "_KAGGLE_" in n:
@@ -365,6 +399,8 @@ def credential_family(name: str) -> str:
         return "GITHUB"
     if n.startswith("FLY_") or "_FLY_" in n:
         return "FLY.IO"
+    if "PINTEREST" in n:
+        return "PINTEREST"
     if n.startswith("POSTBOX_") or "_POSTBOX_" in n:
         return "POSTBOX"
     if n.startswith("NOTISEND_") or "_NOTISEND_" in n:
