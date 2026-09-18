@@ -29,7 +29,7 @@ CHECK_TIMEOUT_SECONDS: dict[str, float] = {
     "file_list": 25.0, "file_stat": 12.0, "file_sha256": 35.0, "github_status": 50.0,
     "inventory": 5.0, "service": 12.0, "listeners": 15.0, "logs": 25.0,
     "resources": 50.0, "health": 15.0, "runtime": 20.0, "runtime_file": 35.0,
-    "config_presence": 15.0,
+    "config_presence": 15.0, "opencode_catalog": 20.0,
 }
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_TEXT_BYTES = 12 * 1024
@@ -156,6 +156,10 @@ HOST_CHECK_SCHEMAS = [
         "keys": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": True,
                  "items": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z_][A-Za-z0-9_]*$"}},
     }, ["source", "keys"]),
+    _check_schema("opencode_catalog", {
+        "catalog": {"type": "string", "minLength": 1, "maxLength": 64},
+        "provider": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    }, ["catalog"]),
 ]
 
 PROJECT_PROBE_INPUT_SCHEMA: dict[str, Any] = _obj({
@@ -167,6 +171,17 @@ HOST_PROBE_INPUT_SCHEMA: dict[str, Any] = _obj({
     "project": {"type": "string", "minLength": 1, "maxLength": 128},
     "checks": {"type": "array", "minItems": 1, "maxItems": MAX_CHECKS, "items": {"oneOf": HOST_CHECK_SCHEMAS}},
 }, ["project", "checks"])
+
+HOST_ACTION_OPERATION_SCHEMA: dict[str, Any] = _obj({
+    "id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "service": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "operation": {"type": "string", "enum": ["start", "restart", "enable_start"]},
+}, ["id", "service", "operation"])
+
+HOST_ACTION_INPUT_SCHEMA: dict[str, Any] = _obj({
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "actions": {"type": "array", "minItems": 1, "maxItems": 6, "items": HOST_ACTION_OPERATION_SCHEMA},
+}, ["project", "actions"])
 
 
 class ProbeError(Exception):
