@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
 from pathlib import Path
 import sys
+import threading
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime"
 sys.path.insert(0, str(RUNTIME))
 
 import direct_probes as dp
+import direct_probe_host_runtime as host_runtime
 import direct_probe_host_services as host_services
 
 
@@ -87,3 +91,159 @@ def test_system_scope_does_not_receive_user_bus_environment():
     env = host_services._systemd_env("system")
     assert "XDG_RUNTIME_DIR" not in env
     assert "DBUS_SESSION_BUS_ADDRESS" not in env
+
+
+def test_allowlisted_user_service_action_has_no_generic_shell_surface(monkeypatch):
+    calls: list[list[str]] = []
+
+    async def fake_run_process(argv, *, env, timeout, output_limit):
+        calls.append(argv)
+        if "show" in argv:
+            return dp.ProcessResult(
+                b"LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=777\n",
+                b"",
+                0,
+                False,
+                1,
+            )
+        return dp.ProcessResult(b"", b"", 0, False, 1)
+
+    monkeypatch.setattr(host_services, "_run_process", fake_run_process)
+    binding = {
+        "services": {
+            "fixture": {
+                "unit": "fixture.service",
+                "scope": "user",
+                "direct_actions": ["start", "restart"],
+            }
+        }
+    }
+
+    data = run(
+        host_services._service_action(
+            binding,
+            {"id": "restart", "service": "fixture", "operation": "restart"},
+        )
+    )
+
+    assert calls[0] == ["/usr/bin/systemctl", "--user", "restart", "fixture.service"]
+    assert data["active_state"] == "active"
+    assert data["main_pid"] == 777
+
+    try:
+        run(
+            host_services._service_action(
+                binding,
+                {"id": "enable", "service": "fixture", "operation": "enable_start"},
+            )
+        )
+    except dp.ProbeError as exc:
+        assert exc.status == "denied"
+        assert exc.category == "target_denied"
+    else:
+        raise AssertionError("non-allowlisted service action was accepted")
+
+
+def test_system_service_action_is_denied_even_if_binding_requests_it():
+    binding = {
+        "services": {
+            "system": {
+                "unit": "fixture.service",
+                "scope": "system",
+                "direct_actions": ["restart"],
+            }
+        }
+    }
+    try:
+        run(
+            host_services._service_action(
+                binding,
+                {"id": "restart", "service": "system", "operation": "restart"},
+            )
+        )
+    except dp.ProbeError as exc:
+        assert exc.status == "denied"
+        assert exc.category == "target_denied"
+    else:
+        raise AssertionError("system service action must not be reachable directly")
+
+
+def test_opencode_catalog_probe_returns_metadata_not_credentials(tmp_path):
+    username = "devcoveer"
+    password = "secret-value-that-must-not-return"
+    expected = "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode()
+    response = {
+        "providers": [
+            {
+                "id": "groq2",
+                "models": {
+                    "openai/gpt-oss-120b": {
+                        "name": "GPT-OSS-120B",
+                        "status": "active",
+                        "capabilities": {"reasoning": True, "toolcall": True},
+                    }
+                },
+            },
+            {"id": "nvidia", "models": {"model-a": {"status": "active"}}},
+        ]
+    }
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            assert self.path == "/config/providers"
+            assert self.headers.get("Authorization") == expected
+            body = __import__("json").dumps(response).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return None
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        auth = tmp_path / "opencode-server.env"
+        auth.write_text(
+            f"OPENCODE_SERVER_USERNAME={username}\n"
+            f"OPENCODE_SERVER_PASSWORD={password}\n",
+            encoding="utf-8",
+        )
+        binding = {
+            "opencode_catalogs": {
+                "main": {
+                    "url": f"http://127.0.0.1:{server.server_port}/config/providers",
+                    "auth_file": str(auth),
+                    "username_key": "OPENCODE_SERVER_USERNAME",
+                    "password_key": "OPENCODE_SERVER_PASSWORD",
+                }
+            }
+        }
+        data = run(
+            host_runtime._opencode_catalog(
+                binding,
+                {"id": "catalog", "kind": "opencode_catalog", "catalog": "main", "provider": "groq2"},
+            )
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+
+    assert data["catalog"] == "main"
+    assert data["provider_filter"] == "groq2"
+    assert data["models"] == [
+        {
+            "id": "openai/gpt-oss-120b",
+            "name": "GPT-OSS-120B",
+            "status": "active",
+            "reasoning": True,
+            "toolcall": True,
+        }
+    ]
+    encoded = repr(data)
+    assert username not in encoded
+    assert password not in encoded
+    assert data["values_returned"] is False
