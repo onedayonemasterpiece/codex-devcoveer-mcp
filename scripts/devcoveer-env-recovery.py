@@ -67,7 +67,7 @@ SENSITIVE = re.compile(
     r"(?:^|_)(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIALS?|SESSION|AUTH|"
     r"BUNDLE|API_ID|API_HASH|DATABASE_URL|DSN|PRIVATE|SIGNING|SALT|COOKIE|"
     r"BEARER|OAUTH|ACCESS_KEY|SERVICE_ACCOUNT|USERNAME|USER_NAME|LOGIN|"
-    r"CLIENT_ID|CLIENT_SECRET|POSTGRES_USER|DB_USER)(?:_|$)"
+    r"CLIENT_ID|CLIENT_SECRET|USERNAME|USER_NAME|USER|POSTGRES_USER|DB_USER)(?:_|$)"
 )
 PY_PATTERNS = (
     re.compile(r"""os\.getenv\(\s*["']([A-Z][A-Z0-9_]+)["']"""),
@@ -711,6 +711,57 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
     }
 
 
+REF_PREFIX = "@ref:"
+
+
+def resolve_owner_values(values: dict[str, str]) -> dict[str, str]:
+    """Resolve owner @ref: aliases without mutating the editable file."""
+    resolved: dict[str, str] = {}
+
+    def one(key: str, stack: tuple[str, ...] = ()) -> str:
+        if key in resolved:
+            return resolved[key]
+        if key in stack:
+            raise ValueError("owner credential reference cycle: " + " -> ".join((*stack, key)))
+        value = values.get(key, "")
+        if value.startswith(REF_PREFIX):
+            target = value[len(REF_PREFIX):]
+            if target not in values:
+                raise ValueError(f"owner credential reference target missing: {target}")
+            value = one(target, (*stack, key))
+        resolved[key] = value
+        return value
+
+    for key in values:
+        one(key)
+    return resolved
+
+
+def dedupe_owner_values(
+    values: dict[str, str], notes: dict[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Replace exact duplicate credential values with aliases to one owner key."""
+    expanded = resolve_owner_values(values)
+    by_value: dict[str, list[str]] = defaultdict(list)
+    for key, value in expanded.items():
+        if value:
+            by_value[value].append(key)
+
+    result = dict(expanded)
+    for value, keys in by_value.items():
+        if len(keys) < 2:
+            continue
+        primary = sorted(
+            keys,
+            key=lambda k: (0 if k.startswith("SHARED__") else 1, len(k), k),
+        )[0]
+        for key in keys:
+            if key == primary:
+                continue
+            result[key] = REF_PREFIX + primary
+            notes[key] = f"alias-of:{primary}"
+    return result, notes
+
 def _load_existing_owner() -> dict[str, str]:
     owner = parse_master(OWNER)
 
@@ -725,6 +776,8 @@ def _load_existing_owner() -> dict[str, str]:
         for key, value in parse_master(LEGACY_OWNER_FILL).items():
             if value and not owner.get(key):
                 owner[key] = value
+    if owner:
+        owner = resolve_owner_values(owner)
     return owner
 
 
@@ -876,6 +929,7 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
                 master.setdefault(key, "")
                 notes[key] = "missing"
 
+    master, notes = dedupe_owner_values(master, notes)
     return master, notes
 
 
@@ -912,6 +966,8 @@ def write_master(
         "# Feature flags, =0/=1, true/false switches and ordinary runtime config do not belong here.",
         "# /etc/devcoveer/env/master.env is only a compatibility symlink to this file.",
         "# services/*.env are generated automatically and MUST NOT be edited.",
+        "# @ref:OTHER_KEY means this line reuses the exact same credential value;",
+        "# rotate the value only at OTHER_KEY and every generated env follows it.",
         "",
     ]
     for group in sorted(groups):
@@ -980,7 +1036,11 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
         if not CATALOG.is_file():
             raise SystemExit("catalog.json is missing; run recover first")
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-    owner = parse_master(OWNER)
+    owner_raw = parse_master(OWNER)
+    try:
+        owner = resolve_owner_values(owner_raw)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     safe_mkdir(SERVICES, 0o750)
 
     import grp
