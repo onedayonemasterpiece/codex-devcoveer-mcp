@@ -13,12 +13,48 @@
         "mcp_tunnel": {
           "unit": "codex-devserver-tunnel.service",
           "scope": "user",
-          "ports": []
+          "ports": [
+            18080
+          ],
+          "direct_actions": [
+            "start",
+            "restart",
+            "enable_start"
+          ]
         },
         "opencode": {
           "unit": "opencode-devcoveer.service",
           "scope": "user",
-          "ports": []
+          "ports": [
+            4097
+          ],
+          "direct_actions": [
+            "start"
+          ]
+        },
+        "giga1": {
+          "unit": "gpt2giga-giga1.service",
+          "scope": "user",
+          "ports": [
+            8091
+          ],
+          "direct_actions": [
+            "start",
+            "restart",
+            "enable_start"
+          ]
+        },
+        "browser_tunnel": {
+          "unit": "my-browser-bridge-tunnel.service",
+          "scope": "user",
+          "ports": [
+            8081
+          ],
+          "direct_actions": [
+            "start",
+            "restart",
+            "enable_start"
+          ]
         }
       },
       "logs": {
@@ -29,6 +65,14 @@
         "opencode": {
           "type": "journal",
           "service": "opencode"
+        },
+        "giga1": {
+          "type": "journal",
+          "service": "giga1"
+        },
+        "browser_tunnel": {
+          "type": "journal",
+          "service": "browser_tunnel"
         }
       },
       "roots": {
@@ -46,7 +90,44 @@
           "profile": "codex_worktrees"
         }
       },
-      "health": {},
+      "health": {
+        "opencode": {
+          "url": "http://127.0.0.1:4097/global/health",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 2,
+          "body_bytes": 4096
+        },
+        "mcp_tunnel": {
+          "url": "http://127.0.0.1:18080/readyz",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 2,
+          "body_bytes": 4096
+        },
+        "giga1": {
+          "url": "http://127.0.0.1:8091/v1/models",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 3,
+          "body_bytes": 8192
+        },
+        "browser_tunnel": {
+          "url": "http://127.0.0.1:8081/readyz",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 2,
+          "body_bytes": 4096
+        }
+      },
       "runtimes": {
         "bridge_python": {
           "type": "cli",
@@ -59,15 +140,54 @@
           "type": "package",
           "python": "/home/dev/.local/share/openai-codex-mcp/bridge-venv/bin/python",
           "distribution": "mcp"
+        },
+        "opencode_cli": {
+          "type": "cli",
+          "argv": [
+            "/home/dev/.opencode/bin/opencode",
+            "--version"
+          ]
+        },
+        "tunnel_client": {
+          "type": "cli",
+          "argv": [
+            "/home/dev/.local/bin/tunnel-client",
+            "--version"
+          ]
         }
       },
       "runtime_files": {
         "bridge": "/home/dev/.local/libexec/openai-codex-mcp/codex-chatgpt-bridge.py",
         "opencode_backend": "/home/dev/.local/libexec/openai-codex-mcp/opencode_backend.py",
         "model_health": "/home/dev/.local/libexec/openai-codex-mcp/model_health.py",
-        "source_handoff": "/home/dev/.local/libexec/openai-codex-mcp/source_handoff.py"
+        "source_handoff": "/home/dev/.local/libexec/openai-codex-mcp/source_handoff.py",
+        "opencode_config": "/home/dev/.config/opencode/config.json",
+        "provider_env": "/home/dev/.config/opencode/devcoveer-providers.env"
       },
-      "config_presence": {}
+      "config_presence": {
+        "owner_provider_keys": {
+          "path": "/home/dev/.env",
+          "keys": [
+            "GROQ_API_KEY",
+            "GROQ_API_KEY2",
+            "GROQ_API_KEY3",
+            "NVIDIA_API_KEY",
+            "GIGACHAT_API_KEY",
+            "GIGACHAT_API_KEY2",
+            "GIGACHAT_API_KEY3",
+            "MAILRU_PERSONAL_USERNAME",
+            "MAILRU_PERSONAL_APP_PASSWORD"
+          ]
+        }
+      },
+      "opencode_catalogs": {
+        "main": {
+          "url": "http://127.0.0.1:4097/config/providers",
+          "auth_file": "/home/dev/.config/openai-codex-mcp/opencode-server.env",
+          "username_key": "OPENCODE_SERVER_USERNAME",
+          "password_key": "OPENCODE_SERVER_PASSWORD"
+        }
+      }
     },
     "vibepublish": {
       "github_repo": "onedayonemasterpiece/vibepublish",
@@ -116,7 +236,7 @@
             "GET",
             "HEAD"
           ],
-          "timeout_seconds": 2.0,
+          "timeout_seconds": 2,
           "body_bytes": 4096
         }
       },
@@ -173,7 +293,7 @@
             "GET",
             "HEAD"
           ],
-          "timeout_seconds": 2.0,
+          "timeout_seconds": 2,
           "body_bytes": 4096
         }
       },
