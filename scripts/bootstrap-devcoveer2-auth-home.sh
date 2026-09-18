@@ -121,8 +121,8 @@ adopt_dir "$DEV_HOME/.kaggle" "$AUTH_HOME/kaggle"
 adopt_dir "$DEV_HOME/.docker" "$AUTH_HOME/docker"
 adopt_dir "$DEV_HOME/.aws" "$AUTH_HOME/aws"
 adopt_dir "$DEV_HOME/.supabase" "$AUTH_HOME/supabase"
-install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$DEV_HOME/.config/tunnel-client"
-adopt_file "$DEV_HOME/.config/tunnel-client/runtime-api-key" "$AUTH_HOME/tunnel-client/runtime-api-key"
+# OpenAI tunnel client auth + tunnel configuration/state.
+adopt_dir "$DEV_HOME/.config/tunnel-client" "$AUTH_HOME/tunnel-client"
 
 # GitHub CLI may otherwise keep the token in a desktop keyring. On this headless
 # host force the active account into the canonical 0600 GH_CONFIG_DIR so agents,
@@ -259,7 +259,8 @@ if [[ -s "$KAGGLE_CONFIG_DIR/access_token" || -s "$KAGGLE_CONFIG_DIR/kaggle.json
 for spec in \
   "gh:$HOME/.config/gh" "fly:$HOME/.fly/config.yml" "yc:$HOME/.config/yandex-cloud" \
   "codex:$HOME/.codex" "opencode:$HOME/.local/share/opencode" "kaggle:$HOME/.kaggle" \
-  "aws:$HOME/.aws" "supabase:$HOME/.supabase" "docker:$HOME/.docker"; do
+  "aws:$HOME/.aws" "supabase:$HOME/.supabase" "docker:$HOME/.docker" \
+  "tunnel:$HOME/.config/tunnel-client"; do
   name="${spec%%:*}"; path="${spec#*:}"
   if [[ -L "$path" ]]; then printf "link:%-9s %s -> %s\n" "$name" "$path" "$(readlink "$path")"; else printf "link:%-9s MISSING_OR_NOT_SYMLINK %s\n" "$name" "$path"; fi
 done
