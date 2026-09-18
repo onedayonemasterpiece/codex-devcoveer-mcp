@@ -15,7 +15,7 @@ export PATH="/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$HOME/.fly/bin:$HOME/
 echo "=== LOGIN ONLY WHERE MISSING ==="
 
 if command -v gh >/dev/null 2>&1; then
-  if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+  if ! env -u GH_TOKEN -u GITHUB_TOKEN gh auth status --hostname github.com >/dev/null 2>&1; then
     echo "--- GitHub CLI ---"
     gh auth login --hostname github.com --git-protocol https --web --insecure-storage
     gh auth setup-git --hostname github.com >/dev/null 2>&1 || true
@@ -23,14 +23,14 @@ if command -v gh >/dev/null 2>&1; then
 fi
 
 if command -v flyctl >/dev/null 2>&1; then
-  if ! flyctl auth whoami >/dev/null 2>&1; then
+  if ! env -u FLY_API_TOKEN -u FLY_ACCESS_TOKEN flyctl auth whoami >/dev/null 2>&1; then
     echo "--- Fly CLI ---"
     flyctl auth login
   fi
 fi
 
 if command -v yc >/dev/null 2>&1; then
-  if ! timeout 30 yc iam create-token --no-user-output >/dev/null 2>&1; then
+  if ! env -u YC_TOKEN -u YC_IAM_TOKEN -u YANDEX_IAM_TOKEN timeout 30 yc iam create-token --no-user-output >/dev/null 2>&1; then
     echo "--- Yandex Cloud CLI ---"
     echo "yc init will persist into the canonical ~/.config/yandex-cloud symlink."
     yc init --no-browser
@@ -38,7 +38,7 @@ if command -v yc >/dev/null 2>&1; then
 fi
 
 if command -v codex >/dev/null 2>&1; then
-  if ! codex login status >/dev/null 2>&1; then
+  if ! env -u OPENAI_API_KEY -u CODEX_API_KEY codex login status >/dev/null 2>&1; then
     echo "--- Codex CLI ---"
     codex login --device-auth
   fi
