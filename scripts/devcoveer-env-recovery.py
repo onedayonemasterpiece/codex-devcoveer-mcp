@@ -1087,8 +1087,9 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
     notes: dict[str, str] = {}
     runtime_aliases = runtime_value_alias_map()
 
-    # Keep only non-empty human values from the previous file. Earlier noisy blank
-    # entries are intentionally discarded unless they are in OWNER_REQUIRED_INPUTS.
+    # Read the current consolidated owner file only as a fallback for credentials
+    # that have no factual runtime snapshot. This is NOT a read of old per-project
+    # .env files: those were not recovered from Git and are not treated as evidence.
     flat_existing_values: dict[str, set[str]] = defaultdict(set)
     for key, value in previous.items():
         prefix, canon0 = _split_owner_key(key)
@@ -1139,40 +1140,35 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
                 multi_value_project = True
 
         unique = set(observed.values())
-        has_evidence = bool(observed) or bool(direct)
+        has_runtime_evidence = bool(observed)
 
-        # Optional/source-discovered credential with no value is noise, not a todo.
-        if not has_evidence and canon not in required:
+        # Optional/source-discovered credential with neither runtime value nor an
+        # already non-empty consolidated owner value is noise, not a todo.
+        if not has_runtime_evidence and not direct and canon not in required:
             continue
 
-        if multi_value_project:
-            owner[canon] = direct
-            notes[canon] = "runtime-conflict"
-            for project, value in sorted(observed.items()):
-                if not direct or value != direct:
-                    owner[f"{pfx(project)}__{canon}"] = value
-            continue
-
-        if direct:
-            owner[canon] = direct
-            for project, value in sorted(observed.items()):
-                if value != direct:
-                    owner[f"{pfx(project)}__{canon}"] = value
-                    notes[f"{pfx(project)}__{canon}"] = "runtime-conflict"
-            continue
-
-        if len(unique) == 1:
-            owner[canon] = next(iter(unique))
-            continue
-
-        if len(unique) > 1:
+        # During recovery, factual runtime snapshots are authoritative. The
+        # existing /home/dev/.env was produced by earlier iterations of this
+        # recovery tool, so it must never override recovered runtime evidence.
+        if multi_value_project or len(unique) > 1:
             owner[canon] = ""
             notes[canon] = "runtime-conflict"
             for project, value in sorted(observed.items()):
                 owner[f"{pfx(project)}__{canon}"] = value
             continue
 
-        # Only explicit required inputs reach this branch.
+        if len(unique) == 1:
+            owner[canon] = next(iter(unique))
+            continue
+
+        # No runtime evidence exists for this credential. Preserve a non-empty
+        # consolidated value if present; otherwise expose a blank only when it is
+        # part of the explicit owner-required shortlist.
+        if direct:
+            owner[canon] = direct
+            notes[canon] = "existing-consolidated-value-no-runtime-evidence"
+            continue
+
         owner[canon] = ""
         notes[canon] = "required-owner-input"
 
@@ -1436,6 +1432,14 @@ Aliases
   Compatibility env names are mapped to one canonical owner variable. They are
   listed as comments at the bottom of /home/dev/.env and expanded automatically
   into the generated service envs. No duplicate secret value is required.
+
+Recovery provenance
+  - plaintext runtime evidence comes from recovered Fly runtime snapshots;
+  - Git/source scanning contributes variable names and alias relationships only;
+  - actual historical per-project .env files are not read from Git and are not
+    considered recovery evidence;
+  - the current consolidated /home/dev/.env is only a fallback when no recovered
+    runtime value exists.
 
 Saving /home/dev/.env regenerates services/*.env. A running process still needs
 a controlled restart/reload to receive a changed environment value in memory.
