@@ -429,17 +429,17 @@ def fly_apps(flyctl: Path, env: dict[str, str]) -> list[str]:
     return sorted(set(out))
 
 
-def fly_secret_names(flyctl: Path, app: str, env: dict[str, str]) -> set[str]:
+def fly_secret_names(flyctl: Path, app: str, env: dict[str, str]) -> tuple[set[str], bool]:
     cp = run(
         [str(flyctl), "secrets", "list", "-a", app, "--json"],
         as_dev=True, env=env, check=False, timeout=60,
     )
     if cp.returncode != 0:
-        return set()
+        return set(), False
     try:
         data = parse_json_output(cp)
     except Exception:
-        return set()
+        return set(), False
     items = data if isinstance(data, list) else data.get("secrets", []) if isinstance(data, dict) else []
     names: set[str] = set()
     for item in items:
@@ -449,7 +449,7 @@ def fly_secret_names(flyctl: Path, app: str, env: dict[str, str]) -> set[str]:
                 if isinstance(value, str) and ENV_NAME.fullmatch(value):
                     names.add(value)
                     break
-    return names
+    return names, True
 
 
 def parse_env_bytes(raw: bytes) -> dict[str, str]:
@@ -471,17 +471,17 @@ def parse_env_bytes(raw: bytes) -> dict[str, str]:
     return out
 
 
-def fly_running_machine_ids(flyctl: Path, app: str, env: dict[str, str]) -> list[str]:
+def fly_running_machine_ids(flyctl: Path, app: str, env: dict[str, str]) -> tuple[list[str], bool]:
     cp = run(
         [str(flyctl), "machine", "list", "-a", app, "--json"],
         as_dev=True, env=env, check=False, timeout=60,
     )
     if cp.returncode != 0:
-        return []
+        return [], False
     try:
         data = parse_json_output(cp)
     except Exception:
-        return []
+        return [], False
     items = data if isinstance(data, list) else []
     out: list[str] = []
     for item in items:
@@ -491,25 +491,32 @@ def fly_running_machine_ids(flyctl: Path, app: str, env: dict[str, str]) -> list
         machine_id = item.get("id") or item.get("ID")
         if state in {"started", "running"} and isinstance(machine_id, str) and machine_id:
             out.append(machine_id)
-    return out
+    return out, True
 
 
-def fly_runtime_env(flyctl: Path, app: str, env: dict[str, str]) -> dict[str, str]:
-    # Secrets are only recoverable from a live Machine environment. Try every
-    # currently running Machine explicitly; never start/restart a Machine here.
-    # /proc/1/environ is NUL-separated and reflects the actual app process env.
-    machine_ids = fly_running_machine_ids(flyctl, app, env)
+def fly_runtime_env(
+    flyctl: Path, app: str, env: dict[str, str], machine_ids: list[str]
+) -> tuple[dict[str, str], str | None, bool]:
+    # Fly documents that an SSH console inherits the application runtime
+    # environment, including secrets. Do not inspect /proc/1/environ: PID 1 may
+    # be an init/supervisor rather than the app process and can have a different
+    # environment. First use NUL-separated env for byte-safe parsing, then fall
+    # back to plain printenv for minimal images that lack env -0.
+    any_ssh_success = False
     for machine_id in machine_ids:
-        cp = run(
-            [str(flyctl), "ssh", "console", "-a", app, "--machine", machine_id,
-             "--pty=false", "-C", "cat /proc/1/environ"],
-            as_dev=True, env=env, check=False, timeout=90, binary=True,
-        )
-        if cp.returncode == 0:
+        for remote_command, method in (("env -0", "env0"), ("printenv", "printenv")):
+            cp = run(
+                [str(flyctl), "ssh", "console", "-q", "-a", app, "--machine", machine_id,
+                 "--pty=false", "-C", remote_command],
+                as_dev=True, env=env, check=False, timeout=90, binary=True,
+            )
+            if cp.returncode != 0:
+                continue
+            any_ssh_success = True
             parsed = parse_env_bytes(cp.stdout or b"")
             if parsed:
-                return parsed
-    return {}
+                return parsed, method, True
+    return {}, None, any_ssh_success
 
 
 def write_private_env(path: Path, values: dict[str, str], mode: int = 0o600) -> None:
@@ -556,8 +563,13 @@ def recover_fly(
     apps = fly_apps(flyctl, auth)
     safe_mkdir(RECOVERED, 0o700)
     for app in apps:
-        secret_names = fly_secret_names(flyctl, app, auth)
-        runtime = fly_runtime_env(flyctl, app, auth) if secret_names else {}
+        secret_names, secret_list_ok = fly_secret_names(flyctl, app, auth)
+        machine_ids, machine_list_ok = fly_running_machine_ids(flyctl, app, auth)
+        runtime: dict[str, str] = {}
+        ssh_method: str | None = None
+        ssh_ok = False
+        if secret_names and machine_ids:
+            runtime, ssh_method, ssh_ok = fly_runtime_env(flyctl, app, auth, machine_ids)
         recovered = {
             name: runtime[name]
             for name in sorted(secret_names)
@@ -568,6 +580,11 @@ def recover_fly(
             write_private_env(RECOVERED / f"{app}.env", recovered, 0o600)
         result["apps"][app] = {
             "project": app_to_project.get(app),
+            "secret_list_ok": secret_list_ok,
+            "machine_list_ok": machine_list_ok,
+            "running_machine_count": len(machine_ids),
+            "ssh_ok": ssh_ok,
+            "ssh_method": ssh_method,
             "secret_names": sorted(secret_names),
             "recovered_names": sorted(recovered),
             "missing_runtime_names": missing_runtime,
@@ -712,7 +729,8 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
             # runtimes prove the exact same value. Otherwise keep it blank and
             # preserve recovered values as explicit project overrides.
             if len(recovered) >= 2 and len(hashes) == 1:
-                master.setdefault(shared_key, next(iter(recovered.values())))
+                if not master.get(shared_key):
+                    master[shared_key] = next(iter(recovered.values()))
                 notes[shared_key] = "recovered-identical-across-projects"
             else:
                 master.setdefault(shared_key, "")
@@ -722,14 +740,16 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
             project_key = f"{pfx(project)}__{canon}"
             value = recovered.get(project)
             if value is not None:
-                master.setdefault(project_key, value)
+                # Fill blanks created by an earlier inventory pass, but never
+                # overwrite a non-empty value the owner already entered.
+                if not master.get(project_key):
+                    master[project_key] = value
                 notes[project_key] = "recovered-from-fly-runtime"
-            elif len(projects) == 1:
+            else:
+                # Keep explicit project-scoped blanks even when a variable name
+                # is shared across projects. Same name does not prove same secret.
                 master.setdefault(project_key, "")
                 notes.setdefault(project_key, "missing")
-            # For shared candidates with no known conflict, do not create
-            # hundreds of empty overrides. An override appears automatically
-            # once recovery proves a project-specific value.
 
     return master, notes
 
@@ -885,6 +905,20 @@ def recover(args: argparse.Namespace) -> int:
     print(f"fly_authenticated={fly.get('authenticated', False)}")
     print(f"fly_apps_seen={len(fly.get('apps', {}))}")
     print(f"fly_secret_values_recovered={recovered_total}")
+    app_diag = {
+        app: {
+            "secret_names": len(info.get("secret_names", [])),
+            "running_machines": int(info.get("running_machine_count", 0)),
+            "secret_list_ok": bool(info.get("secret_list_ok", False)),
+            "machine_list_ok": bool(info.get("machine_list_ok", False)),
+            "ssh_ok": bool(info.get("ssh_ok", False)),
+            "ssh_method": info.get("ssh_method"),
+            "recovered": len(info.get("recovered_names", [])),
+            "missing": len(info.get("missing_runtime_names", [])),
+        }
+        for app, info in sorted(fly.get("apps", {}).items())
+    }
+    print("fly_app_recovery=" + json.dumps(app_diag, sort_keys=True))
     print(f"master_missing_values={missing_total}")
     print(f"master={MASTER}")
     print(f"todo={TODO}")
