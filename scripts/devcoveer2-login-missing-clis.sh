@@ -62,5 +62,33 @@ if command -v kaggle >/dev/null 2>&1; then
 fi
 
 echo
+echo "=== CONTROL SERVICES ==="
+
+if [[ -n "${XDG_RUNTIME_DIR:-}" && -S "${XDG_RUNTIME_DIR}/bus" ]]; then
+  systemctl --user daemon-reload
+
+  # OpenCode should reload provider/auth state after owner credentials or native
+  # auth changes. The secure tunnel is restored even if it had been stopped by a
+  # previous migration attempt.
+  systemctl --user restart opencode-devcoveer.service
+  systemctl --user start codex-devserver-tunnel.service
+
+  for unit in opencode-devcoveer.service codex-devserver-tunnel.service; do
+    for _ in $(seq 1 30); do
+      systemctl --user is-active --quiet "$unit" && break
+      sleep 1
+    done
+    if systemctl --user is-active --quiet "$unit"; then
+      echo "$unit=ACTIVE"
+    else
+      echo "$unit=FAILED_OR_INACTIVE"
+      systemctl --user --no-pager --full status "$unit" || true
+    fi
+  done
+else
+  echo "user_systemd_bus=UNAVAILABLE"
+fi
+
+echo
 echo "=== RESULT ==="
 "$HOME/.local/bin/devcoveer-auth-status"
