@@ -266,6 +266,8 @@ def secret_like(name: str) -> bool:
         return False
     if n.endswith(("_PATH", "_DIR", "_ROOT", "_FILE", "_FILES", "_LINK")):
         return False
+    if n.endswith(("_MODEL_KEY", "_PROFILE_KEY", "_CACHE_KEY", "_IDEMPOTENCY_KEY", "_POLICY_KEY")):
+        return False
     if n.endswith(("_URL", "_URI", "_ENDPOINT", "_HOST", "_PORT")) and not (
         n.endswith("DATABASE_URL") or n.endswith("_DSN")
     ):
@@ -673,7 +675,35 @@ def recover_fly(
 
     auth = maybe_fly_auth(flyctl, allow_prompt=allow_prompt)
     if auth is None:
-        result["reason"] = "fly_auth_missing_run_fly_auth_login_as_dev"
+        result["reason"] = "fly_auth_missing_using_recovered_snapshots"
+        app_to_project = dict(FLY_APP_PROJECT_MAP)
+        app_to_project.update({
+            info["fly_app"]: project
+            for project, info in project_info.items()
+            if info.get("fly_app")
+        })
+        if RECOVERED.is_dir():
+            for snapshot in sorted(RECOVERED.glob("*.env")):
+                app = snapshot.stem
+                vals = parse_master(snapshot)
+                names = sorted(vals)
+                result["apps"][app] = {
+                    "project": app_to_project.get(app),
+                    "secret_list_ok": False,
+                    "machine_list_ok": False,
+                    "running_machine_count": 0,
+                    "ssh_ok": False,
+                    "ssh_method": "recovered-snapshot",
+                    "secret_names": names,
+                    "recovered_names": names,
+                    "missing_runtime_names": [],
+                    "value_sha256": {
+                        name: hashlib.sha256(
+                            vals[name].encode("utf-8", errors="surrogateescape")
+                        ).hexdigest()
+                        for name in names
+                    },
+                }
         return result
     result["authenticated"] = True
 
