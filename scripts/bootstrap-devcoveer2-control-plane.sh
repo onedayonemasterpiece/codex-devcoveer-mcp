@@ -17,7 +17,6 @@ H=/home/dev
 P="$H/projects"
 
 CODEX_VERSION="0.151.0-alpha.7.2"
-OPENCODE_VERSION="1.18.15"
 TUNNEL_VERSION="v0.0.14"
 TUNNEL_ID="${CONTROL_PLANE_TUNNEL_ID:-tunnel_6a8afbe7d1c08191a9bf0769ccba7077}"
 TUNNEL_ASSET="tunnel-client-${TUNNEL_VERSION}-linux-amd64.zip"
@@ -107,15 +106,12 @@ OC_JSON="$(curl --connect-timeout 2 --max-time 8 -fsS \
     exit 11
 }
 
-python3 - "$OC_JSON" "$OPENCODE_VERSION" <<'PY'
+python3 - "$OC_JSON" <<'PY'
 import json, sys
 payload=json.loads(sys.argv[1])
-expected=sys.argv[2]
 if payload.get("healthy") is not True:
     raise SystemExit("OpenCode is not healthy")
 print("OpenCode health: PASS; version=" + str(payload.get("version")))
-if payload.get("version") != expected:
-    print("WARNING: expected OpenCode %s, observed %s" % (expected, payload.get("version")))
 PY
 
 unset OPENCODE_SERVER_USERNAME OPENCODE_SERVER_PASSWORD
