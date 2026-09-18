@@ -26,7 +26,7 @@ v3.10 must provide:
 - progress/stall timestamps and bounded redacted live snapshots before cancellation;
 - 1h / 3h / 5h model-health memory;
 - historical verification separated from current runtime health;
-- Zen -> NVIDIA -> metered reserve routing;
+- Zen -> Groq GPT-OSS-120B pool (groq -> groq2 -> groq3) -> NVIDIA -> metered reserve routing;
 - model-local NVIDIA 429/timeout/EOL handling;
 - agent-capability filtering for generic coding tasks;
 - no global model mutex and no hidden fallback;
@@ -139,7 +139,7 @@ Two stale historical NVIDIA models have already produced real HTTP 410 during pr
 
 ### Metered reserve
 
-Do not spend GigaChat merely to fill an acceptance checklist. Use it only if Zen/NVIDIA are unsuitable or a capability requires it. Confirm the custom `giga1` provider remains present.
+Do not spend GigaChat merely to fill an acceptance checklist. Use it only after Zen/Groq/NVIDIA are unsuitable or a capability requires it. Before the host loss, only the custom `giga1` provider was actually deployed and accepted; `giga2` and `giga3` were planned future lanes, not production gateway services. Recovery must restore `giga1` first and preserve the three owner credentials without falsely claiming three live gateways.
 
 ## Phase 7 — merge and post-rollout work
 
