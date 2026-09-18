@@ -43,6 +43,7 @@ CATALOG = ROOT / "catalog.json"
 RECOVERED = ROOT / "recovered" / "fly"
 SERVICES = ROOT / "services"
 README = ROOT / "README.txt"
+OPENCODE_PROVIDER_ENV = DEV_HOME / ".config" / "opencode" / "devcoveer-providers.env"
 LEGACY_OWNER_FILL = ROOT / "owner-fill.env"
 LEGACY_OWNER_FILL_SUMMARY = ROOT / "owner-fill-summary.json"
 FLY_RELEASE_ENV = DEV_HOME / ".config" / "fly" / "release.env"
@@ -1285,6 +1286,48 @@ def write_master(
     _ensure_compat_links()
 
 
+def write_opencode_provider_env(owner: dict[str, str]) -> int:
+    """Render only model-provider credentials for opencode-devcoveer.service.
+
+    /home/dev/.env remains the sole human-edited source. Compatibility names are
+    emitted here because historical OpenCode configs used both GROQ_KEY* and
+    GROQ_API_KEY* spellings.
+    """
+    runtime_names = {
+        "GROQ_API_KEY": ["GROQ_API_KEY", "GROQ_KEY"],
+        "GROQ_API_KEY2": ["GROQ_API_KEY2", "GROQ_KEY2"],
+        "GROQ_API_KEY3": ["GROQ_API_KEY3", "GROQ_KEY3"],
+        "NVIDIA_API_KEY": ["NVIDIA_API_KEY"],
+        "GIGACHAT_CREDENTIALS": ["GIGACHAT_CREDENTIALS"],
+    }
+    values: dict[str, str] = {}
+    for owner_name, aliases in runtime_names.items():
+        value = owner.get(owner_name, "")
+        if not value:
+            continue
+        for runtime_name in aliases:
+            values[runtime_name] = value
+
+    OPENCODE_PROVIDER_ENV.parent.mkdir(parents=True, exist_ok=True)
+    import pwd
+    pw = pwd.getpwnam(DEV)
+    tmp = OPENCODE_PROVIDER_ENV.with_name(OPENCODE_PROVIDER_ENV.name + ".tmp")
+    lines = [
+        "# GENERATED FROM /home/dev/.env — DO NOT EDIT.",
+        "# OpenCode model-provider credentials only.",
+        "",
+    ]
+    for key in sorted(values):
+        lines.append(f"{key}={json.dumps(values[key], ensure_ascii=False)}")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chown(tmp, pw.pw_uid, pw.pw_gid)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, OPENCODE_PROVIDER_ENV)
+    os.chown(OPENCODE_PROVIDER_ENV, pw.pw_uid, pw.pw_gid)
+    os.chmod(OPENCODE_PROVIDER_ENV, 0o600)
+    return len(values)
+
+
 def write_todo(master: dict[str, str], notes: dict[str, str]) -> None:
     lines = [
         "# GENERATED VIEW OF MISSING CREDENTIALS — DO NOT EDIT.",
@@ -1390,6 +1433,7 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
         counts[project] = len(values)
 
     write_todo(owner, {})
+    write_opencode_provider_env(owner)
     return counts
 
 
@@ -1470,6 +1514,7 @@ def recover(args: argparse.Namespace) -> int:
     owner, notes = merge_master(catalog)
     validate_owner_store(owner)
     write_master(owner, notes, catalog)
+    provider_env_count = write_opencode_provider_env(owner)
     counts = render(catalog)
     write_todo(owner, notes)
     _cleanup_legacy_owner_fill()
@@ -1526,6 +1571,8 @@ def recover(args: argparse.Namespace) -> int:
     print(f"runtime_conflict_overrides={runtime_conflicts}")
     print(f"known_alias_pairs={len(known_alias_pairs())}")
     print(f"runtime_value_alias_pairs={len(runtime_alias_pairs())}")
+    print(f"opencode_provider_env_values={provider_env_count}")
+    print(f"opencode_provider_env={OPENCODE_PROVIDER_ENV}")
     print("owner_sections=" + json.dumps(dict(sorted(owner_sections.items())), sort_keys=True))
     print(f"owner={OWNER}")
     print(f"master_compat={LEGACY_MASTER}")
