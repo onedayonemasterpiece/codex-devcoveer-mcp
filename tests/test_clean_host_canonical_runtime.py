@@ -42,7 +42,12 @@ def test_clean_host_installer_does_not_use_bootstrap_as_source() -> None:
 
 def test_clean_host_installer_accepts_probes_before_tunnel_switch() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
-    assert 'required={"project_probe","host_probe","list_models","start_task","read_task"}' in source
+    required_tools = (
+        "project_probe", "host_probe", "list_models", "start_task", "read_task",
+        "stage_source_handoff", "cleanup_source_handoff",
+    )
+    for name in required_tools:
+        assert name in source
     assert "=== canonical wrapper acceptance ===" in source
     assert "systemctl --user restart codex-devserver-tunnel.service" in source
 
