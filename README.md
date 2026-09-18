@@ -51,3 +51,36 @@ Source-handoff behavior is defined in [`docs/source-handoff-p0.md`](docs/source-
 4. Start the authenticated localhost OpenCode service and the MCP runtime under `dev`; use root only for system-level service/install operations where required.
 5. Recreate secure-tunnel credentials/state explicitly, then run local and external readback acceptance before treating the service as restored.
 6. Preserve the old successful deployment behavior as a regression baseline, while preferring the current source contract when it is demonstrably better and passes acceptance.
+
+
+## DevCoveer CLI auth home
+
+DevCoveer2 uses one canonical per-user auth/session tree:
+
+`/home/dev/.local/share/devcoveer/auth/`
+
+Native CLI paths are preserved as symlinks or explicit environment paths so
+interactive shells, VS Code terminals, systemd user services and code agents
+read and refresh the same underlying credentials instead of creating parallel
+copies.
+
+Covered stores include GitHub CLI, Fly CLI, Yandex Cloud CLI, Codex,
+OpenCode, Kaggle, Docker, AWS CLI, Supabase CLI fallback state and the OpenAI
+tunnel client. Codex is explicitly forced to file-backed CLI and MCP OAuth
+credential stores. OpenCode's whole `~/.local/share/opencode` state directory is
+shared because it contains both `auth.json` and resumable session/project state.
+
+Bootstrap:
+
+`sudo bash scripts/bootstrap-devcoveer2-auth-home.sh`
+
+Check without printing secrets:
+
+`/home/dev/.local/bin/devcoveer-auth-status`
+
+Log in only where a persisted session is missing:
+
+`/home/dev/.local/bin/devcoveer-login-missing-clis`
+
+Provider API keys intentionally owned by the operator remain in
+`/home/dev/.env`; CLI-created OAuth/login state does not.

@@ -15,20 +15,30 @@ fi
 install -d -m 0755 -o "${DEV_USER}" -g "${DEV_USER}" "${DEV_HOME}/.local/bin"
 install -d -m 0755 -o "${DEV_USER}" -g "${DEV_USER}" "${DEV_HOME}/.local/share/devcoveer"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AUTH_BOOTSTRAP="${SCRIPT_DIR}/bootstrap-devcoveer2-auth-home.sh"
+if [[ -f "$AUTH_BOOTSTRAP" ]]; then
+  echo "=== UNIFIED CLI AUTH HOME ==="
+  bash "$AUTH_BOOTSTRAP"
+  echo
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "=== YANDEX CLOUD CLI ==="
-curl -fsSL --connect-timeout 15 --max-time 120 \
-  https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
-  -o "${tmp}/yc-install.sh"
-chmod 0755 "${tmp}/yc-install.sh"
+if [[ ! -x "${YC_INSTALL_DIR}/bin/yc" ]]; then
+  curl -fsSL --connect-timeout 15 --max-time 120 \
+    https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
+    -o "${tmp}/yc-install.sh"
+  chmod 0755 "${tmp}/yc-install.sh"
 
-runuser -u "${DEV_USER}" -- env \
-  HOME="${DEV_HOME}" \
-  SHELL=/bin/bash \
-  PATH="/usr/local/bin:/usr/bin:/bin:${DEV_HOME}/.local/bin" \
-  timeout 180 bash "${tmp}/yc-install.sh" -i "${YC_INSTALL_DIR}" -n
+  runuser -u "${DEV_USER}" -- env \
+    HOME="${DEV_HOME}" \
+    SHELL=/bin/bash \
+    PATH="/usr/local/bin:/usr/bin:/bin:${DEV_HOME}/.local/bin" \
+    timeout 180 bash "${tmp}/yc-install.sh" -i "${YC_INSTALL_DIR}" -n
+fi
 
 test -x "${YC_INSTALL_DIR}/bin/yc"
 ln -sfn "${YC_INSTALL_DIR}/bin/yc" /usr/local/bin/yc
