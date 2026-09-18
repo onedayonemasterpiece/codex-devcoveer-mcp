@@ -253,7 +253,106 @@ def canonical(name: str) -> str:
 
 
 def secret_like(name: str) -> bool:
-    return bool(SENSITIVE.search(name))
+    """Keep owner .env limited to actual credentials, not configuration selectors."""
+    n = canonical(name)
+    if n in DENY:
+        return False
+    if n.startswith(("ENABLE_", "DISABLE_")) or n.endswith(("_ENABLED", "_DISABLED")):
+        return False
+    # These variables contain the *name* of another secret env var, not a secret.
+    if re.search(r"_(?:KEY|TOKEN|SECRET|AUTH_BUNDLE|SESSION|CREDENTIALS?)_ENVS?$", n):
+        return False
+    if re.search(r"_(?:KEY|TOKEN|SECRET|AUTH_BUNDLE|SESSION|CREDENTIALS?)_VAR(?:S|_NAME)?$", n):
+        return False
+    if n.endswith(("_PATH", "_DIR", "_ROOT", "_FILE", "_FILES", "_LINK")):
+        return False
+    if n.endswith(("_URL", "_URI", "_ENDPOINT", "_HOST", "_PORT")) and not (
+        n.endswith("DATABASE_URL") or n.endswith("_DSN")
+    ):
+        return False
+    # Generic AUTH names are often modes/state paths. Require a concrete
+    # credential noun below rather than admitting every string containing AUTH.
+    credential_patterns = (
+        r"(?:^|_)(?:TOKEN|PASSWORD|PASS|SECRET)(?:_|$)",
+        r"(?:^|_)API_KEY\d*(?:_|$)",
+        r"(?:^|_)API_ID(?:_|$)",
+        r"(?:^|_)API_HASH(?:_|$)",
+        r"(?:^|_)ACCESS_KEY_ID(?:_|$)",
+        r"(?:^|_)SECRET_ACCESS_KEY(?:_|$)",
+        r"(?:^|_)(?:USERNAME|USER_NAME|LOGIN)(?:_|$)",
+        r"(?:^|_)CLIENT_ID(?:_|$)",
+        r"(?:^|_)CLIENT_SECRET(?:_|$)",
+        r"(?:^|_)SESSION(?:_|$)",
+        r"(?:^|_)AUTH_BUNDLE(?:_|$)",
+        r"(?:^|_)CREDENTIALS?(?:_|$)",
+        r"(?:^|_)PRIVATE_KEY(?:_|$)",
+        r"(?:^|_)SIGNING_KEY(?:_|$)",
+        r"(?:^|_)SERVICE_ACCOUNT(?:_KEY|_JSON|_CREDENTIALS)(?:_|$)",
+        r"(?:^|_)DATABASE_URL(?:_|$)",
+        r"(?:^|_)DSN(?:_|$)",
+        r"^(?:POSTGRES|DB)_USER$",
+    )
+    return any(re.search(pattern, n) for pattern in credential_patterns)
+
+
+def credential_family(name: str) -> str:
+    n = canonical(name)
+    if n.startswith("GOOGLE_") or "_GOOGLE_" in n:
+        return "GOOGLE AI"
+    if n.startswith("NVIDIA_") or "_NVIDIA_" in n:
+        return "NVIDIA"
+    if n.startswith("GIGACHAT_") or "_GIGACHAT_" in n:
+        return "GIGACHAT"
+    if n.startswith("GROQ") or "_GROQ" in n:
+        return "GROQ"
+    if n.startswith("OPENAI_") or n.startswith("CODEX_"):
+        return "OPENAI / CODEX"
+    if n.startswith("KAGGLE_") or "_KAGGLE_" in n:
+        return "KAGGLE"
+    if n.startswith(("TELEGRAM_", "TG_")) or "_TELEGRAM_" in n:
+        return "TELEGRAM"
+    if n.startswith("VK_") or "_VK_" in n:
+        return "VK"
+    if n.startswith("MAX_") or "_MAX_" in n:
+        return "MAX"
+    if n.startswith("SUPABASE_") or "_SUPABASE_" in n:
+        return "SUPABASE"
+    if n.startswith("YDB_") or "_YDB_" in n:
+        return "YDB"
+    if n.startswith(("YANDEX_", "YC_", "AWS_", "S3_")) or any(
+        part in n for part in ("_YANDEX_", "_YC_", "_AWS_", "_S3_")
+    ):
+        return "YANDEX CLOUD / S3"
+    if n.startswith("GITHUB_") or "_GITHUB_" in n:
+        return "GITHUB"
+    if n.startswith("FLY_") or "_FLY_" in n:
+        return "FLY.IO"
+    if n.startswith(("POSTBOX_", "NOTISEND_", "SMTP_", "IMAP_", "EMAIL_", "MAIL_")) or any(
+        part in n for part in ("_POSTBOX_", "_NOTISEND_", "_SMTP_", "_IMAP_", "_EMAIL_", "_MAIL_")
+    ):
+        return "MAIL"
+    if "OAUTH" in n or "_MCP_" in n or n.startswith("MCP_"):
+        return "OAUTH / MCP"
+    if "DATABASE_URL" in n or n.endswith("_DSN") or n.startswith(("POSTGRES_", "DB_")):
+        return "DATABASES"
+    if "SERVICE_ACCOUNT" in n or "PRIVATE_KEY" in n or "SIGNING_KEY" in n:
+        return "SERVICE ACCOUNTS / SIGNING"
+    # Unknown credential families still get their own visible section rather
+    # than being hidden under an "other" bucket.
+    stem = n.split("_", 1)[0]
+    return stem
+
+
+def force_shared_credential(name: str) -> bool:
+    """Credentials intentionally shared across the DevCoveer project family."""
+    n = canonical(name)
+    family = credential_family(n)
+    if family in {
+        "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
+        "KAGGLE", "TELEGRAM", "VK", "MAX", "SUPABASE", "YDB",
+    }:
+        return True
+    return False
 
 
 def find_flyctl() -> Path | None:
