@@ -149,7 +149,7 @@ async def _search(root: Path, check: dict[str, Any]) -> dict[str, Any]:
 async def _file_list(root: Path, check: dict[str, Any]) -> dict[str, Any]:
     raw = check.get("path", "")
     base = root.resolve() if raw == "" else _safe_worktree_path(root, raw)
-    depth = min(int(check.get("depth", 1)), 4)
+    depth = min(int(check.get("depth", 1)), 8)
     limit = min(int(check.get("limit", 100)), MAX_LIST_ENTRIES)
     base_depth = len(base.parts)
     entries = []

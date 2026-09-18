@@ -93,7 +93,7 @@ _SOURCE_SCHEMA = {
 }
 _REF_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 200, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._/-]*$"}
 _PATH_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 500}
-_LIMIT_SCHEMA = {"type": "integer", "minimum": 1, "maximum": 300}
+_LIMIT_SCHEMA = {"type": "integer", "minimum": 1, "maximum": MAX_LIST_ENTRIES}
 
 PROJECT_CHECK_SCHEMAS = [
     _check_schema("git_state"),
@@ -101,7 +101,7 @@ PROJECT_CHECK_SCHEMAS = [
         "remote": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},
         "branch": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._/-]*$"},
     }, ["remote", "branch"]),
-    _check_schema("git_log", {"ref": _REF_SCHEMA, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, ["ref"]),
+    _check_schema("git_log", {"ref": _REF_SCHEMA, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}, ["ref"]),
     _check_schema("tree", {"ref": _REF_SCHEMA, "path": {"type": "string", "maxLength": 500}, "limit": _LIMIT_SCHEMA}, ["ref"]),
     _check_schema("worktree_list"),
     _check_schema("diff", {
@@ -122,14 +122,14 @@ PROJECT_CHECK_SCHEMAS = [
         "paths": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "maxLength": 500}},
         "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_MATCHES},
     }, ["query"]),
-    _check_schema("file_list", {"path": {"type": "string", "maxLength": 500}, "depth": {"type": "integer", "minimum": 0, "maximum": 4}, "limit": _LIMIT_SCHEMA}),
+    _check_schema("file_list", {"path": {"type": "string", "maxLength": 500}, "depth": {"type": "integer", "minimum": 0, "maximum": 8}, "limit": _LIMIT_SCHEMA}),
     _check_schema("file_stat", {"path": _PATH_SCHEMA}, ["path"]),
     _check_schema("file_sha256", {"path": _PATH_SCHEMA}, ["path"]),
     _check_schema("github_status", {
         "branch": {"type": "string", "minLength": 1, "maxLength": 200},
         "pr": {"type": "integer", "minimum": 1},
         "run_id": {"type": "integer", "minimum": 1},
-        "failed_log_lines": {"type": "integer", "minimum": 0, "maximum": 120},
+        "failed_log_lines": {"type": "integer", "minimum": 0, "maximum": 500},
         "include_runners": {"type": "boolean", "default": False},
     }),
 ]

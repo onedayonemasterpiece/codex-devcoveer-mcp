@@ -115,7 +115,7 @@ async def _remote_head(root: Path, binding: dict[str, Any], remote: str, branch:
 
 async def _git_log(root: Path, check: dict[str, Any]) -> dict[str, Any]:
     sha = await _resolve_commit(root, check["ref"])
-    limit = min(int(check.get("limit", 10)), 20)
+    limit = min(int(check.get("limit", 10)), 100)
     result = await _git(root, "log", f"-{limit}", "--format=%H%x09%ct%x09%s", sha, "--", output_limit=24 * 1024)
     commits = []
     redacted = False
@@ -335,4 +335,3 @@ async def _read_text(root: Path, binding: dict[str, Any], check: dict[str, Any])
     return {"path": raw_path, "version": version, "start_line": actual_start, "end_line": actual_end,
             "text": page, "complete": not truncated, "truncated": truncated, "redacted": redacted,
             "changed_during_read": changed}
-
