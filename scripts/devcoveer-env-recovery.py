@@ -277,6 +277,7 @@ def secret_like(name: str) -> bool:
     credential_patterns = (
         r"(?:^|_)(?:TOKEN|PASSWORD|PASS|SECRET)(?:_|$)",
         r"(?:^|_)API_KEY\d*(?:_|$)",
+        r"(?:^|_)KEY(?:_|$)",
         r"(?:^|_)API_ID(?:_|$)",
         r"(?:^|_)API_HASH(?:_|$)",
         r"(?:^|_)ACCESS_KEY_ID(?:_|$)",
@@ -299,6 +300,12 @@ def secret_like(name: str) -> bool:
 
 def credential_family(name: str) -> str:
     n = canonical(name)
+    # Specific embedded providers win over a broader prefix. Example:
+    # GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY belongs to SUPABASE, not GOOGLE.
+    if "SUPABASE" in n:
+        return "SUPABASE"
+    if n.startswith("YDB_") or "_YDB_" in n:
+        return "YDB"
     if n.startswith("GOOGLE_") or "_GOOGLE_" in n:
         return "GOOGLE AI"
     if n.startswith("NVIDIA_") or "_NVIDIA_" in n:
@@ -307,7 +314,7 @@ def credential_family(name: str) -> str:
         return "GIGACHAT"
     if n.startswith("GROQ") or "_GROQ" in n:
         return "GROQ"
-    if n.startswith("OPENAI_") or n.startswith("CODEX_"):
+    if n.startswith("OPENAI_") or n.startswith("CODEX_") or "_OPENAI_" in n:
         return "OPENAI / CODEX"
     if n.startswith("KAGGLE_") or "_KAGGLE_" in n:
         return "KAGGLE"
@@ -317,10 +324,6 @@ def credential_family(name: str) -> str:
         return "VK"
     if n.startswith("MAX_") or "_MAX_" in n:
         return "MAX"
-    if n.startswith("SUPABASE_") or "_SUPABASE_" in n:
-        return "SUPABASE"
-    if n.startswith("YDB_") or "_YDB_" in n:
-        return "YDB"
     if n.startswith(("YANDEX_", "YC_", "AWS_", "S3_")) or any(
         part in n for part in ("_YANDEX_", "_YC_", "_AWS_", "_S3_")
     ):
@@ -329,32 +332,49 @@ def credential_family(name: str) -> str:
         return "GITHUB"
     if n.startswith("FLY_") or "_FLY_" in n:
         return "FLY.IO"
-    if n.startswith(("POSTBOX_", "NOTISEND_", "SMTP_", "IMAP_", "EMAIL_", "MAIL_")) or any(
-        part in n for part in ("_POSTBOX_", "_NOTISEND_", "_SMTP_", "_IMAP_", "_EMAIL_", "_MAIL_")
+    if n.startswith("POSTBOX_") or "_POSTBOX_" in n:
+        return "POSTBOX"
+    if n.startswith("NOTISEND_") or "_NOTISEND_" in n:
+        return "NOTISEND"
+    if n.startswith(("SMTP_", "IMAP_", "EMAIL_", "MAIL_")) or any(
+        part in n for part in ("_SMTP_", "_IMAP_", "_EMAIL_", "_MAIL_")
     ):
-        return "MAIL"
+        return "MAIL / IMAP / SMTP"
+    if n.startswith("TELEGRAPH_") or "_TELEGRAPH_" in n:
+        return "TELEGRAPH"
+    if n.startswith("SPACEWEB_") or "_SPACEWEB_" in n:
+        return "SPACEWEB"
+    if n.startswith(("CLOUDFLARE_", "TUNNEL_")) or any(
+        part in n for part in ("_CLOUDFLARE_", "_TUNNEL_")
+    ):
+        return "TUNNEL / CLOUDFLARE"
     if "OAUTH" in n or "_MCP_" in n or n.startswith("MCP_"):
         return "OAUTH / MCP"
     if "DATABASE_URL" in n or n.endswith("_DSN") or n.startswith(("POSTGRES_", "DB_")):
         return "DATABASES"
     if "SERVICE_ACCOUNT" in n or "PRIVATE_KEY" in n or "SIGNING_KEY" in n:
         return "SERVICE ACCOUNTS / SIGNING"
-    # Unknown credential families still get their own visible section rather
-    # than being hidden under an "other" bucket.
-    stem = n.split("_", 1)[0]
-    return stem
+    # Unknown credential families still get a dedicated named section.
+    return n.split("_", 1)[0]
 
 
 def force_shared_credential(name: str) -> bool:
-    """Credentials intentionally shared across the DevCoveer project family."""
+    """Known cross-project credential pools intentionally stored once."""
     n = canonical(name)
-    family = credential_family(n)
-    if family in {
-        "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
-        "KAGGLE", "TELEGRAM", "VK", "MAX", "SUPABASE", "YDB",
-    }:
-        return True
-    return False
+    patterns = (
+        r"^GOOGLE_API_KEY\d*$",
+        r"^NVIDIA_(?:API_)?(?:KEY|TOKEN|CREDENTIALS?)$",
+        r"^GIGACHAT_.*(?:KEY|TOKEN|CREDENTIALS?|AUTH).*$",
+        r"^GROQ\d*_(?:API_)?KEY$",
+        r"^OPENAI_API_KEY$",
+        r"^KAGGLE_(?:USERNAME|KEY)$",
+        r"^TELEGRAM_API_(?:ID|HASH)$",
+        r"^TELEGRAM_(?:AUTH_BUNDLE|SESSION)(?:_|$).*",
+        r"^MAX_.*(?:SESSION|AUTH|TOKEN|KEY|CREDENTIAL).*$",
+        r"^SUPABASE_(?:URL|KEY|SERVICE_KEY)$",
+        r"^GOOGLE_AI_LIMITER_SUPABASE_(?:URL|SERVICE_KEY)$",
+    )
+    return any(re.search(pattern, n) for pattern in patterns)
 
 
 def find_flyctl() -> Path | None:
@@ -642,8 +662,8 @@ def write_private_env(
     lines: list[str] = []
     if generated:
         lines.extend([
-            "# GENERATED FROM /etc/devcoveer/env/owner.env — DO NOT EDIT.",
-            "# Edit owner.env only; this file is regenerated automatically.",
+            "# GENERATED FROM /home/dev/.env — DO NOT EDIT.",
+            "# Edit /home/dev/.env only; this file is regenerated automatically.",
             "",
         ])
     for key in sorted(values):
