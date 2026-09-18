@@ -61,7 +61,7 @@ IGNORE_DIRS = {
     ".git", ".venv", "venv", "node_modules", "dist", "build", ".astro",
     ".pytest_cache", "__pycache__", ".mypy_cache", ".ruff_cache",
     ".codex", ".agent", ".github", "docs", "tests", "test", "fixtures",
-    "artifacts", ".recovery",
+    "artifacts", ".recovery", "serverless", "infra", "kaggle", "notebooks",
 }
 ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
 SENSITIVE = re.compile(
@@ -250,6 +250,7 @@ def parse_env_example(path: Path) -> set[str]:
 
 def scan_project(name: str, root: Path) -> dict[str, Any]:
     required: set[str] = set()
+    documented_env: set[str] = set()
     examples: list[str] = []
     fly_app: str | None = None
     source_controlled_env: set[str] = set()
@@ -273,7 +274,10 @@ def scan_project(name: str, root: Path) -> dict[str, Any]:
             or lname.endswith(".env.sample")
             or lname.endswith(".env.template")
         ):
-            required.update(parse_env_example(p))
+            # Examples are documentation/catalog evidence only. They contain many
+            # optional, serverless and historical variables and must not inflate
+            # the owner's real credential file.
+            documented_env.update(parse_env_example(p))
             examples.append(rel.as_posix())
 
         if rel.as_posix() == "fly.toml":
@@ -306,6 +310,7 @@ def scan_project(name: str, root: Path) -> dict[str, Any]:
         "path": str(root),
         "fly_app": fly_app,
         "env_examples": sorted(examples),
+        "documented_env": sorted(documented_env),
         "required": sorted(required),
         "source_controlled_env": sorted(source_controlled_env),
     }
