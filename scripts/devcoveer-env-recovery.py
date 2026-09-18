@@ -305,6 +305,13 @@ def secret_like(name: str) -> bool:
         n.endswith("DATABASE_URL") or n.endswith("_DSN")
     ):
         return False
+
+    # Legacy owner-entered credentials whose names do not carry a conventional
+    # TOKEN/KEY suffix but are real provider credentials in existing projects.
+    if re.fullmatch(r"YC_SA_[A-Z0-9_]+", n):
+        return True
+    if re.fullmatch(r"MBB_CREDENTIAL_[A-Z0-9_]+_(?:PHONE|USERNAME|PASSWORD|CLOUD_PASSWORD)", n):
+        return True
     # Generic AUTH names are often modes/state paths. Require a concrete
     # credential noun below rather than admitting every string containing AUTH.
     credential_patterns = (
