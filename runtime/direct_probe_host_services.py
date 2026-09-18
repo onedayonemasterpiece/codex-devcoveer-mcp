@@ -27,6 +27,64 @@ def _host_section(binding: dict[str, Any], name: str) -> dict[str, Any]:
         raise ProbeError("config", f"trusted {name} section is invalid")
     return section
 
+async def _service_action(binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    alias = _validate_alias(action["service"])
+    operation = str(action["operation"])
+    cfg = _host_section(binding, "services").get(alias)
+    if not isinstance(cfg, dict):
+        raise ProbeError("target_denied", "service is not registered", status="denied")
+
+    unit = cfg.get("unit")
+    scope = cfg.get("scope", "user")
+    if not isinstance(unit, str) or not re.fullmatch(r"[A-Za-z0-9_.@:-]+\.service", unit):
+        raise ProbeError("config", "service binding is invalid")
+    if scope != "user":
+        raise ProbeError(
+            "target_denied",
+            "direct host actions are limited to explicitly allowlisted user services",
+            status="denied",
+        )
+
+    allowed = cfg.get("direct_actions", [])
+    if not isinstance(allowed, list) or operation not in allowed:
+        raise ProbeError("target_denied", "service action is not allowlisted", status="denied")
+
+    if operation == "start":
+        verb = ["start", unit]
+    elif operation == "restart":
+        verb = ["restart", unit]
+    elif operation == "enable_start":
+        verb = ["enable", "--now", unit]
+    else:
+        raise ProbeError("invalid_input", "unsupported direct service action")
+
+    result = await _run_process(
+        ["/usr/bin/systemctl", "--user", *verb],
+        env=_systemd_env("user"),
+        timeout=20.0,
+        output_limit=16 * 1024,
+    )
+    if result.exit_code != 0:
+        err = result.stderr.decode("utf-8", "replace")
+        raise ProbeError(
+            "service_action",
+            err.strip() or f"systemctl exited {result.exit_code}",
+            exit_code=result.exit_code,
+        )
+
+    status = await _systemctl_show(cfg)
+    return {
+        "service": alias,
+        "operation": operation,
+        "unit": unit,
+        "scope": scope,
+        "active_state": status.get("ActiveState"),
+        "sub_state": status.get("SubState"),
+        "main_pid": int(status.get("MainPID") or 0) or None,
+        "complete": True,
+    }
+
+
 async def _systemctl_show(service: dict[str, Any]) -> dict[str, Any]:
     unit = service.get("unit"); scope = service.get("scope", "user")
     if not isinstance(unit, str) or not re.fullmatch(r"[A-Za-z0-9_.@:-]+\.service", unit) or scope not in {"user","system"}:
