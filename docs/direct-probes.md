@@ -29,3 +29,27 @@ The VibePublish and Dataset Loop health aliases are diagnostic observations only
 ## Deployment
 
 `scripts/install-direct-probes.py` is fail-closed against exact observed production lineage. Dry-run transforms the installed bridge in memory and compiles the candidate together with every direct-probe runtime helper. `--apply` atomically installs only the bridge integration, the bounded direct-probe runtime modules and the trusted config, keeping timestamped rollback copies for pre-existing touched files. The installer never restarts a service. Restart/reload must follow the existing DevCoveer maintenance procedure and must not interrupt active tasks.
+
+
+## Direct host actions
+
+`host_probe` remains read-only. The companion `host_action` surface handles a
+small allowlisted mutation set so routine service operations do not require an
+OpenCode task.
+
+Supported operations are exactly:
+
+- `start`
+- `restart`
+- `enable_start`
+
+A service must opt in through `direct_actions` in trusted server configuration.
+The direct action path is user-systemd only and exposes no arbitrary shell,
+command arguments, paths, environment variables, stop/disable operation or
+system-service mutation.
+
+The host probe also supports `opencode_catalog`: it calls only a registered
+loopback OpenCode `/config/providers` endpoint using a registered auth file and
+returns provider/model metadata without credential values. With no provider
+filter it returns provider IDs and model counts; with a provider filter it
+returns bounded model metadata for that one connected provider.
