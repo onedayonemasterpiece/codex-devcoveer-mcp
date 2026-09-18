@@ -211,6 +211,12 @@ fi
 
 if command -v gh >/dev/null 2>&1; then
   if runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" GH_CONFIG_DIR="$AUTH_HOME/gh" gh auth status --hostname github.com >/dev/null 2>&1; then
+    # On headless servers force gh to file-backed storage in the canonical tree.
+    # If the token currently lives in a keyring, retrieve it without printing it
+    # and immediately re-store the same token in hosts.yml.
+    if ! grep -Eq '^[[:space:]]*oauth_token:' "$AUTH_HOME/gh/hosts.yml" 2>/dev/null; then
+      runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" GH_CONFIG_DIR="$AUTH_HOME/gh"         bash -lc 'set -o pipefail; gh auth token --hostname github.com | gh auth login --hostname github.com --with-token --insecure-storage >/dev/null'
+    fi
     runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" GH_CONFIG_DIR="$AUTH_HOME/gh" gh auth setup-git --hostname github.com >/dev/null 2>&1 || true
   fi
 fi
