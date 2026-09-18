@@ -372,12 +372,22 @@ cat >"$DEV_HOME/.local/bin/devcoveer-auth-status" <<'EOF'
 #!/usr/bin/env bash
 set -u
 source "$HOME/.config/devcoveer/auth-paths.sh"
-status() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then printf "%-14s PASS\n" "$name"; else printf "%-14s LOGIN_REQUIRED_OR_UNAVAILABLE\n" "$name"; fi; }
+
+status() {
+  local name="$1"; shift
+  if "$@" >/dev/null 2>&1; then
+    printf "%-14s PASS\n" "$name"
+  else
+    printf "%-14s LOGIN_REQUIRED_OR_UNAVAILABLE\n" "$name"
+  fi
+}
+
 echo "auth_home=$DEVCOVEER_AUTH_HOME"
 status github env -u GH_TOKEN -u GITHUB_TOKEN timeout 30 gh auth status --hostname github.com
 status fly env -u FLY_API_TOKEN -u FLY_ACCESS_TOKEN timeout 30 flyctl auth whoami
 status yc env -u YC_TOKEN -u YC_IAM_TOKEN -u YANDEX_IAM_TOKEN timeout 30 yc iam create-token --no-user-output
 status codex env -u OPENAI_API_KEY -u CODEX_API_KEY timeout 30 codex login status
+
 if [[ -s "$HOME/.local/share/opencode/auth.json" ]]; then
   printf "%-14s NATIVE_AUTH_PRESENT\n" opencode
 elif [[ -s "$HOME/.config/opencode/devcoveer-providers.env" ]] && grep -Eq '^[A-Z][A-Z0-9_]*=' "$HOME/.config/opencode/devcoveer-providers.env"; then
@@ -385,67 +395,32 @@ elif [[ -s "$HOME/.config/opencode/devcoveer-providers.env" ]] && grep -Eq '^[A-
 else
   printf "%-14s LOGIN_OR_PROVIDER_KEY_REQUIRED\n" opencode
 fi
+
 if [[ -s "$KAGGLE_CONFIG_DIR/access_token" || -s "$KAGGLE_CONFIG_DIR/kaggle.json" ]]; then
   printf "%-14s PASS_NATIVE_AUTH\n" kaggle
-elif grep -Eq '^KAGGLE_USERNAME=.+for spec in \
-  "gh:$HOME/.config/gh" "fly:$HOME/.fly" "yc:$HOME/.config/yandex-cloud" \
-  "codex:$HOME/.codex" "opencode:$HOME/.local/share/opencode" "kaggle:$HOME/.kaggle" \
-  "aws:$HOME/.aws" "supabase:$HOME/.supabase" "docker:$HOME/.docker" \
-  "tunnel:$HOME/.config/tunnel-client"; do
-  name="${spec%%:*}"; path="${spec#*:}"
-  if [[ -L "$path" ]]; then printf "link:%-9s %s -> %s\n" "$name" "$path" "$(readlink "$path")"; else printf "link:%-9s MISSING_OR_NOT_SYMLINK %s\n" "$name" "$path"; fi
-done
-EOF
-chmod 0755 "$DEV_HOME/.local/bin/devcoveer-auth-status"; chown "$DEV_USER:$DEV_USER" "$DEV_HOME/.local/bin/devcoveer-auth-status"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$SCRIPT_DIR/devcoveer2-login-missing-clis.sh" ]]; then
-  ln -sfn "$SCRIPT_DIR/devcoveer2-login-missing-clis.sh" "$DEV_HOME/.local/bin/devcoveer-login-missing-clis"
-  chown -h "$DEV_USER:$DEV_USER" "$DEV_HOME/.local/bin/devcoveer-login-missing-clis"
-fi
-
-echo
-echo "=== AUTH HOME READY ==="
-echo "canonical=$AUTH_HOME"
-echo "paths=$AUTH_ENV"
-echo "status_command=$DEV_HOME/.local/bin/devcoveer-auth-status"
- /home/dev/.env 2>/dev/null && grep -Eq '^KAGGLE_KEY=.+for spec in \
-  "gh:$HOME/.config/gh" "fly:$HOME/.fly" "yc:$HOME/.config/yandex-cloud" \
-  "codex:$HOME/.codex" "opencode:$HOME/.local/share/opencode" "kaggle:$HOME/.kaggle" \
-  "aws:$HOME/.aws" "supabase:$HOME/.supabase" "docker:$HOME/.docker" \
-  "tunnel:$HOME/.config/tunnel-client"; do
-  name="${spec%%:*}"; path="${spec#*:}"
-  if [[ -L "$path" ]]; then printf "link:%-9s %s -> %s\n" "$name" "$path" "$(readlink "$path")"; else printf "link:%-9s MISSING_OR_NOT_SYMLINK %s\n" "$name" "$path"; fi
-done
-EOF
-chmod 0755 "$DEV_HOME/.local/bin/devcoveer-auth-status"; chown "$DEV_USER:$DEV_USER" "$DEV_HOME/.local/bin/devcoveer-auth-status"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$SCRIPT_DIR/devcoveer2-login-missing-clis.sh" ]]; then
-  ln -sfn "$SCRIPT_DIR/devcoveer2-login-missing-clis.sh" "$DEV_HOME/.local/bin/devcoveer-login-missing-clis"
-  chown -h "$DEV_USER:$DEV_USER" "$DEV_HOME/.local/bin/devcoveer-login-missing-clis"
-fi
-
-echo
-echo "=== AUTH HOME READY ==="
-echo "canonical=$AUTH_HOME"
-echo "paths=$AUTH_ENV"
-echo "status_command=$DEV_HOME/.local/bin/devcoveer-auth-status"
- /home/dev/.env 2>/dev/null; then
+elif grep -Eq '^KAGGLE_USERNAME=.+$' /home/dev/.env 2>/dev/null && grep -Eq '^KAGGLE_KEY=.+$' /home/dev/.env 2>/dev/null; then
   printf "%-14s BYOK_OWNER_ENV\n" kaggle
 else
   printf "%-14s OWNER_ENV_OR_LOGIN_REQUIRED\n" kaggle
 fi
+
 for spec in \
   "gh:$HOME/.config/gh" "fly:$HOME/.fly" "yc:$HOME/.config/yandex-cloud" \
   "codex:$HOME/.codex" "opencode:$HOME/.local/share/opencode" "kaggle:$HOME/.kaggle" \
   "aws:$HOME/.aws" "supabase:$HOME/.supabase" "docker:$HOME/.docker" \
   "tunnel:$HOME/.config/tunnel-client"; do
-  name="${spec%%:*}"; path="${spec#*:}"
-  if [[ -L "$path" ]]; then printf "link:%-9s %s -> %s\n" "$name" "$path" "$(readlink "$path")"; else printf "link:%-9s MISSING_OR_NOT_SYMLINK %s\n" "$name" "$path"; fi
+  name="${spec%%:*}"
+  path="${spec#*:}"
+  if [[ -L "$path" ]]; then
+    printf "link:%-9s %s -> %s\n" "$name" "$path" "$(readlink "$path")"
+  else
+    printf "link:%-9s MISSING_OR_NOT_SYMLINK %s\n" "$name" "$path"
+  fi
 done
 EOF
-chmod 0755 "$DEV_HOME/.local/bin/devcoveer-auth-status"; chown "$DEV_USER:$DEV_USER" "$DEV_HOME/.local/bin/devcoveer-auth-status"
+
+chmod 0755 "$DEV_HOME/.local/bin/devcoveer-auth-status"
+chown "$DEV_USER:$DEV_USER" "$DEV_HOME/.local/bin/devcoveer-auth-status"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/devcoveer2-login-missing-clis.sh" ]]; then
