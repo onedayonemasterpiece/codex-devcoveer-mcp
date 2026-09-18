@@ -126,7 +126,9 @@ if [[ -x "$H/.local/bin/codex" ]] && "$H/.local/bin/codex" --version 2>/dev/null
   echo "Codex already installed: $("$H/.local/bin/codex" --version)"
 else
   echo "Installing @openai/codex@$CODEX_VERSION into the dev user prefix..."
-  asdev npm install --global --prefix "$H/.local" --no-audit --no-fund "@openai/codex@$CODEX_VERSION"
+  if ! asdev npm install --global --prefix "$H/.local" --no-audit --no-fund "@openai/codex@$CODEX_VERSION"; then
+    echo "WARNING: pinned Codex CLI install failed; continuing with OpenCode-only takeover path."
+  fi
 fi
 
 if [[ -x "$H/.local/bin/codex" ]]; then
