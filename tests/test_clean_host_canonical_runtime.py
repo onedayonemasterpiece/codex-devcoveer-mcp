@@ -75,6 +75,13 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert '"reason": "default_opencode"' in bridge
         assert 'provider="groq", model="groq/openai/gpt-oss-120b", directory=project.path' in bridge
         assert 'BRIDGE_VERSION = "3.10.0-clean-host.1"' in bridge
+        backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
+        assert 'headers["x-opencode-directory"]' in backend
+        assert '"User-Agent": "opencode/" + (self._server_version or "unknown")' in backend
+        assert 'await self.request("GET", "/config", directory=directory' in backend
+        assert '"agent": "plan" if access == "read" else "build"' in backend
+        assert '"tools": tools' not in backend
+        assert '"title": title[:200]' not in backend
         for name in (
             "direct_probes.py", "direct_probe_disk_forensics.py",
             "direct_probe_config.json", "opencode_backend.py",
