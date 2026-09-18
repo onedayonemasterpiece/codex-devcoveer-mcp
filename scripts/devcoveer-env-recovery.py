@@ -120,10 +120,19 @@ DENY = {
 # It stays in the corresponding tool's own auth/config store and must not clutter
 # /home/dev/.env. Project-specific provider credentials are NOT excluded here.
 DERIVED_AUTH_STATE_NAMES = {
+    # GitHub CLI / Actions auth state.
     "GH_TOKEN",
     "GITHUB_TOKEN",
+
+    # Fly CLI/account auth state.
     "FLY_API_TOKEN",
     "FLY_ACCESS_TOKEN",
+
+    # Short-lived cloud access tokens minted from a longer-lived identity.
+    "YC_IAM_TOKEN",
+    "REGION_TALK_YDB_IAM_TOKEN",
+    "YDB_ACCESS_TOKEN",
+    "AWS_SESSION_TOKEN",
 }
 
 # Locally generated service-to-service/control-plane secrets are runtime state,
@@ -1044,10 +1053,10 @@ def validate_owner_store(owner: dict[str, str]) -> None:
         if key.startswith("SHARED__"):
             problems.append(f"legacy shared namespace: {key}")
             continue
-        prefix, canon = _split_owner_key(key)
-        del prefix
-        if canonical(canon) != canon:
+        raw_name = key.split("__", 1)[1] if "__" in key else key
+        if canonical(raw_name) != raw_name:
             problems.append(f"non-canonical alias key: {key}")
+        _prefix, canon = _split_owner_key(key)
         if not owner_managed_credential(canon):
             problems.append(f"not owner-managed: {key}")
         if value.startswith(REF_PREFIX):
