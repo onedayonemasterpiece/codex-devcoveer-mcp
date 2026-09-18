@@ -19,6 +19,7 @@ DIRECT_FILES = (
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
+    "direct_probe_disk_forensics.py",
 )
 
 def sha(path: Path) -> str:
