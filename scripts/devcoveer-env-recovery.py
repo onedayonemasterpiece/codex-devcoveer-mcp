@@ -592,6 +592,7 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
     usage: dict[str, set[str]] = defaultdict(set)
     actual_names: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     all_projects = dict(project_info)
+    fly_secret_canons: set[str] = set()
 
     for project, info in project_info.items():
         for actual in info["required"]:
@@ -618,6 +619,7 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
             })
         for actual in app_info.get("secret_names", []):
             canon = canonical(actual)
+            fly_secret_canons.add(canon)
             usage[canon].add(project)
             actual_names[canon][project].add(actual)
 
@@ -626,7 +628,7 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
         projects = sorted(usage[canon])
         variables[canon] = {
             "canonical_name": canon,
-            "sensitive": secret_like(canon),
+            "sensitive": secret_like(canon) or canon in fly_secret_canons,
             "projects": projects,
             "runtime_names": {
                 project: sorted(actual_names[canon][project])
