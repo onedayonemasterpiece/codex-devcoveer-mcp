@@ -4,7 +4,7 @@ This document is the durable execution contract for ChatGPT clients using Codex 
 
 ## Execution default
 
-A plain `@Codex DevCoveer` request means **OpenCode**. `start_task` with no provider is routed through the existing OpenCode model resolver and its resource/health policy (Zen first, then NVIDIA, then metered reserve as configured).
+A plain `@Codex DevCoveer` request means **OpenCode**. `start_task` with no provider is routed through the existing OpenCode model resolver and its resource/health policy: Zen first, then the Groq GPT-OSS-120B pool (`groq -> groq2 -> groq3`), then NVIDIA, then metered reserve such as the deployed `giga1` lane.
 
 Native Codex is limited-capacity and **explicit opt-in only**. Use it only when the user explicitly asks for Codex, for example `@Codex DevCoveer Codex`; the client must express that opt-in as `provider="codex"`. A Codex-looking model name by itself does not opt in. There is no silent fallback from OpenCode to native Codex.
 
@@ -17,11 +17,11 @@ In the default ChatGPT-led mode, repository code **and repository documentation*
 Before starting an agent task:
 
 - deterministic Git/source/CI reads go to `project_probe`;
-- registered service/log/listener/resource/runtime reads go to `host_probe`;
+- registered service/log/listener/resource/runtime reads and the sanitized live OpenCode provider catalog go to `host_probe`;
 - model/provider state goes to `list_models`;
 - task state/evidence goes to `list_tasks`, `read_task`, and `get_task_evidence`.
 
-OpenCode remains appropriate for unsupported investigation, runtime mutations, tests, deployment, real inference/smoke work, and other execution that actually needs an agent.
+For routine registered user-service activation/restart, use the allowlist-only `host_action` surface when it is sufficient. OpenCode remains appropriate for unsupported investigation, complex or high-impact mutations, tests, deployment, real inference/smoke work, and other execution that actually needs an agent.
 
 ## Source Handoff fallback
 
