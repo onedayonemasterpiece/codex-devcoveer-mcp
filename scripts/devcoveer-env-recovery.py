@@ -1335,6 +1335,7 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
     owner = parse_master(OWNER)
     validate_owner_store(owner)
+    runtime_aliases = runtime_value_alias_map()
     safe_mkdir(SERVICES, 0o750)
 
     # Preserve every factual Fly runtime value outside the owner-editable store:
@@ -1364,8 +1365,9 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
                 continue
 
             if meta.get("owner_managed"):
-                common = owner.get(canon, "")
-                override = owner.get(f"{pfx(project)}__{canon}", "")
+                owner_key = owner_canonical(canon, runtime_aliases)
+                common = owner.get(owner_key, "")
+                override = owner.get(f"{pfx(project)}__{owner_key}", "")
                 selected = override or common
             else:
                 recovered = recovered_runtime.get((project, canon), set())
