@@ -1154,6 +1154,19 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
     owner = parse_master(OWNER)
     safe_mkdir(SERVICES, 0o750)
 
+    # Runtime-only/internal secrets remain outside the owner file. When they were
+    # recovered from factual runtime, preserve them directly in the generated
+    # project env so restoration does not lose working service state.
+    recovered_runtime: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for app, app_info in catalog.get("fly", {}).get("apps", {}).items():
+        project = app_info.get("project")
+        if not project:
+            continue
+        for actual, value in load_recovered_env(app).items():
+            canon = canonical(actual)
+            if value and secret_like(canon) and not owner_managed_credential(canon):
+                recovered_runtime[(project, canon)].add(value)
+
     import grp
     try:
         gid = grp.getgrnam("dev").gr_gid
@@ -1166,16 +1179,22 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
         for canon, meta in catalog["variables"].items():
             if project not in meta["projects"] or not meta["sensitive"]:
                 continue
-            common = owner.get(canon, "")
-            override = owner.get(f"{pfx(project)}__{canon}", "")
-            selected = override or common
+
+            if meta.get("owner_managed"):
+                common = owner.get(canon, "")
+                override = owner.get(f"{pfx(project)}__{canon}", "")
+                selected = override or common
+            else:
+                recovered = recovered_runtime.get((project, canon), set())
+                selected = next(iter(recovered)) if len(recovered) == 1 else ""
+
             if not selected:
                 continue
             for actual in meta["runtime_names"].get(project, [canon]):
                 values[actual] = selected
 
-        # Owner-added project credentials are supported immediately even before
-        # source scanning learns about the new variable.
+        # Explicit project override added by the owner for a newly introduced
+        # external credential remains supported before source discovery catches up.
         prefix = f"{pfx(project)}__"
         for owner_key, value in owner.items():
             if value and owner_key.startswith(prefix):
@@ -1190,6 +1209,7 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
 
     write_todo(owner, {})
     return counts
+
 
 def write_readme() -> None:
     README.write_text(
