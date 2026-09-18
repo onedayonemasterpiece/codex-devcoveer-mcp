@@ -398,6 +398,14 @@ def install_flyctl() -> Path | None:
     return find_flyctl()
 
 
+def fly_whoami(flyctl: Path, env: dict[str, str]) -> bool:
+    cp = run(
+        [str(flyctl), "auth", "whoami"],
+        as_dev=True, env=env, check=False, timeout=30,
+    )
+    return cp.returncode == 0
+
+
 def maybe_fly_auth(flyctl: Path, *, allow_prompt: bool) -> dict[str, str] | None:
     """Use the normal cached Fly account login; otherwise use saved snapshots."""
     del allow_prompt
