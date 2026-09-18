@@ -910,63 +910,67 @@ def _split_owner_key(key: str) -> tuple[str | None, str]:
 
 
 def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
-    """Build one compact credential file.
+    """Build the compact owner-input credential file.
 
-    Rule:
-    - one canonical variable name = one shared credential in /home/dev/.env;
-    - if factual runtime evidence shows different values for that same name,
-      only those real conflicts get PROJECT__VARIABLE overrides;
-    - no SHARED__ keys, no @ref aliases, no duplicated copies by project.
+    Only externally maintained credentials belong in /home/dev/.env.
+    Temporary project-prefixed values from earlier migration attempts are not
+    treated as evidence because the old project env layout contained cross-project
+    references. Factual recovered runtime values are the conflict evidence.
     """
     previous = _load_existing_owner()
     notes: dict[str, str] = {}
 
-    # Preserve prior human values while flattening the temporary SHARED__/project
-    # scheme. A direct flat value wins because it is the current owner choice.
+    # Preserve only flat/current owner choices. Temporary SHARED__ entries are
+    # migrated to their canonical flat name; project-prefixed migration artifacts
+    # are deliberately not trusted as factual evidence.
     flat_existing: dict[str, str] = {}
-    old_project_values: dict[tuple[str, str], str] = {}
     for key, value in previous.items():
         prefix, canon = _split_owner_key(key)
-        if not secret_like(canon):
+        if prefix is not None or not owner_managed_credential(canon):
             continue
-        if prefix is None:
-            if value or canon not in flat_existing:
-                flat_existing[canon] = value
-        elif value:
-            old_project_values[(prefix, canon)] = value
+        if value or canon not in flat_existing:
+            flat_existing[canon] = value
 
-    recovered_by_project: dict[tuple[str, str], str] = {}
+    recovered_sets: dict[tuple[str, str], set[str]] = defaultdict(set)
     for app, info in catalog.get("fly", {}).get("apps", {}).items():
         project = info.get("project")
         if not project:
             continue
         for actual, value in load_recovered_env(app).items():
             canon = canonical(actual)
-            if secret_like(canon) and value:
-                recovered_by_project[(project, canon)] = value
+            if owner_managed_credential(canon) and value:
+                recovered_sets[(project, canon)].add(value)
 
     owner: dict[str, str] = {}
     for canon, meta in sorted(catalog["variables"].items()):
-        if not meta.get("sensitive"):
+        if not meta.get("owner_managed"):
             continue
         projects = list(meta.get("projects") or [])
         direct = flat_existing.get(canon, "")
 
         observed: dict[str, str] = {}
+        alias_conflict = False
         for project in projects:
-            prefix = pfx(project)
-            value = old_project_values.get((prefix, canon), "")
-            if not value:
-                value = recovered_by_project.get((project, canon), "")
-            if value:
-                observed[project] = value
+            values = recovered_sets.get((project, canon), set())
+            if len(values) == 1:
+                observed[project] = next(iter(values))
+            elif len(values) > 1:
+                alias_conflict = True
 
         unique = set(observed.values())
 
-        if direct:
-            # Explicit owner value is the common value. Preserve only factual
-            # project differences as overrides.
+        if alias_conflict:
             owner[canon] = direct
+            notes[canon] = "alias-runtime-conflict"
+            for project, value in sorted(observed.items()):
+                if direct and value == direct:
+                    continue
+                owner[f"{pfx(project)}__{canon}"] = value
+            continue
+
+        if direct:
+            owner[canon] = direct
+            # Only factual runtime differences survive as project overrides.
             for project, value in sorted(observed.items()):
                 if value != direct:
                     owner[f"{pfx(project)}__{canon}"] = value
@@ -974,12 +978,10 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
             continue
 
         if len(unique) == 1:
-            # Zero or one unique runtime value: one common variable, stored once.
             owner[canon] = next(iter(unique)) if unique else ""
             continue
 
         if len(unique) > 1:
-            # Real conflict: do not guess which value is global.
             owner[canon] = ""
             notes[canon] = "runtime-conflict"
             for project, value in sorted(observed.items()):
@@ -988,11 +990,11 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
 
         owner[canon] = ""
 
-    # Preserve manually added flat credentials that are not yet discovered by
-    # source scanning; this lets the owner add a new credential in one place.
+    # A newly added flat owner credential is preserved even before source
+    # discovery learns about it, provided it is an owner-managed credential.
     catalog_canons = set(catalog["variables"])
     for canon, value in flat_existing.items():
-        if canon not in catalog_canons and secret_like(canon):
+        if canon not in catalog_canons and owner_managed_credential(canon):
             owner.setdefault(canon, value)
 
     return owner, notes
