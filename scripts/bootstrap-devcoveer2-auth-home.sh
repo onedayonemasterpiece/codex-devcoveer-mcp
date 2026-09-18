@@ -143,8 +143,8 @@ export DOCKER_CONFIG="$AUTH_HOME/docker"
 export AWS_SHARED_CREDENTIALS_FILE="$AUTH_HOME/aws/credentials"
 export AWS_CONFIG_FILE="$AUTH_HOME/aws/config"
 export CODEX_HOME="$AUTH_HOME/codex"
-for _d in "$HOME/.local/bin" "$HOME/.fly/bin" "$HOME/.opencode/bin" "$HOME/yandex-cloud/bin"; do
-  case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
+for _d in "\$HOME/.local/bin" "\$HOME/.fly/bin" "\$HOME/.opencode/bin" "\$HOME/yandex-cloud/bin"; do
+  case ":\$PATH:" in *":\$_d:"*) ;; *) PATH="\$_d:\$PATH" ;; esac
 done
 export PATH
 unset _d
