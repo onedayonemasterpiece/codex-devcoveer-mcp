@@ -34,14 +34,16 @@ DEV = "dev"
 DEV_HOME = Path("/home/dev")
 PROJECTS_ROOT = DEV_HOME / "projects"
 ROOT = Path("/etc/devcoveer/env")
-MASTER = ROOT / "master.env"
+OWNER = ROOT / "owner.env"
+LEGACY_MASTER = ROOT / "master.env"
+MASTER = OWNER
 TODO = ROOT / "todo.env"
 CATALOG = ROOT / "catalog.json"
 RECOVERED = ROOT / "recovered" / "fly"
 SERVICES = ROOT / "services"
 README = ROOT / "README.txt"
-OWNER_FILL = ROOT / "owner-fill.env"
-OWNER_FILL_SUMMARY = ROOT / "owner-fill-summary.json"
+LEGACY_OWNER_FILL = ROOT / "owner-fill.env"
+LEGACY_OWNER_FILL_SUMMARY = ROOT / "owner-fill-summary.json"
 FLY_RELEASE_ENV = DEV_HOME / ".config" / "fly" / "release.env"
 FLY_COMMON = (
     DEV_HOME / ".fly" / "bin" / "flyctl",
@@ -64,7 +66,8 @@ ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
 SENSITIVE = re.compile(
     r"(?:^|_)(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIALS?|SESSION|AUTH|"
     r"BUNDLE|API_ID|API_HASH|DATABASE_URL|DSN|PRIVATE|SIGNING|SALT|COOKIE|"
-    r"BEARER|OAUTH|ACCESS_KEY|SERVICE_ACCOUNT)(?:_|$)"
+    r"BEARER|OAUTH|ACCESS_KEY|SERVICE_ACCOUNT|USERNAME|USER_NAME|LOGIN|"
+    r"CLIENT_ID|CLIENT_SECRET|USERNAME|USER_NAME|USER|POSTGRES_USER|DB_USER)(?:_|$)"
 )
 PY_PATTERNS = (
     re.compile(r"""os\.getenv\(\s*["']([A-Z][A-Z0-9_]+)["']"""),
@@ -531,13 +534,21 @@ def fly_runtime_env(
     return {}, None, any_ssh_success
 
 
-def write_private_env(path: Path, values: dict[str, str], mode: int = 0o600) -> None:
-    lines = []
+def write_private_env(
+    path: Path, values: dict[str, str], mode: int = 0o600, *, generated: bool = False
+) -> None:
+    lines: list[str] = []
+    if generated:
+        lines.extend([
+            "# GENERATED FROM /etc/devcoveer/env/owner.env — DO NOT EDIT.",
+            "# Edit owner.env only; this file is regenerated automatically.",
+            "",
+        ])
     for key in sorted(values):
         value = values[key]
         lines.append(f"{key}={json.dumps(value, ensure_ascii=False)}")
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8", errors="surrogateescape")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8", errors="surrogateescape")
     os.chmod(tmp, mode)
     os.replace(tmp, path)
 
@@ -648,7 +659,6 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
     usage: dict[str, set[str]] = defaultdict(set)
     actual_names: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     all_projects = dict(project_info)
-    fly_secret_canons: set[str] = set()
 
     for project, info in project_info.items():
         for actual in info["required"]:
@@ -675,7 +685,6 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
         })
         for actual in app_info.get("secret_names", []):
             canon = canonical(actual)
-            fly_secret_canons.add(canon)
             usage[canon].add(project)
             actual_names[canon][project].add(actual)
 
@@ -684,7 +693,7 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
         projects = sorted(usage[canon])
         variables[canon] = {
             "canonical_name": canon,
-            "sensitive": secret_like(canon) or canon in fly_secret_canons,
+            "sensitive": secret_like(canon),
             "projects": projects,
             "runtime_names": {
                 project: sorted(actual_names[canon][project])
@@ -702,107 +711,293 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
     }
 
 
+REF_PREFIX = "@ref:"
+
+
+def resolve_owner_values(values: dict[str, str]) -> dict[str, str]:
+    """Resolve owner @ref: aliases without mutating the editable file."""
+    resolved: dict[str, str] = {}
+
+    def one(key: str, stack: tuple[str, ...] = ()) -> str:
+        if key in resolved:
+            return resolved[key]
+        if key in stack:
+            raise ValueError("owner credential reference cycle: " + " -> ".join((*stack, key)))
+        value = values.get(key, "")
+        if value.startswith(REF_PREFIX):
+            target = value[len(REF_PREFIX):]
+            if target not in values:
+                raise ValueError(f"owner credential reference target missing: {target}")
+            value = one(target, (*stack, key))
+        resolved[key] = value
+        return value
+
+    for key in values:
+        one(key)
+    return resolved
+
+
+def dedupe_owner_values(
+    values: dict[str, str], notes: dict[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Replace exact duplicate credential values with aliases to one owner key."""
+    expanded = resolve_owner_values(values)
+    by_value: dict[str, list[str]] = defaultdict(list)
+    for key, value in expanded.items():
+        if value:
+            by_value[value].append(key)
+
+    result = dict(expanded)
+    for value, keys in by_value.items():
+        if len(keys) < 2:
+            continue
+        primary = sorted(
+            keys,
+            key=lambda k: (0 if k.startswith("SHARED__") else 1, len(k), k),
+        )[0]
+        for key in keys:
+            if key == primary:
+                continue
+            result[key] = REF_PREFIX + primary
+            notes[key] = f"alias-of:{primary}"
+    return result, notes
+
+def _load_existing_owner() -> dict[str, str]:
+    owner = parse_master(OWNER)
+
+    # One-time migration from the previous master.env design.
+    if LEGACY_MASTER.is_file() and not LEGACY_MASTER.is_symlink():
+        for key, value in parse_master(LEGACY_MASTER).items():
+            if value and not owner.get(key):
+                owner[key] = value
+
+    # If the owner already filled the short-lived owner-fill file, do not lose it.
+    if LEGACY_OWNER_FILL.is_file() and not LEGACY_OWNER_FILL.is_symlink():
+        for key, value in parse_master(LEGACY_OWNER_FILL).items():
+            if value and not owner.get(key):
+                owner[key] = value
+    if owner:
+        owner = resolve_owner_values(owner)
+    return owner
+
+
+def _ensure_master_compat_link() -> None:
+    # master.env remains only as a compatibility symlink. There is never a
+    # second editable credential store.
+    if os.path.lexists(LEGACY_MASTER):
+        if LEGACY_MASTER.is_symlink() and os.readlink(LEGACY_MASTER) == "owner.env":
+            return
+        backup = ROOT / "master.env.pre-owner-migration"
+        if LEGACY_MASTER.is_file() and not backup.exists():
+            shutil.copy2(LEGACY_MASTER, backup)
+            os.chmod(backup, 0o600)
+        LEGACY_MASTER.unlink()
+    os.symlink("owner.env", LEGACY_MASTER)
+
+
+def _cleanup_legacy_owner_fill() -> None:
+    for path in (LEGACY_OWNER_FILL, LEGACY_OWNER_FILL_SUMMARY):
+        if path.exists() and not path.is_symlink():
+            backup = path.with_name(path.name + ".deprecated")
+            if not backup.exists():
+                shutil.move(path, backup)
+            else:
+                path.unlink()
+
+
 def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
-    """Return (master, source_note_by_key), preserving prior manual values."""
-    existing = parse_master(MASTER)
-    master = dict(existing)
+    """Build the single editable owner credential store.
+
+    The owner file contains credentials only. Proven identical credentials are
+    deduplicated into SHARED__ entries. Feature flags / ordinary config are
+    intentionally absent and remain source-controlled or service-specific config.
+    """
+    master = _load_existing_owner()
     notes: dict[str, str] = {}
 
-    # Index exact recovered values by (project, canonical variable).
     recovered_by_project: dict[tuple[str, str], str] = {}
-    recovered_hashes: dict[str, dict[str, str]] = defaultdict(dict)
-
     for app, info in catalog.get("fly", {}).get("apps", {}).items():
         project = info.get("project")
         if not project:
             continue
-        vals = load_recovered_env(app)
-        for actual, value in vals.items():
+        for actual, value in load_recovered_env(app).items():
             canon = canonical(actual)
+            if not secret_like(canon):
+                continue
             recovered_by_project[(project, canon)] = value
-            recovered_hashes[canon][project] = hashlib.sha256(
-                value.encode("utf-8", errors="surrogateescape")
-            ).hexdigest()
 
-    for canon, meta in catalog["variables"].items():
-        if not meta["sensitive"]:
+    allowed_canons = {
+        canon for canon, meta in catalog["variables"].items() if meta.get("sensitive")
+    }
+
+    # Remove historical flag/config entries accidentally admitted by the older
+    # "every Fly secret name is sensitive" rule.
+    for key in list(master):
+        if "__" not in key:
+            master.pop(key, None)
             continue
-        projects = meta["projects"]
-        shared_key = f"SHARED__{canon}"
+        canon = key.split("__", 1)[1]
+        if canon not in allowed_canons:
+            master.pop(key, None)
 
+    for canon in sorted(allowed_canons):
+        meta = catalog["variables"][canon]
+        projects = list(meta["projects"])
+        shared_key = f"SHARED__{canon}"
+        project_keys = {project: f"{pfx(project)}__{canon}" for project in projects}
         recovered = {
             project: recovered_by_project[(project, canon)]
             for project in projects
             if (project, canon) in recovered_by_project
         }
-        hashes = {recovered_hashes[canon][p] for p in recovered}
 
-        if len(projects) > 1:
-            # Promote to SHARED only when at least two independent project
-            # runtimes prove the exact same value. Otherwise keep it blank and
-            # preserve recovered values as explicit project overrides.
-            if len(recovered) >= 2 and len(hashes) == 1:
-                if not master.get(shared_key):
-                    master[shared_key] = next(iter(recovered.values()))
-                notes[shared_key] = "recovered-identical-across-projects"
+        if len(projects) == 1:
+            project = projects[0]
+            key = project_keys[project]
+            master.pop(shared_key, None)
+            if recovered.get(project) is not None and not master.get(key):
+                master[key] = recovered[project]
+                notes[key] = "recovered-from-fly-runtime"
             else:
-                master.setdefault(shared_key, "")
-                notes.setdefault(shared_key, "shared-candidate-unconfirmed")
+                master.setdefault(key, "")
+                notes.setdefault(key, "owner-value" if master.get(key) else "missing")
+            continue
 
-        for project in projects:
-            project_key = f"{pfx(project)}__{canon}"
-            value = recovered.get(project)
-            if value is not None:
-                # Fill blanks created by an earlier inventory pass, but never
-                # overwrite a non-empty value the owner already entered.
-                if not master.get(project_key):
-                    master[project_key] = value
-                notes[project_key] = "recovered-from-fly-runtime"
+        # If the owner explicitly has a shared value, preserve that decision.
+        shared_value = master.get(shared_key, "")
+        if shared_value:
+            notes[shared_key] = "shared-owner-source-of-truth"
+            for project, key in project_keys.items():
+                recovered_value = recovered.get(project)
+                existing = master.get(key, "")
+                if recovered_value is not None and recovered_value != shared_value:
+                    if not existing:
+                        master[key] = recovered_value
+                    notes[key] = "project-override-recovered-different"
+                elif existing == shared_value or not existing:
+                    master.pop(key, None)
+            continue
+
+        recovered_values = list(recovered.values())
+        recovered_unique = set(recovered_values)
+        existing_project_values = {
+            project: master.get(key, "")
+            for project, key in project_keys.items()
+            if master.get(key, "")
+        }
+
+        # Two or more independent runtimes with the same value are strong
+        # evidence of a truly shared credential. Store it exactly once.
+        if len(recovered_values) >= 2 and len(recovered_unique) == 1:
+            shared_value = recovered_values[0]
+            master[shared_key] = shared_value
+            notes[shared_key] = "recovered-identical-across-projects"
+            for project, key in project_keys.items():
+                existing = master.get(key, "")
+                recovered_value = recovered.get(project)
+                if existing and existing != shared_value:
+                    notes[key] = "project-override-owner-value"
+                    continue
+                if recovered_value is not None and recovered_value != shared_value:
+                    master[key] = recovered_value
+                    notes[key] = "project-override-recovered-different"
+                else:
+                    master.pop(key, None)
+            continue
+
+        # No evidence yet: expose one shared blank. Filling it in owner.env is
+        # the owner explicitly declaring the credential shared. A project-specific
+        # override can still be added later as PROJECT__NAME.
+        if not recovered and not existing_project_values:
+            master[shared_key] = ""
+            notes[shared_key] = "shared-candidate-unconfirmed"
+            for key in project_keys.values():
+                if not master.get(key, ""):
+                    master.pop(key, None)
+            continue
+
+        # One recovered value or conflicting values cannot safely be shared.
+        master.pop(shared_key, None)
+        for project, key in project_keys.items():
+            if master.get(key):
+                notes[key] = "project-owner-value"
+                continue
+            if project in recovered:
+                master[key] = recovered[project]
+                notes[key] = "recovered-from-fly-runtime"
             else:
-                # Keep explicit project-scoped blanks even when a variable name
-                # is shared across projects. Same name does not prove same secret.
-                master.setdefault(project_key, "")
-                notes.setdefault(project_key, "missing")
+                master.setdefault(key, "")
+                notes[key] = "missing"
 
+    master, notes = dedupe_owner_values(master, notes)
     return master, notes
 
 
-def write_master(master: dict[str, str], notes: dict[str, str]) -> None:
+def _owner_usage_comment(key: str, catalog: dict[str, Any]) -> str | None:
+    if "__" not in key:
+        return None
+    prefix, canon = key.split("__", 1)
+    meta = catalog.get("variables", {}).get(canon)
+    if not isinstance(meta, dict):
+        return None
+    projects = list(meta.get("projects") or [])
+    if prefix == "SHARED":
+        return "used by: " + ", ".join(sorted(projects))
+    for project in projects:
+        if pfx(project) == prefix:
+            runtime_names = meta.get("runtime_names", {}).get(project, [canon])
+            return f"project: {project}; runtime: {', '.join(runtime_names)}"
+    return None
+
+
+def write_master(
+    master: dict[str, str], notes: dict[str, str], catalog: dict[str, Any] | None = None
+) -> None:
     groups: dict[str, list[str]] = defaultdict(list)
     for key in master:
         group = "SHARED" if key.startswith("SHARED__") else key.split("__", 1)[0]
         groups[group].append(key)
 
     lines = [
-        "# DevCoveer2 master environment/secrets.",
-        "# ROOT ONLY. Never attach this file directly to a service.",
-        "# Edit values here, then run:",
-        "#   sudo python3 /home/dev/projects/codex-devcoveer-mcp/scripts/devcoveer-env-recovery.py render",
+        "# DEVCOVEER OWNER CREDENTIALS — SINGLE SOURCE OF TRUTH.",
+        "# ROOT ONLY (0600). EDIT THIS FILE AND NO OTHER ENV FILE.",
+        "# Contains credentials only: tokens, API keys, logins/usernames, passwords,",
+        "# sessions/auth bundles, database DSNs, signing/private/service-account keys.",
+        "# Feature flags, =0/=1, true/false switches and ordinary runtime config do not belong here.",
+        "# /etc/devcoveer/env/master.env is only a compatibility symlink to this file.",
+        "# services/*.env are generated automatically and MUST NOT be edited.",
+        "# @ref:OTHER_KEY means this line reuses the exact same credential value;",
+        "# rotate the value only at OTHER_KEY and every generated env follows it.",
         "",
     ]
     for group in sorted(groups):
         lines.append(f"# [{group}]")
         for key in sorted(groups[group]):
+            if catalog is not None:
+                usage = _owner_usage_comment(key, catalog)
+                if usage:
+                    lines.append(f"# {usage}")
             note = notes.get(key)
             if note:
                 lines.append(f"# source: {note}")
             value = master[key]
             lines.append(f"{key}={json.dumps(value, ensure_ascii=False) if value else ''}")
         lines.append("")
-    tmp = MASTER.with_suffix(".tmp")
+
+    tmp = OWNER.with_suffix(".tmp")
     tmp.write_text("\n".join(lines), encoding="utf-8")
     os.chmod(tmp, 0o600)
-    os.replace(tmp, MASTER)
+    os.replace(tmp, OWNER)
+    _ensure_master_compat_link()
 
 
 def write_todo(master: dict[str, str], notes: dict[str, str]) -> None:
     lines = [
-        "# Only missing values. Fill master.env, not this generated file.",
-        "# Names are deduplicated through SHARED__ defaults plus project overrides.",
+        "# GENERATED VIEW OF MISSING CREDENTIALS — DO NOT EDIT.",
+        "# Fill the corresponding blank directly in /etc/devcoveer/env/owner.env.",
         "",
     ]
-    missing = [k for k, v in master.items() if not v]
-    for key in sorted(missing):
+    for key in sorted(k for k, value in master.items() if not value):
         note = notes.get(key)
         if note:
             lines.append(f"# {note}")
@@ -810,106 +1005,30 @@ def write_todo(master: dict[str, str], notes: dict[str, str]) -> None:
     TODO.write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.chmod(TODO, 0o600)
 
-def write_owner_fill(master: dict[str, str], catalog: dict[str, Any]) -> dict[str, Any]:
-    """Write a compact owner-facing blank template with no secret values.
 
-    Fully unresolved multi-project families collapse to one SHARED__ prompt.
-    If one project already has a recovered value, unresolved projects remain
-    explicit overrides; recovery never assumes credentials are portable.
-    """
-    lines = [
-        "# DevCoveer2 unresolved secret input template.",
-        "# NO VALUES ARE GENERATED HERE.",
-        "# Fill this file, then run the apply-owner-fill command.",
-        "# PROJECT__NAME is project-specific; SHARED__NAME is intentionally shared.",
-        "",
-    ]
-    summary: dict[str, Any] = {
-        "schema": "devcoveer.owner-fill.v1",
-        "families_total": 0,
-        "prompts_total": 0,
-        "shared_prompts": 0,
-        "project_prompts": 0,
-        "groups": {},
-    }
-    grouped: dict[str, list[tuple[str, str]]] = defaultdict(list)
-
-    for canon, meta in sorted(catalog["variables"].items()):
-        if not meta.get("sensitive"):
-            continue
-        projects = list(meta.get("projects") or [])
-        if not projects:
-            continue
-        summary["families_total"] += 1
-        shared_key = f"SHARED__{canon}"
-        shared_value = master.get(shared_key, "")
-        project_values = {
-            project: master.get(f"{pfx(project)}__{canon}", "")
-            for project in projects
-        }
-        unresolved = [p for p, value in project_values.items() if not value and not shared_value]
-        if not unresolved:
-            continue
-
-        any_project_value = any(bool(v) for v in project_values.values())
-        if len(projects) > 1 and not any_project_value and not shared_value:
-            comment = "used by: " + ", ".join(sorted(projects))
-            grouped["SHARED"].append((shared_key, comment))
-            summary["shared_prompts"] += 1
-            summary["prompts_total"] += 1
-            continue
-
-        for project in sorted(unresolved):
-            key = f"{pfx(project)}__{canon}"
-            comment = f"runtime name: {canon}"
-            grouped[project].append((key, comment))
-            summary["project_prompts"] += 1
-            summary["prompts_total"] += 1
-
-    for group in sorted(grouped):
-        items = grouped[group]
-        summary["groups"][group] = len(items)
-        lines.append(f"# [{group}] unresolved={len(items)}")
-        for key, comment in items:
-            lines.append(f"# {comment}")
-            lines.append(f"{key}=")
-        lines.append("")
-
-    OWNER_FILL.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.chmod(OWNER_FILL, 0o600)
-    OWNER_FILL_SUMMARY.write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+def install_render_watcher() -> None:
+    """Keep generated service env files synchronized with owner.env."""
+    service = Path("/etc/systemd/system/devcoveer-env-render.service")
+    path_unit = Path("/etc/systemd/system/devcoveer-env-render.path")
+    script = Path(__file__).resolve()
+    service.write_text(
+        "[Unit]\nDescription=Render DevCoveer service envs from owner.env\n\n"
+        "[Service]\nType=oneshot\n"
+        f"ExecStart=/usr/bin/python3 {script} render\n"
+        "UMask=0027\n",
         encoding="utf-8",
     )
-    os.chmod(OWNER_FILL_SUMMARY, 0o600)
-    return summary
-
-
-def apply_owner_fill() -> dict[str, int]:
-    """Merge non-empty owner-fill values into master without printing values."""
-    if not OWNER_FILL.is_file():
-        raise SystemExit(f"{OWNER_FILL} is missing")
-    master = parse_master(MASTER)
-    supplied = parse_master(OWNER_FILL)
-    applied = 0
-    skipped = 0
-    for key, value in supplied.items():
-        if not value:
-            continue
-        if key not in master or master.get(key):
-            skipped += 1
-            continue
-        master[key] = value
-        applied += 1
-
-    write_master(master, {})
-    if not CATALOG.is_file():
-        raise SystemExit("catalog.json is missing")
-    catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-    write_todo(master, {})
-    write_owner_fill(master, catalog)
-    render(catalog)
-    return {"applied": applied, "skipped": skipped}
+    path_unit.write_text(
+        "[Unit]\nDescription=Watch DevCoveer owner credentials\n\n"
+        "[Path]\nPathChanged=/etc/devcoveer/env/owner.env\n"
+        "Unit=devcoveer-env-render.service\n\n"
+        "[Install]\nWantedBy=multi-user.target\n",
+        encoding="utf-8",
+    )
+    os.chmod(service, 0o644)
+    os.chmod(path_unit, 0o644)
+    subprocess.run(["systemctl", "daemon-reload"], check=False)
+    subprocess.run(["systemctl", "enable", "--now", "devcoveer-env-render.path"], check=False)
 
 
 def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
@@ -917,7 +1036,11 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
         if not CATALOG.is_file():
             raise SystemExit("catalog.json is missing; run recover first")
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-    master = parse_master(MASTER)
+    owner_raw = parse_master(OWNER)
+    try:
+        owner = resolve_owner_values(owner_raw)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     safe_mkdir(SERVICES, 0o750)
 
     import grp
@@ -932,50 +1055,64 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
         for canon, meta in catalog["variables"].items():
             if project not in meta["projects"] or not meta["sensitive"]:
                 continue
-            shared = master.get(f"SHARED__{canon}", "")
-            override = master.get(f"{pfx(project)}__{canon}", "")
+            shared = owner.get(f"SHARED__{canon}", "")
+            override = owner.get(f"{pfx(project)}__{canon}", "")
             selected = override or shared
             if not selected:
                 continue
             for actual in meta["runtime_names"].get(project, [canon]):
                 values[actual] = selected
+
+        # Owner-added project credentials are supported immediately even before
+        # source scanning learns about the new variable.
+        prefix = f"{pfx(project)}__"
+        for owner_key, value in owner.items():
+            if value and owner_key.startswith(prefix):
+                runtime_name = owner_key[len(prefix):]
+                if ENV_NAME.fullmatch(runtime_name):
+                    values.setdefault(runtime_name, value)
+
         target = SERVICES / f"{project}.env"
-        write_private_env(target, values, 0o640)
+        write_private_env(target, values, 0o640, generated=True)
         os.chown(target, 0, gid)
         counts[project] = len(values)
-    return counts
 
+    write_todo(owner, {})
+    return counts
 
 def write_readme() -> None:
     README.write_text(
-        """DevCoveer2 centralized env layout
+        """DevCoveer2 credential layout
+
+owner.env
+  The ONLY human-editable credential file. Root-only 0600.
+  Tokens, API keys, logins/usernames, passwords, sessions/auth bundles, DSNs,
+  private/signing/service-account credentials live here.
 
 master.env
-  Human-editable root-only source of truth. Never give it directly to a service.
+  Compatibility symlink to owner.env. It is not a second source of truth.
 
 todo.env
-  Generated list of unresolved names. Fill master.env, then rerender.
+  Generated missing-credential view. Never edit it.
 
 catalog.json
-  Machine-readable project/env usage, aliases, Fly app mapping and recovery status.
-  Contains names and hashes only, never recovered secret values.
+  Generated mapping from canonical owner credentials to runtime variable names
+  and projects. It contains no recovered plaintext values.
 
 recovered/fly/*.env
-  Root-only exact values recovered from running Fly Machines. Recovery evidence;
-  services should not consume these files directly.
+  Root-only recovery evidence from Fly. Never edit or consume directly.
 
 services/<project>.env
-  Least-privilege rendered env for one project, mode root:dev 0640.
+  Generated least-privilege runtime env files, root:dev 0640. Never edit.
 
-owner-fill.env
-  Compact blank-only owner input template. Fill missing values here, then run
-  the apply-owner-fill subcommand as root.
+Editing owner.env automatically regenerates services/*.env via the systemd
+devcoveer-env-render.path watcher. Running processes still require a controlled
+restart/reload before a changed environment value takes effect in memory.
 
 Resolution:
   PROJECT__VARIABLE overrides SHARED__VARIABLE.
-  SHARED values are populated automatically only when recovery proves equality
-  across at least two project runtimes. Otherwise they remain blank until the
-  owner chooses to share them.
+  A SHARED value is created automatically only from proven identical recovered
+  credentials, or when the owner explicitly fills a shared blank.
 """,
         encoding="utf-8",
     )
@@ -1000,49 +1137,48 @@ def recover(args: argparse.Namespace) -> int:
     CATALOG.write_text(json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(CATALOG, 0o600)
 
-    master, notes = merge_master(catalog)
-    write_master(master, notes)
-    write_todo(master, notes)
-    owner_fill_summary = write_owner_fill(master, catalog)
+    owner, notes = merge_master(catalog)
+    write_master(owner, notes, catalog)
     counts = render(catalog)
+    write_todo(owner, notes)
+    _cleanup_legacy_owner_fill()
+    install_render_watcher()
     write_readme()
 
     recovered_total = sum(
         len(x.get("recovered_names", []))
         for x in fly.get("apps", {}).values()
     )
-    missing_total = sum(1 for value in master.values() if not value)
-    sensitive_total = sum(
+    missing_total = sum(1 for value in owner.values() if not value)
+    credential_total = sum(
         1 for x in catalog["variables"].values() if x["sensitive"]
     )
 
-    # No values are ever printed.
     print("ENV_RECOVERY_COMPLETE")
     print(f"projects={len(projects)}")
-    print(f"sensitive_variable_families={sensitive_total}")
+    print(f"credential_variable_families={credential_total}")
     print(f"fly_available={fly.get('available', False)}")
     print(f"fly_authenticated={fly.get('authenticated', False)}")
     print(f"fly_apps_seen={len(fly.get('apps', {}))}")
     print(f"fly_secret_values_recovered={recovered_total}")
     app_diag = {
         app: {
-            "secret_names": len(info.get("secret_names", [])),
-            "running_machines": int(info.get("running_machine_count", 0)),
-            "secret_list_ok": bool(info.get("secret_list_ok", False)),
-            "machine_list_ok": bool(info.get("machine_list_ok", False)),
-            "ssh_ok": bool(info.get("ssh_ok", False)),
-            "ssh_method": info.get("ssh_method"),
-            "recovered": len(info.get("recovered_names", [])),
-            "missing": len(info.get("missing_runtime_names", [])),
+            "secret_names": len(app_info.get("secret_names", [])),
+            "running_machines": int(app_info.get("running_machine_count", 0)),
+            "secret_list_ok": bool(app_info.get("secret_list_ok", False)),
+            "machine_list_ok": bool(app_info.get("machine_list_ok", False)),
+            "ssh_ok": bool(app_info.get("ssh_ok", False)),
+            "ssh_method": app_info.get("ssh_method"),
+            "recovered": len(app_info.get("recovered_names", [])),
+            "missing": len(app_info.get("missing_runtime_names", [])),
         }
-        for app, info in sorted(fly.get("apps", {}).items())
+        for app, app_info in sorted(fly.get("apps", {}).items())
     }
     print("fly_app_recovery=" + json.dumps(app_diag, sort_keys=True))
-    print(f"master_missing_values={missing_total}")
-    print(f"master={MASTER}")
+    print(f"owner_missing_values={missing_total}")
+    print(f"owner={OWNER}")
+    print(f"master_compat={LEGACY_MASTER}")
     print(f"todo={TODO}")
-    print(f"owner_fill={OWNER_FILL}")
-    print("owner_fill_summary=" + json.dumps(owner_fill_summary, sort_keys=True))
     print(f"catalog={CATALOG}")
     print(f"service_envs={SERVICES}")
     print("rendered_project_counts=" + json.dumps(counts, sort_keys=True))
@@ -1052,31 +1188,11 @@ def recover(args: argparse.Namespace) -> int:
 def render_cmd(_: argparse.Namespace) -> int:
     ensure_root()
     counts = render()
-    master = parse_master(MASTER)
-    # Regenerate TODO/owner template without source notes on a render-only pass.
-    write_todo(master, {})
-    if not CATALOG.is_file():
-        raise SystemExit("catalog.json is missing")
-    catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-    owner_fill_summary = write_owner_fill(master, catalog)
     print("ENV_RENDER_COMPLETE")
     print("rendered_project_counts=" + json.dumps(counts, sort_keys=True))
+    print(f"owner={OWNER}")
     print(f"todo={TODO}")
-    print(f"owner_fill={OWNER_FILL}")
-    print("owner_fill_summary=" + json.dumps(owner_fill_summary, sort_keys=True))
     return 0
-
-
-def apply_owner_fill_cmd(_: argparse.Namespace) -> int:
-    ensure_root()
-    result = apply_owner_fill()
-    print("OWNER_FILL_APPLIED")
-    print("applied=" + str(result["applied"]))
-    print("skipped=" + str(result["skipped"]))
-    print(f"master={MASTER}")
-    print(f"owner_fill={OWNER_FILL}")
-    return 0
-
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -1087,8 +1203,6 @@ def main() -> int:
     p_recover.set_defaults(func=recover)
     p_render = sub.add_parser("render")
     p_render.set_defaults(func=render_cmd)
-    p_apply = sub.add_parser("apply-owner-fill")
-    p_apply.set_defaults(func=apply_owner_fill_cmd)
     args = parser.parse_args()
     return int(args.func(args))
 
