@@ -194,17 +194,6 @@ EOF
 done
 unset unit dropin_dir
 
-# OpenCode receives only the generated model-provider credential subset. The
-# control-plane/tunnel service never receives these provider keys.
-OPENCODE_DROPIN_DIR="$DEV_HOME/.config/systemd/user/opencode-devcoveer.service.d"
-install -d -m 0755 -o "$DEV_USER" -g "$DEV_USER" "$OPENCODE_DROPIN_DIR"
-cat >"$OPENCODE_DROPIN_DIR/30-provider-env.conf" <<'EOF'
-[Service]
-EnvironmentFile=-/home/dev/.config/opencode/devcoveer-providers.env
-EOF
-chown "$DEV_USER:$DEV_USER" "$OPENCODE_DROPIN_DIR/30-provider-env.conf"
-chmod 0644 "$OPENCODE_DROPIN_DIR/30-provider-env.conf"
-
 # Codex must use one file-backed credential store. Copying auth.json is forbidden;
 # OAuth refresh tokens must be refreshed in the same underlying file.
 runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" python3 - <<'PY'
