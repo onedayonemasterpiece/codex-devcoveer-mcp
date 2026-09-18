@@ -969,6 +969,36 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
             if (project, canon) in recovered_by_project
         }
 
+        if force_shared_credential(canon):
+            recovered_values = list(recovered.values())
+            recovered_unique = set(recovered_values)
+            existing_shared = master.get(shared_key, "")
+            # Known provider/account credentials are one shared pool by design.
+            # If recovered runtimes disagree, keep the conflict visible instead
+            # of arbitrarily choosing one value.
+            if existing_shared:
+                notes[shared_key] = "shared-owner-source-of-truth"
+            elif recovered_values and len(recovered_unique) == 1:
+                master[shared_key] = recovered_values[0]
+                notes[shared_key] = "shared-provider-credential-recovered"
+            else:
+                master.setdefault(shared_key, "")
+                notes.setdefault(
+                    shared_key,
+                    "shared-provider-credential-conflict" if len(recovered_unique) > 1 else "missing",
+                )
+            for project, key in project_keys.items():
+                recovered_value = recovered.get(project)
+                shared_value = master.get(shared_key, "")
+                if recovered_value is not None and shared_value and recovered_value != shared_value:
+                    master[key] = recovered_value
+                    notes[key] = "conflict-with-shared-provider-credential"
+                else:
+                    # Remove historical duplicated project copies; the shared
+                    # provider entry is the source of truth.
+                    master.pop(key, None)
+            continue
+
         if len(projects) == 1:
             project = projects[0]
             key = project_keys[project]
@@ -1071,33 +1101,59 @@ def _owner_usage_comment(key: str, catalog: dict[str, Any]) -> str | None:
 def write_master(
     master: dict[str, str], notes: dict[str, str], catalog: dict[str, Any] | None = None
 ) -> None:
-    groups: dict[str, list[str]] = defaultdict(list)
+    sections: dict[str, list[str]] = defaultdict(list)
     for key in master:
-        group = "SHARED" if key.startswith("SHARED__") else key.split("__", 1)[0]
-        groups[group].append(key)
+        canon = key.split("__", 1)[1] if "__" in key else key
+        family = credential_family(canon)
+        if family in {
+            "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
+            "KAGGLE", "TELEGRAM", "VK", "MAX", "SUPABASE", "YDB",
+            "YANDEX CLOUD / S3", "GITHUB", "FLY.IO", "MAIL", "OAUTH / MCP",
+            "DATABASES", "SERVICE ACCOUNTS / SIGNING",
+        }:
+            section = family
+        else:
+            # Every residual credential still gets a distinct named section.
+            # Project-specific credentials are grouped under that project;
+            # shared unknown families get a section named after their prefix.
+            prefix = key.split("__", 1)[0] if "__" in key else "SHARED"
+            section = f"PROJECT · {prefix}" if prefix != "SHARED" else f"SHARED · {family}"
+        sections[section].append(key)
+
+    order = [
+        "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
+        "KAGGLE", "TELEGRAM", "VK", "MAX", "SUPABASE", "YDB",
+        "YANDEX CLOUD / S3", "GITHUB", "FLY.IO", "MAIL", "OAUTH / MCP",
+        "DATABASES", "SERVICE ACCOUNTS / SIGNING",
+    ]
+    ordered_sections = sorted(
+        sections,
+        key=lambda s: (order.index(s) if s in order else len(order), s),
+    )
 
     lines = [
-        "# DEVCOVEER OWNER CREDENTIALS — SINGLE SOURCE OF TRUTH.",
-        "# DEV-EDITABLE (dev:dev 0600). EDIT THIS FILE AND NO OTHER ENV FILE.",
-        "# Contains credentials only: tokens, API keys, logins/usernames, passwords,",
-        "# sessions/auth bundles, database DSNs, signing/private/service-account keys.",
-        "# Feature flags, =0/=1, true/false switches and ordinary runtime config do not belong here.",
-        "# /etc/devcoveer/env/owner.env and master.env are compatibility symlinks here.",
-        "# services/*.env are generated automatically and MUST NOT be edited.",
-        "# @ref:OTHER_KEY means this line reuses the exact same credential value;",
-        "# rotate the value only at OTHER_KEY and every generated env follows it.",
+        "# DEVCOVEER SHARED CREDENTIALS — SINGLE SOURCE OF TRUTH.",
+        "# Owned by dev:dev, mode 0600. Edit this file directly under the dev user.",
+        "# ONLY credentials belong here: keys, tokens, sessions, logins, passwords, DSNs.",
+        "# Flags/settings such as =0, =1, true/false, paths, timeouts and feature switches are excluded.",
+        "# Generated service env files are derived from this file and MUST NOT be edited.",
+        "# @ref:OTHER_KEY means this credential reuses the value stored at OTHER_KEY.",
         "",
     ]
-    for group in sorted(groups):
-        lines.append(f"# [{group}]")
-        for key in sorted(groups[group]):
+    for section in ordered_sections:
+        lines.extend([
+            "# ============================================================================",
+            f"# {section}",
+            "# ============================================================================",
+        ])
+        for key in sorted(sections[section]):
             if catalog is not None:
                 usage = _owner_usage_comment(key, catalog)
                 if usage:
                     lines.append(f"# {usage}")
             note = notes.get(key)
-            if note:
-                lines.append(f"# source: {note}")
+            if note and note not in {"missing", "owner-value", "project-owner-value"}:
+                lines.append(f"# {note}")
             value = master[key]
             lines.append(f"{key}={json.dumps(value, ensure_ascii=False) if value else ''}")
         lines.append("")
@@ -1112,7 +1168,6 @@ def write_master(
     os.chown(OWNER, pw.pw_uid, pw.pw_gid)
     os.chmod(OWNER, 0o600)
     _ensure_compat_links()
-
 
 def write_todo(master: dict[str, str], notes: dict[str, str]) -> None:
     lines = [
