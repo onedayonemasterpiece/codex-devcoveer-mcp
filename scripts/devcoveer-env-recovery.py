@@ -91,8 +91,6 @@ ALIASES = {
     "GOOGLE_API_KEY_2": "GOOGLE_API_KEY2",
     "GOOGLE_API_KEY_3": "GOOGLE_API_KEY3",
     "GOOGLE_API_KEY_4": "GOOGLE_API_KEY4",
-    "GOOGLE_API_KEY_5": "GOOGLE_API_KEY5",
-    "GOOGLE_API_KEY_6": "GOOGLE_API_KEY6",
 
     # events-bot benchmark/fallback code explicitly treats this as the same
     # 4o credential, not a separate owner-managed secret.
