@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from direct_probe_core import (
-    BATCH_DEADLINE_SECONDS, CHECK_TIMEOUT_SECONDS, DEFAULT_CONFIG_PATH, HOST_PROBE_INPUT_SCHEMA,
-    MAX_CHECKS, MAX_RESPONSE_BYTES, PROJECT_PROBE_INPUT_SCHEMA, ProcessResult, ProbeError,
+    BATCH_DEADLINE_SECONDS, CHECK_TIMEOUT_SECONDS, DEFAULT_CONFIG_PATH, HOST_ACTION_INPUT_SCHEMA,
+    HOST_PROBE_INPUT_SCHEMA, MAX_CHECKS, MAX_RESPONSE_BYTES, PROJECT_PROBE_INPUT_SCHEMA, ProcessResult, ProbeError,
     _binding, _load_config, _now_iso, _redact_text, _run_process, _safe_worktree_path,
     _validate_alias, _validate_ref,
 )
@@ -17,7 +17,7 @@ from direct_probe_project import (
     _read_text, _remote_head, _search, _tree, _worktree_list,
 )
 from direct_probe_host import (
-    _config_presence, _health, _host_section, _inventory, _listeners, _logs, _resources, _runtime,
+    _config_presence, _health, _host_section, _inventory, _listeners, _logs, _opencode_catalog, _resources, _runtime,
     _runtime_file, _systemctl_show,
 )
 
@@ -112,6 +112,7 @@ async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dic
     if kind == "runtime": return await _runtime(binding, check), "trusted-runtime"
     if kind == "runtime_file": return await _runtime_file(binding, check), "installed-file"
     if kind == "config_presence": return await _config_presence(binding, check), "registered-config-presence"
+    if kind == "opencode_catalog": return await _opencode_catalog(binding, check), "authenticated-local-opencode-catalog"
     raise ProbeError("invalid_input", f"unknown host probe kind {kind!r}")
 
 
