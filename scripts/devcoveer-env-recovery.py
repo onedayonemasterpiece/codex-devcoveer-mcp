@@ -253,7 +253,129 @@ def canonical(name: str) -> str:
 
 
 def secret_like(name: str) -> bool:
-    return bool(SENSITIVE.search(name))
+    """Keep owner .env limited to actual credentials, not configuration selectors."""
+    n = canonical(name)
+    if n in DENY:
+        return False
+    if n.startswith(("ENABLE_", "DISABLE_")) or n.endswith(("_ENABLED", "_DISABLED")):
+        return False
+    # These variables contain the *name* of another secret env var, not a secret.
+    if re.search(r"_(?:KEY|TOKEN|SECRET|AUTH_BUNDLE|SESSION|CREDENTIALS?)_ENVS?$", n):
+        return False
+    if re.search(r"_(?:KEY|TOKEN|SECRET|AUTH_BUNDLE|SESSION|CREDENTIALS?)_VAR(?:S|_NAME)?$", n):
+        return False
+    if n.endswith(("_PATH", "_DIR", "_ROOT", "_FILE", "_FILES", "_LINK")):
+        return False
+    if n.endswith(("_MODEL_KEY", "_PROFILE_KEY", "_CACHE_KEY", "_IDEMPOTENCY_KEY", "_POLICY_KEY")):
+        return False
+    if n.endswith(("_URL", "_URI", "_ENDPOINT", "_HOST", "_PORT")) and not (
+        n.endswith("DATABASE_URL") or n.endswith("_DSN")
+    ):
+        return False
+    # Generic AUTH names are often modes/state paths. Require a concrete
+    # credential noun below rather than admitting every string containing AUTH.
+    credential_patterns = (
+        r"(?:^|_)(?:TOKEN|PASSWORD|PASS|SECRET)(?:_|$)",
+        r"(?:^|_)API_KEY\d*(?:_|$)",
+        r"(?:^|_)KEY(?:_|$)",
+        r"(?:^|_)API_ID(?:_|$)",
+        r"(?:^|_)API_HASH(?:_|$)",
+        r"(?:^|_)ACCESS_KEY_ID(?:_|$)",
+        r"(?:^|_)SECRET_ACCESS_KEY(?:_|$)",
+        r"(?:^|_)(?:USERNAME|USER_NAME|LOGIN)(?:_|$)",
+        r"(?:^|_)CLIENT_ID(?:_|$)",
+        r"(?:^|_)CLIENT_SECRET(?:_|$)",
+        r"(?:^|_)SESSION(?:_|$)",
+        r"(?:^|_)AUTH_BUNDLE(?:_|$)",
+        r"(?:^|_)CREDENTIALS?(?:_|$)",
+        r"(?:^|_)PRIVATE_KEY(?:_|$)",
+        r"(?:^|_)SIGNING_KEY(?:_|$)",
+        r"(?:^|_)SERVICE_ACCOUNT(?:_KEY|_JSON|_CREDENTIALS)(?:_|$)",
+        r"(?:^|_)DATABASE_URL(?:_|$)",
+        r"(?:^|_)DSN(?:_|$)",
+        r"^(?:POSTGRES|DB)_USER$",
+    )
+    return any(re.search(pattern, n) for pattern in credential_patterns)
+
+
+def credential_family(name: str) -> str:
+    n = canonical(name)
+    # Specific embedded providers win over a broader prefix. Example:
+    # GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY belongs to SUPABASE, not GOOGLE.
+    if "SUPABASE" in n:
+        return "SUPABASE"
+    if n.startswith("YDB_") or "_YDB_" in n:
+        return "YDB"
+    if n.startswith("GOOGLE_") or "_GOOGLE_" in n:
+        return "GOOGLE AI"
+    if n.startswith("NVIDIA_") or "_NVIDIA_" in n:
+        return "NVIDIA"
+    if n.startswith("GIGACHAT_") or "_GIGACHAT_" in n:
+        return "GIGACHAT"
+    if n.startswith("GROQ") or "_GROQ" in n:
+        return "GROQ"
+    if n.startswith("OPENAI_") or n.startswith("CODEX_") or "_OPENAI_" in n:
+        return "OPENAI / CODEX"
+    if n.startswith("KAGGLE_") or "_KAGGLE_" in n:
+        return "KAGGLE"
+    if n.startswith(("TELEGRAM_", "TG_")) or "_TELEGRAM_" in n:
+        return "TELEGRAM"
+    if n.startswith("VK_") or "_VK_" in n:
+        return "VK"
+    if n.startswith("MAX_") or "_MAX_" in n:
+        return "MAX"
+    if n.startswith(("YANDEX_", "YC_", "AWS_", "S3_")) or any(
+        part in n for part in ("_YANDEX_", "_YC_", "_AWS_", "_S3_")
+    ):
+        return "YANDEX CLOUD / S3"
+    if n.startswith("GITHUB_") or "_GITHUB_" in n:
+        return "GITHUB"
+    if n.startswith("FLY_") or "_FLY_" in n:
+        return "FLY.IO"
+    if n.startswith("POSTBOX_") or "_POSTBOX_" in n:
+        return "POSTBOX"
+    if n.startswith("NOTISEND_") or "_NOTISEND_" in n:
+        return "NOTISEND"
+    if n.startswith(("SMTP_", "IMAP_", "EMAIL_", "MAIL_")) or any(
+        part in n for part in ("_SMTP_", "_IMAP_", "_EMAIL_", "_MAIL_")
+    ):
+        return "MAIL / IMAP / SMTP"
+    if n.startswith("TELEGRAPH_") or "_TELEGRAPH_" in n:
+        return "TELEGRAPH"
+    if n.startswith("SPACEWEB_") or "_SPACEWEB_" in n:
+        return "SPACEWEB"
+    if n.startswith(("CLOUDFLARE_", "TUNNEL_")) or any(
+        part in n for part in ("_CLOUDFLARE_", "_TUNNEL_")
+    ):
+        return "TUNNEL / CLOUDFLARE"
+    if "OAUTH" in n or "_MCP_" in n or n.startswith("MCP_"):
+        return "OAUTH / MCP"
+    if "DATABASE_URL" in n or n.endswith("_DSN") or n.startswith(("POSTGRES_", "DB_")):
+        return "DATABASES"
+    if "SERVICE_ACCOUNT" in n or "PRIVATE_KEY" in n or "SIGNING_KEY" in n:
+        return "SERVICE ACCOUNTS / SIGNING"
+    # Unknown credential families still get a dedicated named section.
+    return n.split("_", 1)[0]
+
+
+def force_shared_credential(name: str) -> bool:
+    """Known cross-project credential pools intentionally stored once."""
+    n = canonical(name)
+    patterns = (
+        r"^GOOGLE_API_KEY\d*$",
+        r"^NVIDIA_(?:API_)?(?:KEY|TOKEN|CREDENTIALS?)$",
+        r"^GIGACHAT_.*(?:KEY|TOKEN|CREDENTIALS?|AUTH).*$",
+        r"^GROQ\d*_(?:API_)?KEY$",
+        r"^OPENAI_API_KEY$",
+        r"^KAGGLE_(?:USERNAME|KEY)$",
+        r"^TELEGRAM_API_(?:ID|HASH)$",
+        r"^TELEGRAM_(?:AUTH_BUNDLE|SESSION)(?:_|$).*",
+        r"^VK_.*(?:TOKEN|SESSION|KEY|CREDENTIAL|CLIENT_ID|CLIENT_SECRET|APP_ID).*$",
+        r"^MAX_.*(?:SESSION|AUTH|TOKEN|KEY|CREDENTIAL|CLIENT_ID|CLIENT_SECRET).*$",
+        r"^SUPABASE_(?:URL|KEY|SERVICE_KEY)$",
+        r"^GOOGLE_AI_LIMITER_SUPABASE_(?:URL|SERVICE_KEY)$",
+    )
+    return any(re.search(pattern, n) for pattern in patterns)
 
 
 def find_flyctl() -> Path | None:
@@ -541,8 +663,8 @@ def write_private_env(
     lines: list[str] = []
     if generated:
         lines.extend([
-            "# GENERATED FROM /etc/devcoveer/env/owner.env — DO NOT EDIT.",
-            "# Edit owner.env only; this file is regenerated automatically.",
+            "# GENERATED FROM /home/dev/.env — DO NOT EDIT.",
+            "# Edit /home/dev/.env only; this file is regenerated automatically.",
             "",
         ])
     for key in sorted(values):
@@ -574,7 +696,35 @@ def recover_fly(
 
     auth = maybe_fly_auth(flyctl, allow_prompt=allow_prompt)
     if auth is None:
-        result["reason"] = "fly_auth_missing_run_fly_auth_login_as_dev"
+        result["reason"] = "fly_auth_missing_using_recovered_snapshots"
+        app_to_project = dict(FLY_APP_PROJECT_MAP)
+        app_to_project.update({
+            info["fly_app"]: project
+            for project, info in project_info.items()
+            if info.get("fly_app")
+        })
+        if RECOVERED.is_dir():
+            for snapshot in sorted(RECOVERED.glob("*.env")):
+                app = snapshot.stem
+                vals = parse_master(snapshot)
+                names = sorted(vals)
+                result["apps"][app] = {
+                    "project": app_to_project.get(app),
+                    "secret_list_ok": False,
+                    "machine_list_ok": False,
+                    "running_machine_count": 0,
+                    "ssh_ok": False,
+                    "ssh_method": "recovered-snapshot",
+                    "secret_names": names,
+                    "recovered_names": names,
+                    "missing_runtime_names": [],
+                    "value_sha256": {
+                        name: hashlib.sha256(
+                            vals[name].encode("utf-8", errors="surrogateescape")
+                        ).hexdigest()
+                        for name in names
+                    },
+                }
         return result
     result["authenticated"] = True
 
@@ -870,6 +1020,36 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
             if (project, canon) in recovered_by_project
         }
 
+        if force_shared_credential(canon):
+            recovered_values = list(recovered.values())
+            recovered_unique = set(recovered_values)
+            existing_shared = master.get(shared_key, "")
+            # Known provider/account credentials are one shared pool by design.
+            # If recovered runtimes disagree, keep the conflict visible instead
+            # of arbitrarily choosing one value.
+            if existing_shared:
+                notes[shared_key] = "shared-owner-source-of-truth"
+            elif recovered_values and len(recovered_unique) == 1:
+                master[shared_key] = recovered_values[0]
+                notes[shared_key] = "shared-provider-credential-recovered"
+            else:
+                master.setdefault(shared_key, "")
+                notes.setdefault(
+                    shared_key,
+                    "shared-provider-credential-conflict" if len(recovered_unique) > 1 else "missing",
+                )
+            for project, key in project_keys.items():
+                recovered_value = recovered.get(project)
+                shared_value = master.get(shared_key, "")
+                if recovered_value is not None and shared_value and recovered_value != shared_value:
+                    master[key] = recovered_value
+                    notes[key] = "conflict-with-shared-provider-credential"
+                else:
+                    # Remove historical duplicated project copies; the shared
+                    # provider entry is the source of truth.
+                    master.pop(key, None)
+            continue
+
         if len(projects) == 1:
             project = projects[0]
             key = project_keys[project]
@@ -972,33 +1152,63 @@ def _owner_usage_comment(key: str, catalog: dict[str, Any]) -> str | None:
 def write_master(
     master: dict[str, str], notes: dict[str, str], catalog: dict[str, Any] | None = None
 ) -> None:
-    groups: dict[str, list[str]] = defaultdict(list)
+    sections: dict[str, list[str]] = defaultdict(list)
     for key in master:
-        group = "SHARED" if key.startswith("SHARED__") else key.split("__", 1)[0]
-        groups[group].append(key)
+        canon = key.split("__", 1)[1] if "__" in key else key
+        family = credential_family(canon)
+        if family in {
+            "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
+            "KAGGLE", "TELEGRAM", "VK", "MAX", "SUPABASE", "YDB",
+            "YANDEX CLOUD / S3", "GITHUB", "FLY.IO", "POSTBOX", "NOTISEND",
+            "MAIL / IMAP / SMTP", "TELEGRAPH", "SPACEWEB", "TUNNEL / CLOUDFLARE",
+            "OAUTH / MCP", "DATABASES", "SERVICE ACCOUNTS / SIGNING",
+        }:
+            section = family
+        else:
+            # Every residual credential still gets a distinct named section.
+            # Project-specific credentials are grouped under that project;
+            # shared unknown families get a section named after their prefix.
+            prefix = key.split("__", 1)[0] if "__" in key else "SHARED"
+            section = f"PROJECT · {prefix}" if prefix != "SHARED" else f"SHARED · {family}"
+        sections[section].append(key)
+
+    order = [
+        "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
+        "KAGGLE", "TELEGRAM", "VK", "MAX",
+        "SUPABASE", "YDB", "YANDEX CLOUD / S3",
+        "GITHUB", "FLY.IO", "TUNNEL / CLOUDFLARE",
+        "POSTBOX", "NOTISEND", "MAIL / IMAP / SMTP", "TELEGRAPH", "SPACEWEB",
+        "OAUTH / MCP", "DATABASES", "SERVICE ACCOUNTS / SIGNING",
+    ]
+    # Stable provider sections are always visible, even before a credential is
+    # discovered. Dynamic/project sections follow alphabetically.
+    ordered_sections = order + sorted(s for s in sections if s not in order)
 
     lines = [
-        "# DEVCOVEER OWNER CREDENTIALS — SINGLE SOURCE OF TRUTH.",
-        "# DEV-EDITABLE (dev:dev 0600). EDIT THIS FILE AND NO OTHER ENV FILE.",
-        "# Contains credentials only: tokens, API keys, logins/usernames, passwords,",
-        "# sessions/auth bundles, database DSNs, signing/private/service-account keys.",
-        "# Feature flags, =0/=1, true/false switches and ordinary runtime config do not belong here.",
-        "# /etc/devcoveer/env/owner.env and master.env are compatibility symlinks here.",
-        "# services/*.env are generated automatically and MUST NOT be edited.",
-        "# @ref:OTHER_KEY means this line reuses the exact same credential value;",
-        "# rotate the value only at OTHER_KEY and every generated env follows it.",
+        "# DEVCOVEER SHARED CREDENTIALS — SINGLE SOURCE OF TRUTH.",
+        "# Owned by dev:dev, mode 0600. Edit this file directly under the dev user.",
+        "# ONLY credentials belong here: keys, tokens, sessions, logins, passwords, DSNs.",
+        "# Flags/settings such as =0, =1, true/false, paths, timeouts and feature switches are excluded.",
+        "# Generated service env files are derived from this file and MUST NOT be edited.",
+        "# @ref:OTHER_KEY means this credential reuses the value stored at OTHER_KEY.",
         "",
     ]
-    for group in sorted(groups):
-        lines.append(f"# [{group}]")
-        for key in sorted(groups[group]):
+    for section in ordered_sections:
+        lines.extend([
+            "# ============================================================================",
+            f"# {section}",
+            "# ============================================================================",
+        ])
+        if not sections.get(section):
+            lines.append("# (credentials not detected yet)")
+        for key in sorted(sections.get(section, [])):
             if catalog is not None:
                 usage = _owner_usage_comment(key, catalog)
                 if usage:
                     lines.append(f"# {usage}")
             note = notes.get(key)
-            if note:
-                lines.append(f"# source: {note}")
+            if note and note not in {"missing", "owner-value", "project-owner-value"}:
+                lines.append(f"# {note}")
             value = master[key]
             lines.append(f"{key}={json.dumps(value, ensure_ascii=False) if value else ''}")
         lines.append("")
@@ -1013,7 +1223,6 @@ def write_master(
     os.chown(OWNER, pw.pw_uid, pw.pw_gid)
     os.chmod(OWNER, 0o600)
     _ensure_compat_links()
-
 
 def write_todo(master: dict[str, str], notes: dict[str, str]) -> None:
     lines = [
