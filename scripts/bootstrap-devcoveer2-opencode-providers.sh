@@ -310,7 +310,7 @@ providers["giga1"] = {
 
 tmp = path.with_name(".config.json.provider-recovery.tmp")
 tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-pwd = pwd.getpwnam("dev")
+pw = pwd.getpwnam("dev")
 os.chown(tmp, pw.pw_uid, pw.pw_gid)
 os.chmod(tmp, 0o600)
 os.replace(tmp, path)
