@@ -34,7 +34,8 @@ DEV = "dev"
 DEV_HOME = Path("/home/dev")
 PROJECTS_ROOT = DEV_HOME / "projects"
 ROOT = Path("/etc/devcoveer/env")
-OWNER = ROOT / "owner.env"
+OWNER = DEV_HOME / ".env"
+LEGACY_ROOT_OWNER = ROOT / "owner.env"
 LEGACY_MASTER = ROOT / "master.env"
 MASTER = OWNER
 TODO = ROOT / "todo.env"
@@ -765,6 +766,12 @@ def dedupe_owner_values(
 def _load_existing_owner() -> dict[str, str]:
     owner = parse_master(OWNER)
 
+    # One-time migration from the root-only owner.env design.
+    if LEGACY_ROOT_OWNER.is_file() and not LEGACY_ROOT_OWNER.is_symlink():
+        for key, value in parse_master(LEGACY_ROOT_OWNER).items():
+            if value and not owner.get(key):
+                owner[key] = value
+
     # One-time migration from the previous master.env design.
     if LEGACY_MASTER.is_file() and not LEGACY_MASTER.is_symlink():
         for key, value in parse_master(LEGACY_MASTER).items():
@@ -781,14 +788,26 @@ def _load_existing_owner() -> dict[str, str]:
     return owner
 
 
-def _ensure_master_compat_link() -> None:
-    # master.env remains only as a compatibility symlink. There is never a
-    # second editable credential store.
+def _ensure_compat_links() -> None:
+    """Keep old /etc paths as symlinks; /home/dev/.env is the only real file."""
+    if os.path.lexists(LEGACY_ROOT_OWNER):
+        if LEGACY_ROOT_OWNER.is_symlink() and os.readlink(LEGACY_ROOT_OWNER) == str(OWNER):
+            pass
+        else:
+            backup = ROOT / "owner.env.pre-dev-migration"
+            if LEGACY_ROOT_OWNER.is_file() and not LEGACY_ROOT_OWNER.is_symlink() and not backup.exists():
+                shutil.copy2(LEGACY_ROOT_OWNER, backup)
+                os.chmod(backup, 0o600)
+            LEGACY_ROOT_OWNER.unlink()
+            os.symlink(str(OWNER), LEGACY_ROOT_OWNER)
+    else:
+        os.symlink(str(OWNER), LEGACY_ROOT_OWNER)
+
     if os.path.lexists(LEGACY_MASTER):
         if LEGACY_MASTER.is_symlink() and os.readlink(LEGACY_MASTER) == "owner.env":
             return
-        backup = ROOT / "master.env.pre-owner-migration"
-        if LEGACY_MASTER.is_file() and not backup.exists():
+        backup = ROOT / "master.env.pre-dev-migration"
+        if LEGACY_MASTER.is_file() and not LEGACY_MASTER.is_symlink() and not backup.exists():
             shutil.copy2(LEGACY_MASTER, backup)
             os.chmod(backup, 0o600)
         LEGACY_MASTER.unlink()
@@ -960,11 +979,11 @@ def write_master(
 
     lines = [
         "# DEVCOVEER OWNER CREDENTIALS — SINGLE SOURCE OF TRUTH.",
-        "# ROOT ONLY (0600). EDIT THIS FILE AND NO OTHER ENV FILE.",
+        "# DEV-EDITABLE (dev:dev 0600). EDIT THIS FILE AND NO OTHER ENV FILE.",
         "# Contains credentials only: tokens, API keys, logins/usernames, passwords,",
         "# sessions/auth bundles, database DSNs, signing/private/service-account keys.",
         "# Feature flags, =0/=1, true/false switches and ordinary runtime config do not belong here.",
-        "# /etc/devcoveer/env/master.env is only a compatibility symlink to this file.",
+        "# /etc/devcoveer/env/owner.env and master.env are compatibility symlinks here.",
         "# services/*.env are generated automatically and MUST NOT be edited.",
         "# @ref:OTHER_KEY means this line reuses the exact same credential value;",
         "# rotate the value only at OTHER_KEY and every generated env follows it.",
@@ -984,17 +1003,22 @@ def write_master(
             lines.append(f"{key}={json.dumps(value, ensure_ascii=False) if value else ''}")
         lines.append("")
 
-    tmp = OWNER.with_suffix(".tmp")
+    tmp = OWNER.with_name(OWNER.name + ".tmp")
     tmp.write_text("\n".join(lines), encoding="utf-8")
+    import pwd
+    pw = pwd.getpwnam(DEV)
+    os.chown(tmp, pw.pw_uid, pw.pw_gid)
     os.chmod(tmp, 0o600)
     os.replace(tmp, OWNER)
-    _ensure_master_compat_link()
+    os.chown(OWNER, pw.pw_uid, pw.pw_gid)
+    os.chmod(OWNER, 0o600)
+    _ensure_compat_links()
 
 
 def write_todo(master: dict[str, str], notes: dict[str, str]) -> None:
     lines = [
         "# GENERATED VIEW OF MISSING CREDENTIALS — DO NOT EDIT.",
-        "# Fill the corresponding blank directly in /etc/devcoveer/env/owner.env.",
+        "# Fill the corresponding blank directly in /home/dev/.env.",
         "",
     ]
     for key in sorted(k for k, value in master.items() if not value):
@@ -1020,7 +1044,7 @@ def install_render_watcher() -> None:
     )
     path_unit.write_text(
         "[Unit]\nDescription=Watch DevCoveer owner credentials\n\n"
-        "[Path]\nPathChanged=/etc/devcoveer/env/owner.env\n"
+        "[Path]\nPathChanged=/home/dev/.env\n"
         "Unit=devcoveer-env-render.service\n\n"
         "[Install]\nWantedBy=multi-user.target\n",
         encoding="utf-8",
@@ -1084,13 +1108,13 @@ def write_readme() -> None:
     README.write_text(
         """DevCoveer2 credential layout
 
-owner.env
-  The ONLY human-editable credential file. Root-only 0600.
+.env (/home/dev/.env)
+  The ONLY human-editable credential file. Owned by dev:dev, mode 0600.
   Tokens, API keys, logins/usernames, passwords, sessions/auth bundles, DSNs,
   private/signing/service-account credentials live here.
 
-master.env
-  Compatibility symlink to owner.env. It is not a second source of truth.
+/etc/devcoveer/env/owner.env and master.env
+  Compatibility symlinks to /home/dev/.env. They are not second sources of truth.
 
 todo.env
   Generated missing-credential view. Never edit it.
@@ -1105,7 +1129,7 @@ recovered/fly/*.env
 services/<project>.env
   Generated least-privilege runtime env files, root:dev 0640. Never edit.
 
-Editing owner.env automatically regenerates services/*.env via the systemd
+Editing /home/dev/.env as user dev automatically regenerates services/*.env via the systemd
 devcoveer-env-render.path watcher. Running processes still require a controlled
 restart/reload before a changed environment value takes effect in memory.
 
