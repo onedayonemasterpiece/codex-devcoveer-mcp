@@ -387,26 +387,16 @@ def recover_fly_token_from_history(flyctl: Path) -> dict[str, str] | None:
 
 
 def maybe_fly_auth(flyctl: Path, *, allow_prompt: bool) -> dict[str, str] | None:
-    env = fly_env()
-    if fly_whoami(flyctl, env):
-        return env
+    """Use only the normal full-account flyctl cached login.
 
-    recovered = recover_fly_token_from_history(flyctl)
-    if recovered is not None:
-        return recovered
-
-    if not allow_prompt or not sys.stdin.isatty():
-        return None
-    token = getpass.getpass(
-        "Fly access token (hidden; blank skips Fly runtime recovery): "
-    ).strip()
-    if not token:
-        return None
-    validated = persist_fly_token(token, flyctl)
-    if validated is None:
-        print("Fly token validation failed; token was not stored.", file=sys.stderr)
-        return None
-    return validated
+    Authentication is intentionally a separate human step (fly auth login).
+    Do not inject historical/release tokens here: scope-limited tokens can make
+    fly apps list silently incomplete, which is unacceptable for recovery.
+    """
+    del allow_prompt
+    if fly_whoami(flyctl, {}):
+        return {}
+    return None
 
 
 def parse_json_output(cp: subprocess.CompletedProcess) -> Any:
@@ -481,16 +471,45 @@ def parse_env_bytes(raw: bytes) -> dict[str, str]:
     return out
 
 
-def fly_runtime_env(flyctl: Path, app: str, env: dict[str, str]) -> dict[str, str]:
-    # No value is sent to stderr/stdout by this recovery tool. flyctl stdout is
-    # captured in-memory and filtered to names listed by "fly secrets list".
+def fly_running_machine_ids(flyctl: Path, app: str, env: dict[str, str]) -> list[str]:
     cp = run(
-        [str(flyctl), "ssh", "console", "-a", app, "-C", "env -0"],
-        as_dev=True, env=env, check=False, timeout=90, binary=True,
+        [str(flyctl), "machine", "list", "-a", app, "--json"],
+        as_dev=True, env=env, check=False, timeout=60,
     )
     if cp.returncode != 0:
-        return {}
-    return parse_env_bytes(cp.stdout or b"")
+        return []
+    try:
+        data = parse_json_output(cp)
+    except Exception:
+        return []
+    items = data if isinstance(data, list) else []
+    out: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        state = str(item.get("state") or item.get("State") or "").lower()
+        machine_id = item.get("id") or item.get("ID")
+        if state in {"started", "running"} and isinstance(machine_id, str) and machine_id:
+            out.append(machine_id)
+    return out
+
+
+def fly_runtime_env(flyctl: Path, app: str, env: dict[str, str]) -> dict[str, str]:
+    # Secrets are only recoverable from a live Machine environment. Try every
+    # currently running Machine explicitly; never start/restart a Machine here.
+    # /proc/1/environ is NUL-separated and reflects the actual app process env.
+    machine_ids = fly_running_machine_ids(flyctl, app, env)
+    for machine_id in machine_ids:
+        cp = run(
+            [str(flyctl), "ssh", "console", "-a", app, "--machine", machine_id,
+             "--pty=false", "-C", "cat /proc/1/environ"],
+            as_dev=True, env=env, check=False, timeout=90, binary=True,
+        )
+        if cp.returncode == 0:
+            parsed = parse_env_bytes(cp.stdout or b"")
+            if parsed:
+                return parsed
+    return {}
 
 
 def write_private_env(path: Path, values: dict[str, str], mode: int = 0o600) -> None:
@@ -524,7 +543,7 @@ def recover_fly(
 
     auth = maybe_fly_auth(flyctl, allow_prompt=allow_prompt)
     if auth is None:
-        result["reason"] = "fly_auth_missing"
+        result["reason"] = "fly_auth_missing_run_fly_auth_login_as_dev"
         return result
     result["authenticated"] = True
 
@@ -598,6 +617,8 @@ def load_recovered_env(app: str) -> dict[str, str]:
 def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) -> dict[str, Any]:
     usage: dict[str, set[str]] = defaultdict(set)
     actual_names: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    all_projects = dict(project_info)
+    fly_secret_canons: set[str] = set()
 
     for project, info in project_info.items():
         for actual in info["required"]:
@@ -605,14 +626,26 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
             usage[canon].add(project)
             actual_names[canon][project].add(actual)
 
-    # Fly-only names are part of the project contract even if code currently
-    # reads them indirectly.
+    # Sweep every Fly app visible to the authenticated account. Apps without
+    # a local repository on DevCoveer2 still get a stable pseudo-project, so
+    # kgd80/cat-weather/old services are not silently dropped from master.env.
     for app, app_info in fly.get("apps", {}).items():
         project = app_info.get("project")
         if not project:
-            continue
+            project = f"flyapp-{app}"
+            app_info["project"] = project
+            all_projects.setdefault(project, {
+                "project": project,
+                "path": None,
+                "fly_app": app,
+                "env_examples": [],
+                "required": sorted(app_info.get("secret_names", [])),
+                "source_controlled_env": [],
+                "scope_kind": "fly_app",
+            })
         for actual in app_info.get("secret_names", []):
             canon = canonical(actual)
+            fly_secret_canons.add(canon)
             usage[canon].add(project)
             actual_names[canon][project].add(actual)
 
@@ -621,7 +654,7 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
         projects = sorted(usage[canon])
         variables[canon] = {
             "canonical_name": canon,
-            "sensitive": secret_like(canon),
+            "sensitive": secret_like(canon) or canon in fly_secret_canons,
             "projects": projects,
             "runtime_names": {
                 project: sorted(actual_names[canon][project])
@@ -633,7 +666,7 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
     return {
         "schema": "devcoveer.env-catalog.v1",
         "aliases": ALIASES,
-        "projects": project_info,
+        "projects": all_projects,
         "variables": variables,
         "fly": fly,
     }
