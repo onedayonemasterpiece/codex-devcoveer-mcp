@@ -80,8 +80,8 @@ JS_PATTERNS = (
     re.compile(r"""process\.env\[\s*["']([A-Z][A-Z0-9_]+)["']\s*\]"""),
 )
 
-# Safe syntactic aliases observed in the project code. These are names for the
-# same Telegram application credential, not two independent secrets.
+# Safe syntactic aliases observed in project code. Each pair names the same
+# underlying credential; only the canonical name is stored in /home/dev/.env.
 ALIASES = {
     # Telegram legacy names.
     "TG_API_ID": "TELEGRAM_API_ID",
@@ -1071,11 +1071,15 @@ def observed_equal_credential_names() -> list[tuple[str, ...]]:
                 value.encode("utf-8", errors="surrogateescape")
             ).hexdigest()
             groups[digest].add(actual)
-    out = {
-        tuple(sorted(names))
-        for names in groups.values()
-        if len(names) > 1
-    }
+    out: set[tuple[str, ...]] = set()
+    for names in groups.values():
+        if len(names) <= 1:
+            continue
+        # Known syntactic aliases are already listed explicitly below; keep the
+        # observed-equality block for additional same-value relationships only.
+        if len({canonical(name) for name in names}) == 1:
+            continue
+        out.add(tuple(sorted(names)))
     return sorted(out)
 
 
