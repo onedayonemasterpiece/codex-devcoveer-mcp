@@ -1037,6 +1037,26 @@ def known_alias_pairs() -> list[tuple[str, str]]:
     return sorted((alias, target) for alias, target in ALIASES.items())
 
 
+def validate_owner_store(owner: dict[str, str]) -> None:
+    """Fail closed if non-owner auth/config leaks into /home/dev/.env."""
+    problems: list[str] = []
+    for key, value in owner.items():
+        if key.startswith("SHARED__"):
+            problems.append(f"legacy shared namespace: {key}")
+            continue
+        prefix, canon = _split_owner_key(key)
+        del prefix
+        if canonical(canon) != canon:
+            problems.append(f"non-canonical alias key: {key}")
+        if not owner_managed_credential(canon):
+            problems.append(f"not owner-managed: {key}")
+        if value.startswith(REF_PREFIX):
+            problems.append(f"legacy reference value: {key}")
+    if problems:
+        preview = "; ".join(problems[:12])
+        raise SystemExit(f"owner store validation failed: {preview}")
+
+
 def _owner_usage_comment(key: str, catalog: dict[str, Any]) -> str | None:
     # Keep the owner-facing file compact. Section headers are the navigation.
     return None
@@ -1159,6 +1179,7 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
             raise SystemExit("catalog.json is missing; run recover first")
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
     owner = parse_master(OWNER)
+    validate_owner_store(owner)
     safe_mkdir(SERVICES, 0o750)
 
     # Runtime-only/internal secrets remain outside the owner file. When they were
@@ -1285,6 +1306,7 @@ def recover(args: argparse.Namespace) -> int:
     os.chmod(CATALOG, 0o600)
 
     owner, notes = merge_master(catalog)
+    validate_owner_store(owner)
     write_master(owner, notes, catalog)
     counts = render(catalog)
     write_todo(owner, notes)
@@ -1336,6 +1358,8 @@ def recover(args: argparse.Namespace) -> int:
             runtime_conflicts += 1
     print(f"owner_missing_values={missing_total}")
     print(f"runtime_conflict_overrides={runtime_conflicts}")
+    print(f"known_alias_pairs={len(known_alias_pairs())}")
+    print(f"observed_equal_alias_groups={len(observed_equal_credential_names())}")
     print("owner_sections=" + json.dumps(dict(sorted(owner_sections.items())), sort_keys=True))
     print(f"owner={OWNER}")
     print(f"master_compat={LEGACY_MASTER}")
