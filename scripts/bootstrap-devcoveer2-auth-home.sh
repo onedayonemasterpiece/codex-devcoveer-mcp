@@ -242,6 +242,12 @@ done
 EOF
 chmod 0755 "$DEV_HOME/.local/bin/devcoveer-auth-status"; chown "$DEV_USER:$DEV_USER" "$DEV_HOME/.local/bin/devcoveer-auth-status"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/devcoveer2-login-missing-clis.sh" ]]; then
+  ln -sfn "$SCRIPT_DIR/devcoveer2-login-missing-clis.sh" "$DEV_HOME/.local/bin/devcoveer-login-missing-clis"
+  chown -h "$DEV_USER:$DEV_USER" "$DEV_HOME/.local/bin/devcoveer-login-missing-clis"
+fi
+
 echo
 echo "=== AUTH HOME READY ==="
 echo "canonical=$AUTH_HOME"
