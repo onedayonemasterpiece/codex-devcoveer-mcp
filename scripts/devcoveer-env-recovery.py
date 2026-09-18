@@ -86,6 +86,7 @@ ALIASES = {
     # Telegram legacy names.
     "TG_API_ID": "TELEGRAM_API_ID",
     "TG_API_HASH": "TELEGRAM_API_HASH",
+    "TG_SESSION": "TELEGRAM_SESSION",
 
     # Google key-pool spellings used by older jobs and newer shared clients.
     "GOOGLE_API_KEY_2": "GOOGLE_API_KEY2",
@@ -95,6 +96,44 @@ ALIASES = {
     # events-bot benchmark/fallback code explicitly treats this as the same
     # 4o credential, not a separate owner-managed secret.
     "FOUR_4O_TOKEN": "FOUR_O_TOKEN",
+}
+
+# Blank entries in /home/dev/.env are intentionally a short owner action list,
+# not a dump of every optional environment variable discovered in source.
+# These are the external credentials required to restore the DevCoveer control
+# plane, shared model routing, local Telegram E2E, Dataset Loop/Kaggle and Mail MCP.
+OWNER_REQUIRED_INPUTS = {
+    # OpenCode / Codex DevCoveer provider pool.
+    "GROQ_API_KEY",
+    "GROQ_API_KEY2",
+    "GROQ_API_KEY3",
+    "NVIDIA_API_KEY",
+    "GIGACHAT_CREDENTIALS",
+
+    # Shared Google provider pool used by the existing products.
+    "GOOGLE_API_KEY",
+    "GOOGLE_API_KEY2",
+    "GOOGLE_API_KEY3",
+    "GOOGLE_API_KEY4",
+    "GOOGLE_API_KEY5",
+    "GOOGLE_API_KEY6",
+
+    # Dataset Loop / local provider operations.
+    "KAGGLE_USERNAME",
+    "KAGGLE_KEY",
+
+    # Local Telethon/E2E identity. Role-scoped production sessions are included
+    # only when they are actually recovered, not as blank todo entries.
+    "TELEGRAM_API_ID",
+    "TELEGRAM_API_HASH",
+    "TELEGRAM_SESSION",
+
+    # Local Mail MCP external account credential.
+    "MAILRU_PERSONAL_USERNAME",
+    "MAILRU_PERSONAL_APP_PASSWORD",
+
+    # Local services use the existing shared Supabase privileged key.
+    "SUPABASE_SERVICE_KEY",
 }
 
 # Canonical project ownership for Fly apps. This is intentionally explicit:
@@ -164,6 +203,7 @@ INTERNAL_RUNTIME_SECRET_PATTERNS = (
     re.compile(r"^AUTH_SESSION_BROKER_AUDIT_HMAC_KEY$"),
     re.compile(r"^MY_DATA_HUB_OAUTH_SIGNING_KEY$"),
     re.compile(r"^TELEGRAM_BUSINESS_FERNET_KEY$"),
+    re.compile(r"^TELEGRAM_WEBHOOK_SECRET$"),
 
     # A path-like state object name despite its *_KEY spelling.
     re.compile(r"^EMAIL_INBOUND_IMAP_STATE_KEY$"),
