@@ -33,7 +33,7 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.11.0-liberal-probes.1"', "version")
+                          'BRIDGE_VERSION = "3.11.1-liberal-probes-handoff.1"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -49,8 +49,53 @@ def transform_bridge(source: str) -> str:
     run_host_probe as _run_host_probe,
     run_project_probe as _run_project_probe,
 )
+from source_handoff import (
+    SourceHandoffError,
+    cleanup_source_handoff as _cleanup_source_handoff,
+    resolve_source_handoff as _resolve_source_handoff,
+    stage_source_handoff as _stage_source_handoff,
+)
 """
     source = replace_once(source, import_anchor, direct_import, "direct-probe import")
+    schema_anchor = "\nTOOLS = [\n"
+    source_handoff_schemas = r'''
+STAGE_SOURCE_HANDOFF_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "project": {
+            "type": "string", "minLength": 1, "maxLength": 128,
+            "description": "Existing DevCoveer project identifier; never an arbitrary filesystem path.",
+        },
+        "base_sha": {
+            "type": "string", "pattern": r"^[0-9a-f]{40}$",
+            "description": "Exact 40-hex Git commit used to produce the patch.",
+        },
+        "patch": {
+            "type": "string", "minLength": 1, "maxLength": 16777216,
+            "description": "Output equivalent to git diff --cached --binary <base_sha>.",
+        },
+        "patch_sha256": {
+            "type": "string", "pattern": r"^[0-9a-f]{64}$",
+            "description": "Exact SHA-256 of the UTF-8 patch bytes.",
+        },
+    },
+    "required": ["project", "base_sha", "patch", "patch_sha256"],
+    "additionalProperties": False,
+}
+CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "handoff_id": {"type": "string", "pattern": r"^src_[0-9a-f]{24}$"},
+    },
+    "required": ["handoff_id"],
+    "additionalProperties": False,
+}
+'''
+    source = replace_once(
+        source, schema_anchor,
+        "\n" + source_handoff_schemas.strip() + "\n\nTOOLS = [\n",
+        "source-handoff schemas",
+    )
     tool_anchor = '    types.Tool(name="council_run", title="Run multi-model council",\n'
     tool_block = '''    types.Tool(name="project_probe", title="Read deterministic project facts",
         description=("Read bounded deterministic project facts without starting an agent task. "
@@ -64,11 +109,26 @@ def transform_bridge(source: str) -> str:
         input_schema=HOST_PROBE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=True, destructive_hint=False,
             idempotent_hint=True, open_world_hint=False)),
+    types.Tool(name="stage_source_handoff", title="Stage source handoff",
+        description=("Materialize an exact-base Git binary patch in an isolated detached "
+            "worktree without modifying the canonical checkout. Returns handoff:<id> for "
+            "start_task/continue_task. Patch bytes are consumed through stdin and not persisted."),
+        input_schema=STAGE_SOURCE_HANDOFF_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+            idempotent_hint=True, open_world_hint=False)),
+    types.Tool(name="cleanup_source_handoff", title="Cleanup source handoff",
+        description=("Remove one managed source-handoff worktree and metadata after its "
+            "changes have been accepted/pushed and no continuation is needed."),
+        input_schema=CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=True,
+            idempotent_hint=True, open_world_hint=False)),
 '''
     source = replace_once(source, tool_anchor, tool_block + tool_anchor, "tool catalog")
     validator_anchor = '    "council_run": Draft202012Validator(COUNCIL_RUN_INPUT_SCHEMA),\n'
     validators = ('    "project_probe": Draft202012Validator(PROJECT_PROBE_INPUT_SCHEMA),\n'
-                  '    "host_probe": Draft202012Validator(HOST_PROBE_INPUT_SCHEMA),\n')
+                  '    "host_probe": Draft202012Validator(HOST_PROBE_INPUT_SCHEMA),\n'
+                  '    "stage_source_handoff": Draft202012Validator(STAGE_SOURCE_HANDOFF_INPUT_SCHEMA),\n'
+                  '    "cleanup_source_handoff": Draft202012Validator(CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA),\n')
     source = replace_once(source, validator_anchor, validators + validator_anchor,
                           "validator catalog")
     old_default = '''    if model is None:
@@ -91,6 +151,29 @@ def transform_bridge(source: str) -> str:
                 "reasoningEffort": None, "reason": "default_opencode"}
 '''
     source = replace_once(source, old_default, new_default, "providerless routing")
+    project_anchor = '''def _project_selection(raw_hint: str) -> tuple[ProjectEntry | None, dict[str, Any]]:
+    tier, matches = _match_projects(raw_hint)
+'''
+    project_with_handoff = '''def _project_selection(raw_hint: str) -> tuple[ProjectEntry | None, dict[str, Any]]:
+    if raw_hint.startswith("handoff:"):
+        handoff_id = raw_hint.removeprefix("handoff:")
+        try:
+            workspace = _resolve_source_handoff(handoff_id)
+        except SourceHandoffError:
+            return None, {"status": "not_found", "matchType": "handoff",
+                "message": f"Source handoff {handoff_id!r} is invalid or expired.",
+                "candidates": []}
+        entry = ProjectEntry(
+            canonical=raw_hint,
+            directory_name=workspace.name,
+            path=str(workspace),
+        )
+        return entry, {"status": "resolved", "matchType": "handoff",
+            "project": raw_hint, "cwd": str(workspace), "candidates": []}
+    tier, matches = _match_projects(raw_hint)
+'''
+    source = replace_once(source, project_anchor, project_with_handoff,
+                          "source-handoff project resolver")
     handler_anchor = '        if name == "council_run":\n'
     handlers = '''        if name == "project_probe":
             assert project is not None
@@ -117,6 +200,27 @@ def transform_bridge(source: str) -> str:
                 if exc.exit_code is not None:
                     payload["exitCode"] = exc.exit_code
                 return _tool_result(payload, error=True)
+
+        if name == "stage_source_handoff":
+            assert project is not None
+            try:
+                return _tool_result(_stage_source_handoff(
+                    project_root=project.path,
+                    project_id=project.canonical,
+                    base_sha=arguments["base_sha"],
+                    patch=arguments["patch"],
+                    patch_sha256=arguments["patch_sha256"],
+                ))
+            except SourceHandoffError as exc:
+                return _tool_result({"status": "failed",
+                    "errorCategory": "source_handoff", "content": str(exc)}, error=True)
+
+        if name == "cleanup_source_handoff":
+            try:
+                return _tool_result(_cleanup_source_handoff(arguments["handoff_id"]))
+            except SourceHandoffError as exc:
+                return _tool_result({"status": "failed",
+                    "errorCategory": "source_handoff", "content": str(exc)}, error=True)
 
 '''
     return replace_once(source, handler_anchor, handlers + handler_anchor, "probe dispatch")
@@ -249,6 +353,8 @@ def main() -> int:
         shutil.copy2(ROOT / "runtime" / name, out / name)
     shutil.copy2(ROOT / "runtime" / "direct_probe_config.json",
                  out / "direct_probe_config.json")
+    shutil.copy2(ROOT / "runtime" / "source_handoff.py",
+                 out / "source_handoff.py")
     for path in out.glob("*.py"):
         py_compile.compile(str(path), doraise=True)
     print(f"bridge_sha256={sha(bridge)}")
