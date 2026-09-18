@@ -1168,8 +1168,13 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
         # existing /home/dev/.env was produced by earlier iterations of this
         # recovery tool, so it must never override recovered runtime evidence.
         if multi_value_project or len(unique) > 1:
-            owner[canon] = ""
-            notes[canon] = "runtime-conflict"
+            # Distinct recovered project credentials are not a missing owner
+            # value. Keep the recovered project-scoped values and expose a blank
+            # canonical red-card only when that canonical credential is explicitly
+            # required for a local/shared DevCoveer runtime.
+            if canon in required:
+                owner[canon] = ""
+                notes[canon] = "runtime-conflict"
             for project, value in sorted(observed.items()):
                 owner[f"{pfx(project)}__{canon}"] = value
             continue

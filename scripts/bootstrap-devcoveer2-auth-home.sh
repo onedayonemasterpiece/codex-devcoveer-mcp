@@ -9,7 +9,7 @@ AUTH_ENV="$DEV_HOME/.config/devcoveer/auth-paths.sh"
 SYSTEMD_ENV="$DEV_HOME/.config/environment.d/60-devcoveer-auth.conf"
 USER_RUNTIME_DIR="/run/user/$DEV_UID"
 USER_BUS="unix:path=$USER_RUNTIME_DIR/bus"
-export PATH="/usr/local/bin:/usr/bin:/bin:$DEV_HOME/.local/bin:$DEV_HOME/.fly/bin:$DEV_HOME/.opencode/bin:$DEV_HOME/yandex-cloud/bin"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$DEV_HOME/.local/bin:$DEV_HOME/.fly/bin:$DEV_HOME/.opencode/bin:$DEV_HOME/yandex-cloud/bin"
 
 [[ "$(id -u)" -eq 0 ]] || { echo "Run as root." >&2; exit 2; }
 
@@ -143,8 +143,8 @@ export DOCKER_CONFIG="$AUTH_HOME/docker"
 export AWS_SHARED_CREDENTIALS_FILE="$AUTH_HOME/aws/credentials"
 export AWS_CONFIG_FILE="$AUTH_HOME/aws/config"
 export CODEX_HOME="$AUTH_HOME/codex"
-for _d in "$HOME/.local/bin" "$HOME/.fly/bin" "$HOME/.opencode/bin" "$HOME/yandex-cloud/bin"; do
-  case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
+for _d in "\$HOME/.local/bin" "\$HOME/.fly/bin" "\$HOME/.opencode/bin" "\$HOME/yandex-cloud/bin"; do
+  case ":\$PATH:" in *":\$_d:"*) ;; *) PATH="\$_d:\$PATH" ;; esac
 done
 export PATH
 unset _d
