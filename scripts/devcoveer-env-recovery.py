@@ -387,16 +387,13 @@ def recover_fly_token_from_history(flyctl: Path) -> dict[str, str] | None:
 
 
 def maybe_fly_auth(flyctl: Path, *, allow_prompt: bool) -> dict[str, str] | None:
-    """Use only the normal flyctl login/config state.
+    """Use only the normal full-account flyctl cached login.
 
     Authentication is intentionally a separate human step (fly auth login).
-    Recovery must not scrape old session history or ask for raw Fly tokens.
+    Do not inject historical/release tokens here: scope-limited tokens can make
+    fly apps list silently incomplete, which is unacceptable for recovery.
     """
     del allow_prompt
-    env = fly_env()
-    if fly_whoami(flyctl, env):
-        return env
-    # flyctl may have a normal cached login that is not represented in env.
     if fly_whoami(flyctl, {}):
         return {}
     return None
