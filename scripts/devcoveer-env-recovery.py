@@ -1206,18 +1206,18 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
     validate_owner_store(owner)
     safe_mkdir(SERVICES, 0o750)
 
-    # Runtime-only/internal secrets remain outside the owner file. When they were
-    # recovered from factual runtime, preserve them directly in the generated
-    # project env so restoration does not lose working service state.
+    # Preserve every factual Fly runtime value outside the owner-editable store:
+    # this includes generated/internal secrets AND ordinary settings that were
+    # historically stored as Fly secrets. The owner file stays credential-only,
+    # while generated per-service envs retain the actual working runtime state.
     recovered_runtime: dict[tuple[str, str], set[str]] = defaultdict(set)
     for app, app_info in catalog.get("fly", {}).get("apps", {}).items():
         project = app_info.get("project")
         if not project:
             continue
         for actual, value in load_recovered_env(app).items():
-            canon = canonical(actual)
-            if value and secret_like(canon) and not owner_managed_credential(canon):
-                recovered_runtime[(project, canon)].add(value)
+            if value:
+                recovered_runtime[(project, canonical(actual))].add(value)
 
     import grp
     try:
@@ -1229,7 +1229,7 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
     for project, info in catalog["projects"].items():
         values: dict[str, str] = {}
         for canon, meta in catalog["variables"].items():
-            if project not in meta["projects"] or not meta["sensitive"]:
+            if project not in meta["projects"]:
                 continue
 
             if meta.get("owner_managed"):
