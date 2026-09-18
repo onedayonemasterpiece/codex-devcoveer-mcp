@@ -891,15 +891,26 @@ def resolve_owner_values(values: dict[str, str]) -> dict[str, str]:
 def dedupe_owner_values(
     values: dict[str, str], notes: dict[str, str]
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Replace exact duplicate credential values with aliases to one owner key."""
+    """Deduplicate only semantically compatible credentials.
+
+    Exact string equality alone is not enough: two unrelated providers may use
+    the same username/password-like value and must remain independently rotatable.
+    Aliases are created only when both the credential family and plaintext value
+    match. Same canonical runtime names across projects are already collapsed by
+    merge_master before this pass.
+    """
     expanded = resolve_owner_values(values)
-    by_value: dict[str, list[str]] = defaultdict(list)
+    by_family_value: dict[tuple[str, str], list[str]] = defaultdict(list)
+
     for key, value in expanded.items():
-        if value:
-            by_value[value].append(key)
+        if not value:
+            continue
+        canon = key.split("__", 1)[1] if "__" in key else key
+        family = credential_family(canon)
+        by_family_value[(family, value)].append(key)
 
     result = dict(expanded)
-    for value, keys in by_value.items():
+    for (_family, _value), keys in by_family_value.items():
         if len(keys) < 2:
             continue
         primary = sorted(
