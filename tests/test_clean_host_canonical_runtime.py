@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,3 +50,8 @@ def test_clean_host_installer_runs_normally_as_dev_without_sudo() -> None:
     assert 'CURRENT_UID="$(id -u)"' in source
     assert 'if [ "$CURRENT_UID" -eq "$DEV_UID" ]; then' in source
     assert 'systemctl --user restart codex-devserver-tunnel.service' in source
+
+
+def test_clean_host_installer_is_executable() -> None:
+    mode = INSTALLER.stat().st_mode
+    assert mode & stat.S_IXUSR
