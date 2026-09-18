@@ -1000,6 +1000,36 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
     return owner, notes
 
 
+def observed_equal_credential_names() -> list[tuple[str, ...]]:
+    """Return name groups that held the same owner-managed secret in recovery.
+
+    This is informational only. It does not silently merge different semantic
+    variable names. Values are compared by SHA-256 and are never printed.
+    """
+    groups: dict[tuple[str, str], set[str]] = defaultdict(set)
+    if not RECOVERED.is_dir():
+        return []
+    for snapshot in sorted(RECOVERED.glob("*.env")):
+        for actual, value in parse_master(snapshot).items():
+            if not value or not owner_managed_credential(actual):
+                continue
+            family = credential_family(actual)
+            digest = hashlib.sha256(
+                value.encode("utf-8", errors="surrogateescape")
+            ).hexdigest()
+            groups[(family, digest)].add(actual)
+    out = {
+        tuple(sorted(names))
+        for names in groups.values()
+        if len(names) > 1
+    }
+    return sorted(out)
+
+
+def known_alias_pairs() -> list[tuple[str, str]]:
+    return sorted((alias, target) for alias, target in ALIASES.items())
+
+
 def _owner_usage_comment(key: str, catalog: dict[str, Any]) -> str | None:
     # Keep the owner-facing file compact. Section headers are the navigation.
     return None
@@ -1014,11 +1044,11 @@ def write_master(
         sections[credential_family(canon)].append(key)
 
     preferred = [
-        "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
+        "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / 4O", "OPENAI / CODEX",
         "KAGGLE", "TELEGRAM", "VK", "MAX",
         "SUPABASE", "YDB", "YANDEX CLOUD / S3",
         "GITHUB", "FLY.IO", "TUNNEL / CLOUDFLARE",
-        "POSTBOX", "NOTISEND", "MAIL / IMAP / SMTP", "TELEGRAPH", "SPACEWEB",
+        "POSTBOX", "NOTISEND", "MAIL / IMAP / SMTP", "TELEGRAPH", "SPACEWEB", "PINTEREST",
         "OAUTH / MCP", "DATABASES", "SERVICE ACCOUNTS / SIGNING",
     ]
     ordered = [s for s in preferred if s in sections]
@@ -1041,7 +1071,27 @@ def write_master(
             value = master[key]
             if notes.get(key) == "runtime-conflict":
                 lines.append("# CONFLICT: recovered runtimes disagree; review this credential.")
+            elif notes.get(key) == "alias-runtime-conflict":
+                lines.append("# CONFLICT: known alias names had different runtime values; review.")
             lines.append(f"{key}={json.dumps(value, ensure_ascii=False) if value else ''}")
+        lines.append("")
+
+    aliases = known_alias_pairs()
+    observed_equal = observed_equal_credential_names()
+    if aliases or observed_equal:
+        lines.extend([
+            "# ============================================================================",
+            "# ALIASES / COMPATIBILITY NAMES",
+            "# ============================================================================",
+            "# These are comments only. Secret values are stored once above.",
+        ])
+        for alias, target in aliases:
+            lines.append(f"# {alias} = {target}")
+        if observed_equal:
+            lines.append("#")
+            lines.append("# Same secret value observed in recovered runtime; informational only:")
+            for names in observed_equal:
+                lines.append("# " + " = ".join(names))
         lines.append("")
 
     tmp = OWNER.with_name(OWNER.name + ".tmp")
