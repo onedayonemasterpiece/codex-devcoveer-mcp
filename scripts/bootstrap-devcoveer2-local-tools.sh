@@ -24,15 +24,19 @@ if [[ -f "$AUTH_BOOTSTRAP" ]]; then
   echo
 fi
 
-tmp="$(mktemp -d)"
+INSTALLER_CACHE="${DEV_HOME}/.cache/devcoveer-installers"
+install -d -m 0700 -o "${DEV_USER}" -g "${DEV_USER}" "${INSTALLER_CACHE}"
+tmp="$(runuser -u "${DEV_USER}" -- env HOME="${DEV_HOME}" mktemp -d -p "${INSTALLER_CACHE}" yc.XXXXXX)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "=== YANDEX CLOUD CLI ==="
 if [[ ! -x "${YC_INSTALL_DIR}/bin/yc" ]]; then
-  curl -fsSL --connect-timeout 15 --max-time 120 \
-    https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
-    -o "${tmp}/yc-install.sh"
-  chmod 0755 "${tmp}/yc-install.sh"
+  runuser -u "${DEV_USER}" -- env \
+    HOME="${DEV_HOME}" \
+    PATH="/usr/local/bin:/usr/bin:/bin:${DEV_HOME}/.local/bin" \
+    curl -fsSL --connect-timeout 15 --max-time 120 \
+      https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
+      -o "${tmp}/yc-install.sh"
 
   runuser -u "${DEV_USER}" -- env \
     HOME="${DEV_HOME}" \
