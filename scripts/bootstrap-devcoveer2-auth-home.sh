@@ -142,6 +142,11 @@ export DOCKER_CONFIG="$AUTH_HOME/docker"
 export AWS_SHARED_CREDENTIALS_FILE="$AUTH_HOME/aws/credentials"
 export AWS_CONFIG_FILE="$AUTH_HOME/aws/config"
 export CODEX_HOME="$AUTH_HOME/codex"
+for _d in "$HOME/.local/bin" "$HOME/.fly/bin" "$HOME/.opencode/bin" "$HOME/yandex-cloud/bin"; do
+  case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
+done
+export PATH
+unset _d
 EOF
 chown "$DEV_USER:$DEV_USER" "$AUTH_ENV"; chmod 0644 "$AUTH_ENV"
 
@@ -259,13 +264,19 @@ set -u
 source "$HOME/.config/devcoveer/auth-paths.sh"
 status() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then printf "%-14s PASS\n" "$name"; else printf "%-14s LOGIN_REQUIRED_OR_UNAVAILABLE\n" "$name"; fi; }
 echo "auth_home=$DEVCOVEER_AUTH_HOME"
-status github gh auth status --hostname github.com
-status fly flyctl auth whoami
-status yc yc config profile list
-status codex codex login status
-status opencode opencode auth list
-if command -v aws >/dev/null 2>&1; then status aws aws sts get-caller-identity; else printf "%-14s NOT_INSTALLED\n" aws; fi
-if command -v supabase >/dev/null 2>&1; then status supabase supabase projects list; else printf "%-14s NOT_INSTALLED\n" supabase; fi
+status github timeout 30 gh auth status --hostname github.com
+status fly timeout 30 flyctl auth whoami
+status yc timeout 30 yc iam create-token --no-user-output
+status codex timeout 30 codex login status
+if [[ -s "$HOME/.local/share/opencode/auth.json" ]]; then
+  printf "%-14s NATIVE_AUTH_PRESENT\n" opencode
+elif [[ -s "$HOME/.config/opencode/devcoveer-providers.env" ]] && grep -Eq '^[A-Z][A-Z0-9_]*=' "$HOME/.config/opencode/devcoveer-providers.env"; then
+  printf "%-14s BYOK_PROVIDER_ENV\n" opencode
+else
+  printf "%-14s LOGIN_OR_PROVIDER_KEY_REQUIRED\n" opencode
+fi
+if command -v aws >/dev/null 2>&1; then status aws timeout 30 aws sts get-caller-identity; else printf "%-14s NOT_INSTALLED\n" aws; fi
+if command -v supabase >/dev/null 2>&1; then status supabase timeout 30 supabase projects list; else printf "%-14s NOT_INSTALLED\n" supabase; fi
 if [[ -s "$KAGGLE_CONFIG_DIR/access_token" || -s "$KAGGLE_CONFIG_DIR/kaggle.json" ]]; then printf "%-14s PASS\n" kaggle; else printf "%-14s OWNER_ENV_OR_LOGIN_REQUIRED\n" kaggle; fi
 for spec in \
   "gh:$HOME/.config/gh" "fly:$HOME/.fly/config.yml" "yc:$HOME/.config/yandex-cloud" \
