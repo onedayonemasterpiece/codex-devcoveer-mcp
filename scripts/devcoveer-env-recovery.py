@@ -1244,6 +1244,7 @@ def write_master(
     lines = [
         "# DEVCOVEER CREDENTIALS — SINGLE SOURCE OF TRUTH",
         "# Edit only this file. Common credentials are stored once by their real env name.",
+        "# Blank value = owner action required. Optional unresolved credentials are omitted.",
         "# PROJECT__VARIABLE exists only when recovered runtimes prove a real value conflict.",
         "# No feature flags/settings belong here.",
         "",
@@ -1475,18 +1476,21 @@ def recover(args: argparse.Namespace) -> int:
         len(x.get("recovered_names", []))
         for x in fly.get("apps", {}).values()
     )
-    missing_total = sum(1 for value in owner.values() if not value)
+    missing_keys = sorted(key for key, value in owner.items() if not value)
+    missing_total = len(missing_keys)
     runtime_secret_total = sum(
         1 for x in catalog["variables"].values() if x["sensitive"]
     )
-    owner_input_total = sum(
+    catalog_owner_input_total = sum(
         1 for x in catalog["variables"].values() if x.get("owner_managed")
     )
-    runtime_only_total = runtime_secret_total - owner_input_total
+    runtime_only_total = runtime_secret_total - catalog_owner_input_total
+    owner_value_count = sum(1 for value in owner.values() if value)
 
     print("ENV_RECOVERY_COMPLETE")
     print(f"projects={len(projects)}")
-    print(f"owner_input_variable_families={owner_input_total}")
+    print(f"owner_fields_total={len(owner)}")
+    print(f"owner_values_present={owner_value_count}")
     print(f"runtime_only_secret_families={runtime_only_total}")
     print(f"fly_available={fly.get('available', False)}")
     print(f"fly_authenticated={fly.get('authenticated', False)}")
@@ -1514,6 +1518,7 @@ def recover(args: argparse.Namespace) -> int:
         if "__" in key:
             runtime_conflicts += 1
     print(f"owner_missing_values={missing_total}")
+    print("owner_missing_names=" + json.dumps(missing_keys, ensure_ascii=False))
     print(f"runtime_conflict_overrides={runtime_conflicts}")
     print(f"known_alias_pairs={len(known_alias_pairs())}")
     print(f"runtime_value_alias_pairs={len(runtime_alias_pairs())}")
