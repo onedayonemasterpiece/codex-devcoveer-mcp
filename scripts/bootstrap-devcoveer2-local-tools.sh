@@ -28,7 +28,7 @@ runuser -u "${DEV_USER}" -- env \
   HOME="${DEV_HOME}" \
   SHELL=/bin/bash \
   PATH="/usr/local/bin:/usr/bin:/bin:${DEV_HOME}/.local/bin" \
-  bash "${tmp}/yc-install.sh" -i "${YC_INSTALL_DIR}" -n
+  timeout 180 bash "${tmp}/yc-install.sh" -i "${YC_INSTALL_DIR}" -n
 
 test -x "${YC_INSTALL_DIR}/bin/yc"
 ln -sfn "${YC_INSTALL_DIR}/bin/yc" /usr/local/bin/yc
@@ -43,16 +43,16 @@ runuser -u "${DEV_USER}" -- env HOME="${DEV_HOME}" \
   python3 -m venv "${TELETHON_VENV}"
 
 runuser -u "${DEV_USER}" -- env HOME="${DEV_HOME}" \
-  "${TELETHON_VENV}/bin/python" -m pip install --disable-pip-version-check -q \
+  timeout 180 "${TELETHON_VENV}/bin/python" -m pip install --disable-pip-version-check -q \
   --upgrade pip setuptools wheel
 
 runuser -u "${DEV_USER}" -- env HOME="${DEV_HOME}" \
-  "${TELETHON_VENV}/bin/python" -m pip install --disable-pip-version-check -q \
+  timeout 180 "${TELETHON_VENV}/bin/python" -m pip install --disable-pip-version-check -q \
   "Telethon==${TELETHON_VERSION}"
 
 cat >"${DEV_HOME}/.local/bin/devcoveer-telethon-python" <<EOF
 #!/usr/bin/env bash
-exec "${TELETHON_VENV}/bin/python" "$@"
+exec "${TELETHON_VENV}/bin/python" "\$@"
 EOF
 chmod 0755 "${DEV_HOME}/.local/bin/devcoveer-telethon-python"
 chown "${DEV_USER}:${DEV_USER}" "${DEV_HOME}/.local/bin/devcoveer-telethon-python"
