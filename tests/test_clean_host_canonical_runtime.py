@@ -74,7 +74,10 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'name="host_probe"' in bridge
         assert '"reason": "default_opencode"' in bridge
         assert 'provider="groq", model="groq/openai/gpt-oss-120b", directory=project.path' in bridge
-        assert 'BRIDGE_VERSION = "3.11.0-liberal-probes.1"' in bridge
+        assert 'BRIDGE_VERSION = "3.11.1-liberal-probes-handoff.1"' in bridge
+        assert 'name="stage_source_handoff"' in bridge
+        assert 'name="cleanup_source_handoff"' in bridge
+        assert 'raw_hint.startswith("handoff:")' in bridge
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
         assert 'headers["x-opencode-directory"]' in backend
         assert '"User-Agent": "opencode/" + (self._server_version or "unknown")' in backend
@@ -85,5 +88,14 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         for name in (
             "direct_probes.py", "direct_probe_disk_forensics.py",
             "direct_probe_config.json", "opencode_backend.py",
+            "source_handoff.py",
         ):
             assert (out / name).is_file()
+
+
+def test_clean_host_builder_source_handoff_transport_contract() -> None:
+    source = BUILDER.read_text(encoding="utf-8")
+    assert "stage_source_handoff" in source
+    assert "cleanup_source_handoff" in source
+    assert 'ROOT / "runtime" / "source_handoff.py"' in source
+    assert "git diff --cached --binary" in source
