@@ -105,7 +105,12 @@ adopt_file() {
 fly_identity_from_dir() {
   local config_dir="$1"
   [[ -f "$config_dir/config.yml" ]] || return 1
-  runuser -u "$DEV_USER" -- env     HOME="$DEV_HOME"     FLY_CONFIG_DIR="$config_dir"     PATH="$DEV_HOME/.fly/bin:/usr/local/bin:/usr/bin:/bin:$DEV_HOME/.local/bin"     timeout 30 flyctl auth whoami 2>/dev/null     | tr -d '\r\n'
+  runuser -u "$DEV_USER" -- env -u FLY_API_TOKEN -u FLY_ACCESS_TOKEN \
+    HOME="$DEV_HOME" \
+    FLY_CONFIG_DIR="$config_dir" \
+    PATH="$DEV_HOME/.fly/bin:/usr/local/bin:/usr/bin:/bin:$DEV_HOME/.local/bin" \
+    timeout 30 flyctl auth whoami 2>/dev/null \
+    | tr -d '\r\n'
 }
 
 reconcile_fly_config() {
@@ -335,10 +340,10 @@ set -u
 source "$HOME/.config/devcoveer/auth-paths.sh"
 status() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then printf "%-14s PASS\n" "$name"; else printf "%-14s LOGIN_REQUIRED_OR_UNAVAILABLE\n" "$name"; fi; }
 echo "auth_home=$DEVCOVEER_AUTH_HOME"
-status github timeout 30 gh auth status --hostname github.com
-status fly timeout 30 flyctl auth whoami
-status yc timeout 30 yc iam create-token --no-user-output
-status codex timeout 30 codex login status
+status github env -u GH_TOKEN -u GITHUB_TOKEN timeout 30 gh auth status --hostname github.com
+status fly env -u FLY_API_TOKEN -u FLY_ACCESS_TOKEN timeout 30 flyctl auth whoami
+status yc env -u YC_TOKEN -u YC_IAM_TOKEN -u YANDEX_IAM_TOKEN timeout 30 yc iam create-token --no-user-output
+status codex env -u OPENAI_API_KEY -u CODEX_API_KEY timeout 30 codex login status
 if [[ -s "$HOME/.local/share/opencode/auth.json" ]]; then
   printf "%-14s NATIVE_AUTH_PRESENT\n" opencode
 elif [[ -s "$HOME/.config/opencode/devcoveer-providers.env" ]] && grep -Eq '^[A-Z][A-Z0-9_]*=' "$HOME/.config/opencode/devcoveer-providers.env"; then
