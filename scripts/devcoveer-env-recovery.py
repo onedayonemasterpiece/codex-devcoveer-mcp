@@ -123,18 +123,33 @@ OWNER_REQUIRED_INPUTS = {
     "KAGGLE_USERNAME",
     "KAGGLE_KEY",
 
-    # Local Telethon/E2E identity. Role-scoped production sessions are included
-    # only when they are actually recovered, not as blank todo entries.
+    # Local Telethon/E2E API identity. The session itself is an alternative
+    # requirement handled below: an existing E2E auth bundle is equally valid.
     "TELEGRAM_API_ID",
     "TELEGRAM_API_HASH",
-    "TELEGRAM_SESSION",
 
     # Local Mail MCP external account credential.
     "MAILRU_PERSONAL_USERNAME",
     "MAILRU_PERSONAL_APP_PASSWORD",
 
-    # Local services use the existing shared Supabase privileged key.
-    "SUPABASE_SERVICE_KEY",
+}
+
+# A blank preferred field is emitted only when none of the equivalent existing
+# credentials has a value. This keeps the owner file an action shortlist.
+OWNER_REQUIRED_ALTERNATIVES = {
+    "TELEGRAM_SESSION": (
+        "TELEGRAM_AUTH_BUNDLE_E2E",
+        "TELEGRAM_SESSION",
+    ),
+    "SUPABASE_SERVICE_KEY": (
+        "GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_SERVICE_KEY",
+        "SUPABASE_KEY",
+        "PERSONALIZATION_SUPABASE_SECRET_KEY",
+        "PERSONALIZATION_SUPABASE_SERVICE_KEY",
+        "PERSONALIZATION_SUPABASE_SERVICE_ROLE_KEY",
+    ),
 }
 
 # Canonical project ownership for Fly apps. This is intentionally explicit:
@@ -1140,6 +1155,21 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
                 projects_by_owner_key[canon].add(project)
 
     required = {owner_canonical(name, runtime_aliases) for name in OWNER_REQUIRED_INPUTS}
+
+    def has_value(name: str) -> bool:
+        canon = owner_canonical(name, runtime_aliases)
+        if flat_existing.get(canon):
+            return True
+        return any(
+            bool(values)
+            for (project, recovered_canon), values in recovered_sets.items()
+            if recovered_canon == canon
+        )
+
+    for preferred, alternatives in OWNER_REQUIRED_ALTERNATIVES.items():
+        if not any(has_value(name) for name in alternatives):
+            required.add(owner_canonical(preferred, runtime_aliases))
+
     candidate_keys = set(projects_by_owner_key) | set(flat_existing) | required
 
     owner: dict[str, str] = {}
