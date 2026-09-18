@@ -17,8 +17,9 @@ from direct_probe_project import (
     _read_text, _remote_head, _search, _tree, _worktree_list,
 )
 from direct_probe_host import (
-    _config_presence, _health, _host_section, _inventory, _listeners, _logs, _resources, _runtime,
-    _runtime_file, _systemctl_show,
+    _config_presence, _health, _host_section, _inventory, _journal_unit, _listeners, _logs,
+    _network_listeners, _resources, _runtime, _runtime_file, _service_list, _system_info,
+    _systemctl_show,
 )
 
 def _base_result(check: dict[str, Any], started: float) -> dict[str, Any]:
@@ -98,6 +99,15 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
 async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dict[str, Any], str]:
     kind = check["kind"]
     if kind == "inventory": return _inventory(binding), "trusted-server-config"
+    if kind == "system_info": return _system_info(), "proc+os-release"
+    if kind == "service_list":
+        return await _service_list(check.get("scope", "all"), check.get("pattern"),
+                                   int(check.get("limit", 200))), "systemd"
+    if kind == "journal":
+        return await _journal_unit(check["unit"], check.get("scope", "user"),
+                                   int(check.get("lines", 100)),
+                                   int(check.get("since_seconds", 3600))), "journal"
+    if kind == "network_listeners": return _network_listeners(), "proc-sockets"
     if kind == "service":
         alias = _validate_alias(check["service"]); cfg = _host_section(binding, "services").get(alias)
         if not isinstance(cfg, dict): raise ProbeError("target_denied", "service is not registered", status="denied")
@@ -158,9 +168,6 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
     root = Path(project_root).resolve(strict=True)
     config = _load_config(config_path or DEFAULT_CONFIG_PATH)
     binding = _binding(config, project_id)
-    if host and project_id not in config["projects"]:
-        raise ProbeError("host_unbound", "project has no trusted host binding", status="denied")
-
     slots: list[dict[str, Any] | asyncio.Task[dict[str, Any]]] = []
     tasks: list[asyncio.Task[dict[str, Any]]] = []
     seen_ids: set[str] = set()

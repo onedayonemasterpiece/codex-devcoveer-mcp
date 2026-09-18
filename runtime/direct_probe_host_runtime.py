@@ -37,6 +37,26 @@ def _memory_load() -> dict[str, Any]:
         load = []
     return {"memory": mem, "load": load}
 
+def _system_info() -> dict[str, Any]:
+    release: dict[str, str] = {}
+    try:
+        for raw in Path("/etc/os-release").read_text(encoding="utf-8", errors="replace").splitlines():
+            key, sep, value = raw.partition("=")
+            if sep and key in {"ID", "NAME", "VERSION", "VERSION_ID", "PRETTY_NAME"}:
+                release[key.lower()] = value.strip().strip('"')[:256]
+    except OSError:
+        pass
+    uname = os.uname()
+    try:
+        uptime_seconds = float(Path("/proc/uptime").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        uptime_seconds = None
+    return {"os_release": release,
+            "kernel": {"sysname": uname.sysname, "release": uname.release,
+                       "machine": uname.machine},
+            "hostname": uname.nodename, "uptime_seconds": uptime_seconds,
+            **_memory_load()}
+
 async def _resources(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
     roots = _host_section(binding, "roots")
     alias = check.get("root")

@@ -9,6 +9,8 @@ from typing import Any
 
 from direct_probe_core import MAX_LOG_LINES, MAX_TEXT_BYTES, ProbeError, _redact_text, _run_process, _validate_alias
 
+UNIT_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
+
 def _systemd_env(scope: str) -> dict[str, str]:
     env = {
         "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -44,6 +46,50 @@ async def _systemctl_show(service: dict[str, Any]) -> dict[str, Any]:
     if service.get("working_directory"): props["configured_working_directory"] = service["working_directory"]
     return props
 
+async def _service_list(scope: str, pattern: str | None, limit: int) -> dict[str, Any]:
+    scopes = ("user", "system") if scope == "all" else (scope,)
+    services: list[dict[str, str]] = []
+    complete = True
+    for selected in scopes:
+        argv = ["/usr/bin/systemctl"] + (["--user"] if selected == "user" else []) + [
+            "list-units", "--type=service", "--all", "--no-legend", "--no-pager", "--plain",
+        ]
+        result = await _run_process(argv, env=_systemd_env(selected), timeout=10.0,
+                                    output_limit=128 * 1024)
+        if result.exit_code != 0:
+            complete = False
+            continue
+        complete = complete and not result.truncated
+        for raw in result.stdout.decode("utf-8", "replace").splitlines():
+            parts = raw.strip().split(None, 4)
+            if len(parts) < 4 or not UNIT_RE.fullmatch(parts[0]):
+                continue
+            description = parts[4] if len(parts) > 4 else ""
+            if pattern and pattern.casefold() not in (parts[0] + " " + description).casefold():
+                continue
+            services.append({"unit": parts[0], "scope": selected, "load": parts[1],
+                             "active": parts[2], "sub": parts[3], "description": description})
+    services.sort(key=lambda row: (row["scope"], row["unit"]))
+    truncated = len(services) > limit
+    return {"services": services[:limit], "count": min(len(services), limit),
+            "complete": complete and not truncated, "truncated": truncated}
+
+async def _journal_unit(unit: str, scope: str, lines: int, since_seconds: int) -> dict[str, Any]:
+    if not UNIT_RE.fullmatch(unit):
+        raise ProbeError("invalid_input", "invalid systemd service unit")
+    argv = ["/usr/bin/journalctl"] + (["--user"] if scope == "user" else []) + [
+        "--unit", unit, "--no-pager", "--output=short-iso", "-n", str(lines),
+        "--since", f"-{since_seconds} seconds",
+    ]
+    result = await _run_process(argv, env=_systemd_env(scope), timeout=15,
+                                output_limit=MAX_TEXT_BYTES)
+    if result.exit_code != 0:
+        raise ProbeError("logs", result.stderr.decode("utf-8", "replace")[-1000:],
+                         exit_code=result.exit_code)
+    text, redacted = _redact_text(result.stdout.decode("utf-8", "replace"))
+    return {"unit": unit, "scope": scope, "text": text, "complete": not result.truncated,
+            "truncated": result.truncated, "redacted": redacted}
+
 def _parse_proc_tcp(path: Path) -> list[tuple[str,int,str]]:
     rows=[]
     try: lines=path.read_text().splitlines()[1:]
@@ -56,6 +102,15 @@ def _parse_proc_tcp(path: Path) -> list[tuple[str,int,str]]:
         except ValueError: continue
         rows.append((host_hex,port,fields[9]))
     return rows
+
+def _network_listeners() -> dict[str, Any]:
+    listeners: list[dict[str, Any]] = []
+    for proc_file in (Path("/proc/net/tcp"), Path("/proc/net/tcp6")):
+        for host_hex, port, inode in _parse_proc_tcp(proc_file):
+            listeners.append({"family": "tcp6" if proc_file.name == "tcp6" else "tcp",
+                              "address_hex": host_hex, "port": port, "inode": inode})
+    listeners.sort(key=lambda row: (row["port"], row["family"], row["inode"]))
+    return {"listeners": listeners, "count": len(listeners), "complete": True}
 
 async def _listeners(service_cfg: dict[str, Any]) -> dict[str, Any]:
     status=await _systemctl_show(service_cfg); pid=int(status.get("MainPID") or 0)

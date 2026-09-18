@@ -220,7 +220,7 @@ def test_process_cancellation_kills_child(tmp_path: Path):
 
 
 def test_response_cap_is_enforced():
-    payload = {"results":[{"data":{"text":"x"*200000},"complete":True,"truncated":False}],"execution":"direct"}; fitted = dp._fit_response(payload)
+    payload = {"results":[{"data":{"text":"x"*400000},"complete":True,"truncated":False}],"execution":"direct"}; fitted = dp._fit_response(payload)
     assert fitted["response_bytes"] <= dp.MAX_RESPONSE_BYTES and fitted["results"][0]["truncated"] is True
 
 
@@ -276,9 +276,24 @@ def test_secret_paths_are_skipped_by_search_and_never_returned(tmp_path: Path):
     assert data["matches"] == [] and all(".env" not in json.dumps(m) for m in data["matches"])
 
 
-def test_schema_rejects_more_than_eight_checks():
-    validator = Draft202012Validator(dp.PROJECT_PROBE_INPUT_SCHEMA); payload = {"project":"p", "checks":[{"id":f"x{i}", "kind":"git_state"} for i in range(9)]}
+def test_schema_rejects_more_than_twenty_checks():
+    validator = Draft202012Validator(dp.PROJECT_PROBE_INPUT_SCHEMA); payload = {"project":"p", "checks":[{"id":f"x{i}", "kind":"git_state"} for i in range(21)]}
     assert list(validator.iter_errors(payload))
+
+
+def test_liberal_host_diagnostics_are_read_only_and_available_unbound(tmp_path: Path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text(json.dumps({"version": 1, "projects": {}}), encoding="utf-8")
+    monkeypatch.setattr(dp, "_system_info", lambda: {"kernel": {"release": "test"}})
+    monkeypatch.setattr(dp, "_network_listeners", lambda: {"listeners": [], "complete": True})
+    payload = run(dp.run_host_probe(str(repo), "unbound", [
+        {"id": "sys", "kind": "system_info"},
+        {"id": "net", "kind": "network_listeners"},
+    ], config_path=cfg))
+    assert result_by_id(payload, "sys")["status"] == "ok"
+    assert result_by_id(payload, "net")["status"] == "ok"
+    assert payload["target"]["host_binding"] is False
 
 
 def test_slow_checks_have_more_than_twenty_seconds_and_batch_is_parallel(tmp_path: Path, monkeypatch):

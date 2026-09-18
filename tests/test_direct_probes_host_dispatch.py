@@ -87,3 +87,21 @@ def test_system_scope_does_not_receive_user_bus_environment():
     env = host_services._systemd_env("system")
     assert "XDG_RUNTIME_DIR" not in env
     assert "DBUS_SESSION_BUS_ADDRESS" not in env
+
+
+def test_service_list_and_journal_use_fixed_systemd_argv(monkeypatch):
+    calls = []
+
+    async def fake_run_process(argv, *, env, timeout, output_limit):
+        calls.append(argv)
+        if "list-units" in argv:
+            return dp.ProcessResult(b"fixture.service loaded active running Fixture service\n", b"", 0, False, 1)
+        return dp.ProcessResult(b"TOKEN=hidden\nnormal line\n", b"", 0, False, 1)
+
+    monkeypatch.setattr(host_services, "_run_process", fake_run_process)
+    listed = run(host_services._service_list("user", "fixture", 10))
+    journal = run(host_services._journal_unit("fixture.service", "user", 20, 60))
+    assert listed["services"][0]["unit"] == "fixture.service"
+    assert "hidden" not in journal["text"] and journal["redacted"] is True
+    assert calls[0][0:2] == ["/usr/bin/systemctl", "--user"]
+    assert calls[1][0:2] == ["/usr/bin/journalctl", "--user"]

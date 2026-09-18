@@ -20,7 +20,7 @@ from urllib.parse import quote, urlsplit
 
 INSTALL_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = INSTALL_DIR / "direct_probe_config.json"
-MAX_CHECKS = 8
+MAX_CHECKS = 20
 BATCH_DEADLINE_SECONDS = 60.0
 CHECK_TIMEOUT_SECONDS: dict[str, float] = {
     # Cheap local facts remain short; network/status and bounded scans get room to finish.
@@ -30,18 +30,20 @@ CHECK_TIMEOUT_SECONDS: dict[str, float] = {
     "inventory": 5.0, "service": 12.0, "listeners": 15.0, "logs": 25.0,
     "resources": 50.0, "health": 15.0, "runtime": 20.0, "runtime_file": 35.0,
     "config_presence": 15.0,
+    "system_info": 10.0, "service_list": 20.0, "journal": 25.0,
+    "network_listeners": 15.0,
 }
-MAX_RESPONSE_BYTES = 64 * 1024
-MAX_TEXT_BYTES = 12 * 1024
-MAX_FILE_BYTES = 512 * 1024
-MAX_SEARCH_FILES = 1500
-MAX_SEARCH_BYTES = 8 * 1024 * 1024
-MAX_SEARCH_MATCHES = 80
-MAX_LIST_ENTRIES = 300
-MAX_TREE_ENTRIES = 300
-MAX_LOG_LINES = 250
-MAX_DIFF_BYTES = 24 * 1024
-MAX_PROCESS_OUTPUT = 96 * 1024
+MAX_RESPONSE_BYTES = 256 * 1024
+MAX_TEXT_BYTES = 64 * 1024
+MAX_FILE_BYTES = 2 * 1024 * 1024
+MAX_SEARCH_FILES = 5000
+MAX_SEARCH_BYTES = 64 * 1024 * 1024
+MAX_SEARCH_MATCHES = 200
+MAX_LIST_ENTRIES = 1000
+MAX_TREE_ENTRIES = 1000
+MAX_LOG_LINES = 500
+MAX_DIFF_BYTES = 128 * 1024
+MAX_PROCESS_OUTPUT = 256 * 1024
 SUBPROCESS_CONCURRENCY = 4
 _PROCESS_SEMAPHORE = asyncio.Semaphore(SUBPROCESS_CONCURRENCY)
 
@@ -62,7 +64,7 @@ SECRET_SEGMENTS = {
 SKIP_SEARCH_SEGMENTS = {
     ".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
     ".ruff_cache", ".cache", "cache", "dist", "build", "target", ".idea", ".vscode",
-    "sessions", "session", "state", "data", "tmp", "temp", "vendor",
+    "sessions", "session",
 }
 REDACTION_PATTERNS = [
     re.compile(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)\S+"),
@@ -134,7 +136,21 @@ PROJECT_CHECK_SCHEMAS = [
 
 HOST_CHECK_SCHEMAS = [
     _check_schema("inventory"),
+    _check_schema("system_info"),
+    _check_schema("service_list", {
+        "scope": {"type": "string", "enum": ["user", "system", "all"], "default": "all"},
+        "pattern": {"type": "string", "minLength": 1, "maxLength": 128},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 200},
+    }),
     _check_schema("service", {"service": {"type": "string", "minLength": 1, "maxLength": 64}}, ["service"]),
+    _check_schema("journal", {
+        "unit": {"type": "string", "minLength": 1, "maxLength": 200,
+                 "pattern": r"^[A-Za-z0-9_.@:-]+\.service$"},
+        "scope": {"type": "string", "enum": ["user", "system"], "default": "user"},
+        "lines": {"type": "integer", "minimum": 1, "maximum": MAX_LOG_LINES, "default": 100},
+        "since_seconds": {"type": "integer", "minimum": 0, "maximum": 2592000, "default": 3600},
+    }, ["unit"]),
+    _check_schema("network_listeners"),
     _check_schema("listeners", {"service": {"type": "string", "minLength": 1, "maxLength": 64}}, ["service"]),
     _check_schema("logs", {
         "log": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -424,4 +440,3 @@ async def _resolve_commit(root: Path, ref: str) -> str:
     if not HEX40_RE.fullmatch(sha):
         raise ProbeError("git", "resolved commit id is invalid")
     return sha
-
