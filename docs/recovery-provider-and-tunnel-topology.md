@@ -35,17 +35,19 @@ Canonical owner credentials are exactly:
 Do not replace this pool with a single `GIGACHAT_CREDENTIALS` owner field.
 `GIGACHAT_CREDENTIALS` is only a compatibility name for the first historical gateway.
 
-Historical evidence confirms at least:
+The pre-crash production fact is narrower than the three-key owner pool:
 
-- OpenCode provider `giga1`;
+- only OpenCode provider `giga1` was actually deployed and accepted;
 - model `giga1/GigaChat-3-Ultra`;
 - local `gpt2giga` gateway on `127.0.0.1:8091`;
-- user service `gpt2giga-giga1.service`.
+- user service `gpt2giga-giga1.service`;
+- `giga2` and `giga3` were planned future lanes, not active gateway services.
 
-The owner contract requires three GigaChat credentials. Before DevCoveer2 declares GigaChat
-restored, inspect the host-local OpenCode config, GigaChat env files and user services and
-prove the admitted `giga*` providers. Do not invent `giga2`/`giga3` service wiring if
-the host evidence is absent, and do not silently degrade the pool to one lane.
+The owner contract still preserves all three GigaChat credentials so the planned pool can
+be completed later. DevCoveer2 recovery must restore and verify `giga1` now, preserve
+keys 2/3 without claiming that corresponding gateways exist, and only add `giga2` /
+`giga3` after their local gateway services and bounded acceptance are explicitly
+implemented.
 
 GigaChat keys are not injected directly into `opencode-devcoveer.service`; they belong to
 the local gateway services. OpenCode should receive the gateway provider definitions/base
