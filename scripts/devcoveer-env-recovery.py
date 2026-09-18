@@ -1058,7 +1058,23 @@ def runtime_value_alias_map() -> dict[str, str]:
         grouped[(credential_family(name), digest)].add(name)
 
     aliases: dict[str, str] = {}
-    for (_family, _digest), names in grouped.items():
+    for (_family, _digest), names0 in grouped.items():
+        names = set(names0)
+        if len(names) < 2:
+            continue
+
+        # Preserve human-readable role relationships where the recovered value
+        # proves equality. Example:
+        #   *_VK_STORY_EDITOR_TOKEN -> *_VK_STORY_READER_TOKEN
+        # If the reader itself is also an alias of a more generic token, the
+        # resulting chain remains readable and owner_canonical() resolves it.
+        editors = sorted(name for name in names if "_EDITOR_" in name)
+        for editor in editors:
+            reader = editor.replace("_EDITOR_", "_READER_")
+            if reader in names:
+                aliases[editor] = reader
+                names.discard(editor)
+
         if len(names) < 2:
             continue
         primary = min(names, key=_alias_primary_rank)
