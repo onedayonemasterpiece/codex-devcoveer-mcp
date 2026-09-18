@@ -387,26 +387,19 @@ def recover_fly_token_from_history(flyctl: Path) -> dict[str, str] | None:
 
 
 def maybe_fly_auth(flyctl: Path, *, allow_prompt: bool) -> dict[str, str] | None:
+    """Use only the normal flyctl login/config state.
+
+    Authentication is intentionally a separate human step (fly auth login).
+    Recovery must not scrape old session history or ask for raw Fly tokens.
+    """
+    del allow_prompt
     env = fly_env()
     if fly_whoami(flyctl, env):
         return env
-
-    recovered = recover_fly_token_from_history(flyctl)
-    if recovered is not None:
-        return recovered
-
-    if not allow_prompt or not sys.stdin.isatty():
-        return None
-    token = getpass.getpass(
-        "Fly access token (hidden; blank skips Fly runtime recovery): "
-    ).strip()
-    if not token:
-        return None
-    validated = persist_fly_token(token, flyctl)
-    if validated is None:
-        print("Fly token validation failed; token was not stored.", file=sys.stderr)
-        return None
-    return validated
+    # flyctl may have a normal cached login that is not represented in env.
+    if fly_whoami(flyctl, {}):
+        return {}
+    return None
 
 
 def parse_json_output(cp: subprocess.CompletedProcess) -> Any:
@@ -524,7 +517,7 @@ def recover_fly(
 
     auth = maybe_fly_auth(flyctl, allow_prompt=allow_prompt)
     if auth is None:
-        result["reason"] = "fly_auth_missing"
+        result["reason"] = "fly_auth_missing_run_fly_auth_login_as_dev"
         return result
     result["authenticated"] = True
 
@@ -598,6 +591,7 @@ def load_recovered_env(app: str) -> dict[str, str]:
 def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) -> dict[str, Any]:
     usage: dict[str, set[str]] = defaultdict(set)
     actual_names: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    all_projects = dict(project_info)
 
     for project, info in project_info.items():
         for actual in info["required"]:
@@ -605,12 +599,23 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
             usage[canon].add(project)
             actual_names[canon][project].add(actual)
 
-    # Fly-only names are part of the project contract even if code currently
-    # reads them indirectly.
+    # Sweep every Fly app visible to the authenticated account. Apps without
+    # a local repository on DevCoveer2 still get a stable pseudo-project, so
+    # kgd80/cat-weather/old services are not silently dropped from master.env.
     for app, app_info in fly.get("apps", {}).items():
         project = app_info.get("project")
         if not project:
-            continue
+            project = f"flyapp-{app}"
+            app_info["project"] = project
+            all_projects.setdefault(project, {
+                "project": project,
+                "path": None,
+                "fly_app": app,
+                "env_examples": [],
+                "required": sorted(app_info.get("secret_names", [])),
+                "source_controlled_env": [],
+                "scope_kind": "fly_app",
+            })
         for actual in app_info.get("secret_names", []):
             canon = canonical(actual)
             usage[canon].add(project)
@@ -633,7 +638,7 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
     return {
         "schema": "devcoveer.env-catalog.v1",
         "aliases": ALIASES,
-        "projects": project_info,
+        "projects": all_projects,
         "variables": variables,
         "fly": fly,
     }
