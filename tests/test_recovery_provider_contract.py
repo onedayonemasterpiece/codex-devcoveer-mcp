@@ -65,3 +65,62 @@ def test_recovery_contract_pins_three_distinct_secure_mcp_tunnels() -> None:
         "http://127.0.0.1:7312/mcp",
     ):
         assert value in text
+
+
+PROVIDER_BOOTSTRAP = ROOT / "scripts" / "bootstrap-devcoveer2-opencode-providers.sh"
+TUNNEL_BOOTSTRAP = ROOT / "scripts" / "bootstrap-devcoveer2-mcp-tunnels.sh"
+DIRECT_CONFIG = ROOT / "runtime" / "direct_probe_config.json"
+DIRECT_INSTALLER = ROOT / "scripts" / "install-direct-probes.py"
+
+
+def test_provider_bootstrap_restores_live_pool_without_inventing_giga2_giga3() -> None:
+    text = PROVIDER_BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert '"apiKey": "{env:GROQ_API_KEY2}"' in text
+    assert '"apiKey": "{env:GROQ_API_KEY3}"' in text
+    assert "GROQ_API_KEY4" not in text
+
+    assert "gpt2giga-giga1.service" in text
+    assert "127.0.0.1:8091" in text
+    assert 'providers["giga1"]' in text
+    assert 'providers["giga2"]' not in text
+    assert 'providers["giga3"]' not in text
+    assert "giga_planned_not_enabled=giga2,giga3" in text
+
+    forbidden_controls = [
+        ch for ch in text
+        if ord(ch) < 32 and ch not in {"\n", "\r", "\t"}
+    ]
+    assert forbidden_controls == []
+
+
+def test_tunnel_bootstrap_has_three_distinct_tunnel_contracts() -> None:
+    text = TUNNEL_BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "codex-devserver-tunnel.service" in text
+    assert "my-browser-bridge-tunnel.service" in text
+    assert "mail-mcp-bridge-tunnel.service" in text
+    assert "DEVCOVEER_BROWSER_BRIDGE_TUNNEL_ID" in text
+    assert "DEVCOVEER_MAILRU_TUNNEL_ID" in text
+    assert "127.0.0.1:7311/mcp" in text
+    assert "127.0.0.1:7312/mcp" in text
+    assert "127.0.0.1:8081" in text
+    assert "127.0.0.1:8082" in text
+    assert "127.0.0.1:18080/readyz" in text
+
+
+def test_direct_host_surface_is_allowlist_only_and_knows_provider_catalog() -> None:
+    import json
+
+    config = json.loads(DIRECT_CONFIG.read_text(encoding="utf-8"))
+    host = config["projects"]["codex-devcoveer-mcp"]
+
+    assert host["opencode_catalogs"]["main"]["url"] == "http://127.0.0.1:4097/config/providers"
+    assert host["services"]["giga1"]["direct_actions"] == ["start", "restart", "enable_start"]
+    assert host["services"]["mcp_tunnel"]["direct_actions"] == ["start", "restart", "enable_start"]
+    assert host["services"]["opencode"]["direct_actions"] == ["start"]
+
+    installer = DIRECT_INSTALLER.read_text(encoding="utf-8")
+    assert 'name="host_action"' in installer
+    assert '"host_action": Draft202012Validator(HOST_ACTION_INPUT_SCHEMA)' in installer
+    assert '"tools":["project_probe","host_probe","host_action"]' in installer
