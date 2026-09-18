@@ -336,10 +336,65 @@ def persist_fly_token(token: str, flyctl: Path) -> dict[str, str] | None:
     return candidate
 
 
+def recover_fly_token_from_history(flyctl: Path) -> dict[str, str] | None:
+    """Search bounded user-local history for a previously used Fly token.
+
+    The candidate value is never printed. Every candidate is validated only via
+    flyctl auth whoami before it is persisted to release.env.
+    """
+    token_re = re.compile(rb"FlyV1[ \\t]+[A-Za-z0-9_=.\\-]{20,}")
+    roots = [
+        DEV_HOME / ".codex" / "sessions",
+        DEV_HOME / ".codex",
+        DEV_HOME / ".claude" / "projects",
+        DEV_HOME / ".claude" / "file-history",
+    ]
+    seen: set[bytes] = set()
+    inspected = 0
+    for root in roots:
+        if not root.exists():
+            continue
+        candidates = [root] if root.is_file() else root.rglob("*")
+        for p in candidates:
+            if inspected >= 600:
+                return None
+            if not p.is_file() or p.is_symlink():
+                continue
+            try:
+                size = p.stat().st_size
+            except OSError:
+                continue
+            if size <= 0 or size > 128 * 1024 * 1024:
+                continue
+            inspected += 1
+            try:
+                data = p.read_bytes()
+            except OSError:
+                continue
+            for match in token_re.findall(data):
+                token_b = re.sub(rb"[ \\t]+", b" ", match.strip())
+                if token_b in seen:
+                    continue
+                seen.add(token_b)
+                try:
+                    token = token_b.decode("ascii")
+                except UnicodeError:
+                    continue
+                validated = persist_fly_token(token, flyctl)
+                if validated is not None:
+                    return validated
+    return None
+
+
 def maybe_fly_auth(flyctl: Path, *, allow_prompt: bool) -> dict[str, str] | None:
     env = fly_env()
     if fly_whoami(flyctl, env):
         return env
+
+    recovered = recover_fly_token_from_history(flyctl)
+    if recovered is not None:
+        return recovered
+
     if not allow_prompt or not sys.stdin.isatty():
         return None
     token = getpass.getpass(
