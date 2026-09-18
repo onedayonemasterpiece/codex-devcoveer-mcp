@@ -791,6 +791,7 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
         variables[canon] = {
             "canonical_name": canon,
             "sensitive": secret_like(canon),
+            "owner_managed": owner_managed_credential(canon),
             "projects": projects,
             "runtime_names": {
                 project: sorted(actual_names[canon][project])
