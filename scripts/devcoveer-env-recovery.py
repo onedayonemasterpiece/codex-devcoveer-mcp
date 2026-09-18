@@ -992,78 +992,169 @@ def _split_owner_key(key: str) -> tuple[str | None, str]:
     return None, canonical(key)
 
 
-def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
-    """Build the compact owner-input credential file.
+def _secret_value_alias_candidate(name: str) -> bool:
+    """Compare only opaque provider credentials for exact-value aliasing."""
+    n = canonical(name)
+    # Do not deduplicate human account passwords, usernames or database DSNs just
+    # because their current strings happen to match.
+    if re.search(
+        r"(?:^|_)(?:USERNAME|USER_NAME|LOGIN|PASSWORD|PASS|API_ID|CLIENT_ID|DATABASE_URL|DSN)(?:_|$)",
+        n,
+    ):
+        return False
+    return bool(re.search(
+        r"(?:^|_)(?:TOKEN|KEY|SECRET|SESSION|AUTH_BUNDLE|CREDENTIALS?|API_HASH)(?:_|$)",
+        n,
+    ))
 
-    Only externally maintained credentials belong in /home/dev/.env.
-    Temporary project-prefixed values from earlier migration attempts are not
-    treated as evidence because the old project env layout contained cross-project
-    references. Factual recovered runtime values are the conflict evidence.
+
+def _alias_primary_rank(name: str) -> tuple[int, int, int, int, str]:
+    """Prefer existing generic names, then reader roles, then shorter names."""
+    preferred = {
+        "VK_TOKEN": 0,
+        "VK_ACCESS_TOKEN": 1,
+        "VK_SERVICE_TOKEN": 2,
+        "TELEGRAM_SESSION": 3,
+        "FOUR_O_TOKEN": 4,
+        "SUPABASE_SERVICE_KEY": 5,
+    }
+    exact = preferred.get(name, 100)
+    role = 0 if "_READER_" in name else 1 if "_EDITOR_" in name else 2
+    scoped = name.count("_")
+    return (exact, role, scoped, len(name), name)
+
+
+def runtime_value_alias_map() -> dict[str, str]:
+    """Map duplicate recovered env names to one canonical owner variable.
+
+    The mapping is created only when each candidate name has one stable recovered
+    value and names belong to the same provider family. Values are compared by
+    SHA-256 and are never printed.
+    """
+    values_by_name: dict[str, set[str]] = defaultdict(set)
+    if not RECOVERED.is_dir():
+        return {}
+
+    for snapshot in sorted(RECOVERED.glob("*.env")):
+        for actual, value in parse_master(snapshot).items():
+            canon = canonical(actual)
+            if (
+                not value
+                or not owner_managed_credential(canon)
+                or not _secret_value_alias_candidate(canon)
+            ):
+                continue
+            digest = hashlib.sha256(
+                value.encode("utf-8", errors="surrogateescape")
+            ).hexdigest()
+            values_by_name[canon].add(digest)
+
+    grouped: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for name, digests in values_by_name.items():
+        if len(digests) != 1:
+            continue
+        digest = next(iter(digests))
+        grouped[(credential_family(name), digest)].add(name)
+
+    aliases: dict[str, str] = {}
+    for (_family, _digest), names in grouped.items():
+        if len(names) < 2:
+            continue
+        primary = min(names, key=_alias_primary_rank)
+        for name in names:
+            if name != primary:
+                aliases[name] = primary
+    return aliases
+
+
+def owner_canonical(name: str, runtime_aliases: dict[str, str] | None = None) -> str:
+    canon = canonical(name)
+    if runtime_aliases:
+        seen: set[str] = set()
+        while canon in runtime_aliases and canon not in seen:
+            seen.add(canon)
+            canon = runtime_aliases[canon]
+    return canon
+
+
+def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    """Build a compact, actionable owner credential file.
+
+    A blank line is a red card: only OWNER_REQUIRED_INPUTS may be blank without
+    factual runtime evidence. Optional/source-only credentials are omitted.
     """
     previous = _load_existing_owner()
     notes: dict[str, str] = {}
+    runtime_aliases = runtime_value_alias_map()
 
-    # Preserve only flat/current owner choices. Temporary SHARED__ entries are
-    # migrated to their canonical flat name; project-prefixed migration artifacts
-    # are deliberately not trusted as factual evidence.
+    # Keep only non-empty human values from the previous file. Earlier noisy blank
+    # entries are intentionally discarded unless they are in OWNER_REQUIRED_INPUTS.
     flat_existing_values: dict[str, set[str]] = defaultdict(set)
-    flat_existing_seen: set[str] = set()
     for key, value in previous.items():
-        prefix, canon = _split_owner_key(key)
-        if prefix is not None or not owner_managed_credential(canon):
+        prefix, canon0 = _split_owner_key(key)
+        canon = owner_canonical(canon0, runtime_aliases)
+        if prefix is not None or not value or not owner_managed_credential(canon):
             continue
-        flat_existing_seen.add(canon)
-        if value:
-            flat_existing_values[canon].add(value)
+        flat_existing_values[canon].add(value)
 
-    # Never pick arbitrarily when an earlier migration left two flat alias names
-    # with different values. Factual runtime evidence below resolves that case.
     flat_existing: dict[str, str] = {
         canon: next(iter(values)) if len(values) == 1 else ""
-        for canon in flat_existing_seen
-        for values in [flat_existing_values.get(canon, set())]
+        for canon, values in flat_existing_values.items()
     }
 
     recovered_sets: dict[tuple[str, str], set[str]] = defaultdict(set)
+    projects_by_owner_key: dict[str, set[str]] = defaultdict(set)
+
+    for canon0, meta in catalog["variables"].items():
+        if not meta.get("owner_managed"):
+            continue
+        canon = owner_canonical(canon0, runtime_aliases)
+        projects_by_owner_key[canon].update(meta.get("projects") or [])
+
     for app, info in catalog.get("fly", {}).get("apps", {}).items():
         project = info.get("project")
         if not project:
             continue
         for actual, value in load_recovered_env(app).items():
-            canon = canonical(actual)
+            canon = owner_canonical(actual, runtime_aliases)
             if owner_managed_credential(canon) and value:
                 recovered_sets[(project, canon)].add(value)
+                projects_by_owner_key[canon].add(project)
+
+    required = {owner_canonical(name, runtime_aliases) for name in OWNER_REQUIRED_INPUTS}
+    candidate_keys = set(projects_by_owner_key) | set(flat_existing) | required
 
     owner: dict[str, str] = {}
-    for canon, meta in sorted(catalog["variables"].items()):
-        if not meta.get("owner_managed"):
-            continue
-        projects = list(meta.get("projects") or [])
+    for canon in sorted(candidate_keys):
         direct = flat_existing.get(canon, "")
+        projects = sorted(projects_by_owner_key.get(canon, set()))
 
         observed: dict[str, str] = {}
-        alias_conflict = False
+        multi_value_project = False
         for project in projects:
             values = recovered_sets.get((project, canon), set())
             if len(values) == 1:
                 observed[project] = next(iter(values))
             elif len(values) > 1:
-                alias_conflict = True
+                multi_value_project = True
 
         unique = set(observed.values())
+        has_evidence = bool(observed) or bool(direct)
 
-        if alias_conflict:
+        # Optional/source-discovered credential with no value is noise, not a todo.
+        if not has_evidence and canon not in required:
+            continue
+
+        if multi_value_project:
             owner[canon] = direct
-            notes[canon] = "alias-runtime-conflict"
+            notes[canon] = "runtime-conflict"
             for project, value in sorted(observed.items()):
-                if direct and value == direct:
-                    continue
-                owner[f"{pfx(project)}__{canon}"] = value
+                if not direct or value != direct:
+                    owner[f"{pfx(project)}__{canon}"] = value
             continue
 
         if direct:
             owner[canon] = direct
-            # Only factual runtime differences survive as project overrides.
             for project, value in sorted(observed.items()):
                 if value != direct:
                     owner[f"{pfx(project)}__{canon}"] = value
@@ -1071,7 +1162,7 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
             continue
 
         if len(unique) == 1:
-            owner[canon] = next(iter(unique)) if unique else ""
+            owner[canon] = next(iter(unique))
             continue
 
         if len(unique) > 1:
@@ -1081,65 +1172,29 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
                 owner[f"{pfx(project)}__{canon}"] = value
             continue
 
+        # Only explicit required inputs reach this branch.
         owner[canon] = ""
+        notes[canon] = "required-owner-input"
 
-    # A newly added flat owner credential is preserved even before source
-    # discovery learns about it, provided it is an owner-managed credential.
-    catalog_canons = set(catalog["variables"])
+    # Preserve non-empty manually-added owner credentials even before discovery.
     for canon, value in flat_existing.items():
-        if canon not in catalog_canons and owner_managed_credential(canon):
-            owner.setdefault(canon, value)
+        owner.setdefault(canon, value)
 
     return owner, notes
 
 
-def _secret_value_alias_candidate(name: str) -> bool:
-    """Only compare opaque secret-bearing values, not public IDs/usernames."""
-    n = canonical(name)
-    if re.search(r"(?:^|_)(?:USERNAME|USER_NAME|LOGIN|API_ID|CLIENT_ID)(?:_|$)", n):
-        return False
-    return bool(re.search(
-        r"(?:^|_)(?:TOKEN|KEY|SECRET|PASSWORD|PASS|SESSION|AUTH_BUNDLE|"
-        r"CREDENTIALS?|API_HASH|DATABASE_URL|DSN)(?:_|$)",
-        n,
-    ))
-
-
-def observed_equal_credential_names() -> list[tuple[str, ...]]:
-    """List different env names that held the exact same recovered secret value.
-
-    This is informational only; it never merges variables automatically.
-    Values are compared by SHA-256 and are never printed.
-    """
-    groups: dict[str, set[str]] = defaultdict(set)
-    if not RECOVERED.is_dir():
-        return []
-    for snapshot in sorted(RECOVERED.glob("*.env")):
-        for actual, value in parse_master(snapshot).items():
-            if (
-                not value
-                or not owner_managed_credential(actual)
-                or not _secret_value_alias_candidate(actual)
-            ):
-                continue
-            digest = hashlib.sha256(
-                value.encode("utf-8", errors="surrogateescape")
-            ).hexdigest()
-            groups[digest].add(actual)
-    out: set[tuple[str, ...]] = set()
-    for names in groups.values():
-        if len(names) <= 1:
-            continue
-        # Known syntactic aliases are already listed explicitly below; keep the
-        # observed-equality block for additional same-value relationships only.
-        if len({canonical(name) for name in names}) == 1:
-            continue
-        out.add(tuple(sorted(names)))
-    return sorted(out)
-
-
 def known_alias_pairs() -> list[tuple[str, str]]:
     return sorted((alias, target) for alias, target in ALIASES.items())
+
+
+def runtime_alias_pairs() -> list[tuple[str, str]]:
+    return sorted(runtime_value_alias_map().items())
+
+
+def all_alias_pairs() -> list[tuple[str, str]]:
+    pairs = dict(known_alias_pairs())
+    pairs.update(dict(runtime_alias_pairs()))
+    return sorted(pairs.items())
 
 
 def validate_owner_store(owner: dict[str, str]) -> None:
@@ -1208,22 +1263,17 @@ def write_master(
             lines.append(f"{key}={json.dumps(value, ensure_ascii=False) if value else ''}")
         lines.append("")
 
-    aliases = known_alias_pairs()
-    observed_equal = observed_equal_credential_names()
-    if aliases or observed_equal:
+    aliases = all_alias_pairs()
+    if aliases:
         lines.extend([
             "# ============================================================================",
             "# ALIASES / COMPATIBILITY NAMES",
             "# ============================================================================",
-            "# These are comments only. Secret values are stored once above.",
+            "# Alias names are expanded automatically into generated service envs.",
+            "# The secret value is stored only once above.",
         ])
         for alias, target in aliases:
             lines.append(f"# {alias}={target}")
-        if observed_equal:
-            lines.append("#")
-            lines.append("# Same secret value observed in recovered runtime; informational only:")
-            for names in observed_equal:
-                lines.append("# " + "=".join(names))
         lines.append("")
 
     tmp = OWNER.with_name(OWNER.name + ".tmp")
@@ -1464,7 +1514,7 @@ def recover(args: argparse.Namespace) -> int:
     print(f"owner_missing_values={missing_total}")
     print(f"runtime_conflict_overrides={runtime_conflicts}")
     print(f"known_alias_pairs={len(known_alias_pairs())}")
-    print(f"observed_equal_alias_groups={len(observed_equal_credential_names())}")
+    print(f"runtime_value_alias_pairs={len(runtime_alias_pairs())}")
     print("owner_sections=" + json.dumps(dict(sorted(owner_sections.items())), sort_keys=True))
     print(f"owner={OWNER}")
     print(f"master_compat={LEGACY_MASTER}")
