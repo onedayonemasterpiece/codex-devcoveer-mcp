@@ -15,6 +15,14 @@ fi
 install -d -m 0755 -o "${DEV_USER}" -g "${DEV_USER}" "${DEV_HOME}/.local/bin"
 install -d -m 0755 -o "${DEV_USER}" -g "${DEV_USER}" "${DEV_HOME}/.local/share/devcoveer"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AUTH_BOOTSTRAP="${SCRIPT_DIR}/bootstrap-devcoveer2-auth-home.sh"
+if [[ -f "$AUTH_BOOTSTRAP" ]]; then
+  echo "=== UNIFIED CLI AUTH HOME ==="
+  bash "$AUTH_BOOTSTRAP"
+  echo
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -71,10 +79,3 @@ echo "telethon_venv=${TELETHON_VENV}"
 echo
 echo "NOTE: this installs one shared Telethon library runtime only."
 echo "Telegram sessions remain separate credentials/roles in /home/dev/.env."
-
-AUTH_BOOTSTRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bootstrap-devcoveer2-auth-home.sh"
-if [[ -f "$AUTH_BOOTSTRAP" ]]; then
-  echo
-  echo "=== UNIFIED CLI AUTH HOME ==="
-  bash "$AUTH_BOOTSTRAP"
-fi
