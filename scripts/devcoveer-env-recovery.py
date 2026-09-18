@@ -1328,6 +1328,50 @@ def write_opencode_provider_env(owner: dict[str, str]) -> int:
     return len(values)
 
 
+def install_opencode_provider_dropin() -> None:
+    """Make opencode-devcoveer.service consume the generated provider credential view."""
+    dropin_dir = DEV_HOME / ".config" / "systemd" / "user" / "opencode-devcoveer.service.d"
+    dropin_dir.mkdir(parents=True, exist_ok=True)
+    import pwd
+    pw = pwd.getpwnam(DEV)
+    os.chown(dropin_dir, pw.pw_uid, pw.pw_gid)
+    os.chmod(dropin_dir, 0o755)
+
+    target = dropin_dir / "20-provider-env.conf"
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(
+        "[Service]\n"
+        f"EnvironmentFile=-{OPENCODE_PROVIDER_ENV}\n",
+        encoding="utf-8",
+    )
+    os.chown(tmp, pw.pw_uid, pw.pw_gid)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, target)
+    os.chown(target, pw.pw_uid, pw.pw_gid)
+    os.chmod(target, 0o644)
+
+    uid = pw.pw_uid
+    runtime_dir = Path(f"/run/user/{uid}")
+    bus = runtime_dir / "bus"
+    if bus.exists():
+        env = os.environ.copy()
+        env.update({
+            "HOME": str(DEV_HOME),
+            "XDG_RUNTIME_DIR": str(runtime_dir),
+            "DBUS_SESSION_BUS_ADDRESS": f"unix:path={bus}",
+        })
+        subprocess.run(
+            ["runuser", "-u", DEV, "--", "env",
+             f"HOME={DEV_HOME}",
+             f"XDG_RUNTIME_DIR={runtime_dir}",
+             f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+             "systemctl", "--user", "daemon-reload"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
 def write_todo(master: dict[str, str], notes: dict[str, str]) -> None:
     lines = [
         "# GENERATED VIEW OF MISSING CREDENTIALS — DO NOT EDIT.",
@@ -1518,6 +1562,7 @@ def recover(args: argparse.Namespace) -> int:
     counts = render(catalog)
     write_todo(owner, notes)
     _cleanup_legacy_owner_fill()
+    install_opencode_provider_dropin()
     install_render_watcher()
     write_readme()
 
