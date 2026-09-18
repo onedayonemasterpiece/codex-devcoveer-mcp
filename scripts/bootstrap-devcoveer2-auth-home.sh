@@ -179,6 +179,21 @@ EOF
 ensure_shell_source "$DEV_HOME/.profile"
 ensure_shell_source "$DEV_HOME/.bashrc"
 
+# Long-lived user services read the exact same canonical auth-path contract as
+# interactive shells. This avoids service-vs-terminal session drift after reboot
+# or when a service is restarted by an agent.
+for unit in opencode-devcoveer.service codex-devserver-tunnel.service; do
+  dropin_dir="$DEV_HOME/.config/systemd/user/$unit.d"
+  install -d -m 0755 -o "$DEV_USER" -g "$DEV_USER" "$dropin_dir"
+  cat >"$dropin_dir/20-devcoveer-auth.conf" <<EOF
+[Service]
+EnvironmentFile=-$SYSTEMD_ENV
+EOF
+  chown "$DEV_USER:$DEV_USER" "$dropin_dir/20-devcoveer-auth.conf"
+  chmod 0644 "$dropin_dir/20-devcoveer-auth.conf"
+done
+unset unit dropin_dir
+
 # OpenCode receives only the generated model-provider credential subset. The
 # control-plane/tunnel service never receives these provider keys.
 OPENCODE_DROPIN_DIR="$DEV_HOME/.config/systemd/user/opencode-devcoveer.service.d"
