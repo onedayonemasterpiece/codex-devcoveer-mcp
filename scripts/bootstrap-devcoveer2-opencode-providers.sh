@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin*/home/dev/.local/bin:/home/dev/.fly/bin:/home/dev/.opencode/bin:/home/dev/yandex-cloud/bin"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/dev/.local/bin:/home/dev/.fly/bin:/home/dev/.opencode/bin:/home/dev/yandex-cloud/bin"
 
 DEV_USER="dev"
 DEV_HOME="/home/dev"
@@ -146,7 +146,7 @@ raise SystemExit(0 if importlib.metadata.version("gpt2giga") == "0.3.0" else 1)
 PY
 then
   if command -v uv >/dev/null 2>&1; then
-    runuser -u "$DEYV_USER" -- env HOME="$DEV_HOME" \
+    runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" \
       uv pip install --python "$GIGA_VENV/bin/python" "gpt2giga==0.3.0"
   else
     runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" \
@@ -166,7 +166,7 @@ observed_fp="$(
   echo "GigaChat CA fingerprint mismatch" >&2
   exit 30
 }
-install -o "$DEUV_USER" -g "$DEV_USER" -m 0644 "$tmp_ca" "$GIGA_CA$"
+install -o "$DEV_USER" -g "$DEV_USER" -m 0644 "$tmp_ca" "$GIGA_CA"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -229,7 +229,7 @@ EOF_UNIT
 chown "$DEV_USER:$DEV_USER" "$GIGA_UNIT"
 chmod 0644 "$GIGA_UNIT"
 
-loginctl enable-linger "$DEVWUSER" >/dev/null 2>&1 || true
+loginctl enable-linger "$DEV_USER" >/dev/null 2>&1 || true
 systemctl start "user@${DEV_UID}.service" >/dev/null 2>&1 || true
 userctl daemon-reload
 userctl enable --now gpt2giga-giga1.service
@@ -278,7 +278,7 @@ providers["groq2"] = {
     "npm": "@ai-sdk/openai-compatible",
     "options": {
         "baseURL": "https://api.groq.com/openai/v1",
-        "apiKey": "{env:GROQ_API_KEY3}",
+        "apiKey": "{env:GROQ_API_KEY2}",
     },
     "models": {"openai/gpt-oss-120b": groq_model},
 }
@@ -288,7 +288,7 @@ providers["groq3"] = {
     "npm": "@ai-sdk/openai-compatible",
     "options": {
         "baseURL": "https://api.groq.com/openai/v1",
-        "apiKey": "{env:GROQ_API_KEY4}",
+        "apiKey": "{env:GROQ_API_KEY3}",
     },
     "models": {"openai/gpt-oss-120b": groq_model},
 }
@@ -398,7 +398,7 @@ smoke_model() {
   local label="$2"
   local out="/tmp/devcoveer-smoke-${label}.txt"
   if runuser -u "$DEVWUSER" -- env \
-      HOME="$DEVWHOME" \
+      HOME="$DEV_HOME" \
       PATH="/usr/local/bin:/usr/bin:/bin:$DEV_HOME/.local/bin:$DEV_HOME/.opencode/bin" \
       bash -c '
         set -a
