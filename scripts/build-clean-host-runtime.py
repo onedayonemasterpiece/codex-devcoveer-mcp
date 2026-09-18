@@ -83,7 +83,7 @@ def transform(source: str) -> str:
             raise _invalid_params("reasoning_effort",
                 "reasoning_effort requires provider=codex")
         selected = await OPENCODE_BACKEND.resolve_model(
-            provider=None, model=None, directory=project.path,
+            provider="opencode", model=None, directory=project.path,
         )
         _assert_model_not_excluded(selected["selection"])
         return {"backend": "opencode", "provider": selected["provider"],

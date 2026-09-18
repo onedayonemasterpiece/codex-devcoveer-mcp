@@ -73,6 +73,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'name="project_probe"' in bridge
         assert 'name="host_probe"' in bridge
         assert '"reason": "default_opencode"' in bridge
+        assert 'provider="opencode", model=None, directory=project.path' in bridge
         assert 'BRIDGE_VERSION = "3.10.0-clean-host.1"' in bridge
         for name in (
             "direct_probes.py", "direct_probe_disk_forensics.py",
