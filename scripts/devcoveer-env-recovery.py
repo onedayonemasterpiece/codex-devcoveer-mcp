@@ -40,6 +40,8 @@ CATALOG = ROOT / "catalog.json"
 RECOVERED = ROOT / "recovered" / "fly"
 SERVICES = ROOT / "services"
 README = ROOT / "README.txt"
+OWNER_FILL = ROOT / "owner-fill.env"
+OWNER_FILL_SUMMARY = ROOT / "owner-fill-summary.json"
 FLY_RELEASE_ENV = DEV_HOME / ".config" / "fly" / "release.env"
 FLY_COMMON = (
     DEV_HOME / ".fly" / "bin" / "flyctl",
@@ -79,6 +81,16 @@ JS_PATTERNS = (
 ALIASES = {
     "TG_API_ID": "TELEGRAM_API_ID",
     "TG_API_HASH": "TELEGRAM_API_HASH",
+}
+
+# Canonical project ownership for Fly apps. This is intentionally explicit:
+# app names are deployment identities, not always repository names.
+FLY_APP_PROJECT_MAP = {
+    "events-bot-new-wngqia": "events-bot-new",
+    "events-bot-new": "events-bot-new-legacy-fly",
+    "cat-weather-new": "cat-weather-new",
+    "znanie-kgd80-fest": "kdg80",
+    "kenigevents-autopresenter": "kenigevents-autopresenter",
 }
 
 # Common CI/runtime variables that should not become owner secrets.
@@ -554,11 +566,12 @@ def recover_fly(
         return result
     result["authenticated"] = True
 
-    app_to_project = {
+    app_to_project = dict(FLY_APP_PROJECT_MAP)
+    app_to_project.update({
         info["fly_app"]: project
         for project, info in project_info.items()
         if info.get("fly_app")
-    }
+    })
 
     apps = fly_apps(flyctl, auth)
     safe_mkdir(RECOVERED, 0o700)
@@ -651,15 +664,15 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
         if not project:
             project = f"flyapp-{app}"
             app_info["project"] = project
-            all_projects.setdefault(project, {
-                "project": project,
-                "path": None,
-                "fly_app": app,
-                "env_examples": [],
-                "required": sorted(app_info.get("secret_names", [])),
-                "source_controlled_env": [],
-                "scope_kind": "fly_app",
-            })
+        all_projects.setdefault(project, {
+            "project": project,
+            "path": None,
+            "fly_app": app,
+            "env_examples": [],
+            "required": sorted(app_info.get("secret_names", [])),
+            "source_controlled_env": [],
+            "scope_kind": "fly_app",
+        })
         for actual in app_info.get("secret_names", []):
             canon = canonical(actual)
             fly_secret_canons.add(canon)
@@ -797,6 +810,107 @@ def write_todo(master: dict[str, str], notes: dict[str, str]) -> None:
     TODO.write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.chmod(TODO, 0o600)
 
+def write_owner_fill(master: dict[str, str], catalog: dict[str, Any]) -> dict[str, Any]:
+    """Write a compact owner-facing blank template with no secret values.
+
+    Fully unresolved multi-project families collapse to one SHARED__ prompt.
+    If one project already has a recovered value, unresolved projects remain
+    explicit overrides; recovery never assumes credentials are portable.
+    """
+    lines = [
+        "# DevCoveer2 unresolved secret input template.",
+        "# NO VALUES ARE GENERATED HERE.",
+        "# Fill this file, then run the apply-owner-fill command.",
+        "# PROJECT__NAME is project-specific; SHARED__NAME is intentionally shared.",
+        "",
+    ]
+    summary: dict[str, Any] = {
+        "schema": "devcoveer.owner-fill.v1",
+        "families_total": 0,
+        "prompts_total": 0,
+        "shared_prompts": 0,
+        "project_prompts": 0,
+        "groups": {},
+    }
+    grouped: dict[str, list[tuple[str, str]]] = defaultdict(list)
+
+    for canon, meta in sorted(catalog["variables"].items()):
+        if not meta.get("sensitive"):
+            continue
+        projects = list(meta.get("projects") or [])
+        if not projects:
+            continue
+        summary["families_total"] += 1
+        shared_key = f"SHARED__{canon}"
+        shared_value = master.get(shared_key, "")
+        project_values = {
+            project: master.get(f"{pfx(project)}__{canon}", "")
+            for project in projects
+        }
+        unresolved = [p for p, value in project_values.items() if not value and not shared_value]
+        if not unresolved:
+            continue
+
+        any_project_value = any(bool(v) for v in project_values.values())
+        if len(projects) > 1 and not any_project_value and not shared_value:
+            comment = "used by: " + ", ".join(sorted(projects))
+            grouped["SHARED"].append((shared_key, comment))
+            summary["shared_prompts"] += 1
+            summary["prompts_total"] += 1
+            continue
+
+        for project in sorted(unresolved):
+            key = f"{pfx(project)}__{canon}"
+            comment = f"runtime name: {canon}"
+            grouped[project].append((key, comment))
+            summary["project_prompts"] += 1
+            summary["prompts_total"] += 1
+
+    for group in sorted(grouped):
+        items = grouped[group]
+        summary["groups"][group] = len(items)
+        lines.append(f"# [{group}] unresolved={len(items)}")
+        for key, comment in items:
+            lines.append(f"# {comment}")
+            lines.append(f"{key}=")
+        lines.append("")
+
+    OWNER_FILL.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(OWNER_FILL, 0o600)
+    OWNER_FILL_SUMMARY.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(OWNER_FILL_SUMMARY, 0o600)
+    return summary
+
+
+def apply_owner_fill() -> dict[str, int]:
+    """Merge non-empty owner-fill values into master without printing values."""
+    if not OWNER_FILL.is_file():
+        raise SystemExit(f"{OWNER_FILL} is missing")
+    master = parse_master(MASTER)
+    supplied = parse_master(OWNER_FILL)
+    applied = 0
+    skipped = 0
+    for key, value in supplied.items():
+        if not value:
+            continue
+        if key not in master or master.get(key):
+            skipped += 1
+            continue
+        master[key] = value
+        applied += 1
+
+    write_master(master, {})
+    if not CATALOG.is_file():
+        raise SystemExit("catalog.json is missing")
+    catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+    write_todo(master, {})
+    write_owner_fill(master, catalog)
+    render(catalog)
+    return {"applied": applied, "skipped": skipped}
+
 
 def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
     if catalog is None:
@@ -853,6 +967,10 @@ recovered/fly/*.env
 services/<project>.env
   Least-privilege rendered env for one project, mode root:dev 0640.
 
+owner-fill.env
+  Compact blank-only owner input template. Fill missing values here, then run
+  the apply-owner-fill subcommand as root.
+
 Resolution:
   PROJECT__VARIABLE overrides SHARED__VARIABLE.
   SHARED values are populated automatically only when recovery proves equality
@@ -885,6 +1003,7 @@ def recover(args: argparse.Namespace) -> int:
     master, notes = merge_master(catalog)
     write_master(master, notes)
     write_todo(master, notes)
+    owner_fill_summary = write_owner_fill(master, catalog)
     counts = render(catalog)
     write_readme()
 
@@ -922,6 +1041,8 @@ def recover(args: argparse.Namespace) -> int:
     print(f"master_missing_values={missing_total}")
     print(f"master={MASTER}")
     print(f"todo={TODO}")
+    print(f"owner_fill={OWNER_FILL}")
+    print("owner_fill_summary=" + json.dumps(owner_fill_summary, sort_keys=True))
     print(f"catalog={CATALOG}")
     print(f"service_envs={SERVICES}")
     print("rendered_project_counts=" + json.dumps(counts, sort_keys=True))
@@ -932,11 +1053,28 @@ def render_cmd(_: argparse.Namespace) -> int:
     ensure_root()
     counts = render()
     master = parse_master(MASTER)
-    # Regenerate TODO without source notes on a render-only pass.
+    # Regenerate TODO/owner template without source notes on a render-only pass.
     write_todo(master, {})
+    if not CATALOG.is_file():
+        raise SystemExit("catalog.json is missing")
+    catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+    owner_fill_summary = write_owner_fill(master, catalog)
     print("ENV_RENDER_COMPLETE")
     print("rendered_project_counts=" + json.dumps(counts, sort_keys=True))
     print(f"todo={TODO}")
+    print(f"owner_fill={OWNER_FILL}")
+    print("owner_fill_summary=" + json.dumps(owner_fill_summary, sort_keys=True))
+    return 0
+
+
+def apply_owner_fill_cmd(_: argparse.Namespace) -> int:
+    ensure_root()
+    result = apply_owner_fill()
+    print("OWNER_FILL_APPLIED")
+    print("applied=" + str(result["applied"]))
+    print("skipped=" + str(result["skipped"]))
+    print(f"master={MASTER}")
+    print(f"owner_fill={OWNER_FILL}")
     return 0
 
 
@@ -949,6 +1087,8 @@ def main() -> int:
     p_recover.set_defaults(func=recover)
     p_render = sub.add_parser("render")
     p_render.set_defaults(func=render_cmd)
+    p_apply = sub.add_parser("apply-owner-fill")
+    p_apply.set_defaults(func=apply_owner_fill_cmd)
     args = parser.parse_args()
     return int(args.func(args))
 
