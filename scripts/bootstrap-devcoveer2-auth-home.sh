@@ -17,7 +17,17 @@ install -d -m 0755 -o "$DEV_USER" -g "$DEV_USER" "$DEV_HOME/.config/devcoveer" "
 
 fail() { echo "AUTH_HOME_BLOCKED: $*" >&2; exit 1; }
 dir_empty() { [[ ! -d "$1" || -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; }
-same_target() { [[ -L "$1" ]] && [[ "$(readlink -f "$1" 2>/dev/null || true)" == "$(readlink -m "$2")" ]]; }
+same_target() {
+  [[ -L "$1" ]] || return 1
+  local raw resolved
+  raw="$(readlink "$1")"
+  if [[ "$raw" = /* ]]; then
+    resolved="$(readlink -m "$raw")"
+  else
+    resolved="$(readlink -m "$(dirname "$1")/$raw")"
+  fi
+  [[ "$resolved" == "$(readlink -m "$2")" ]]
+}
 
 adopt_dir() {
   local native="$1" target="$2"
@@ -69,11 +79,10 @@ echo "auth_home=$AUTH_HOME"
 adopt_dir "$DEV_HOME/.config/gh" "$AUTH_HOME/gh"
 adopt_file "$DEV_HOME/.fly/config.yml" "$AUTH_HOME/fly/config.yml"
 adopt_dir "$DEV_HOME/.config/yandex-cloud" "$AUTH_HOME/yc"
-install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$DEV_HOME/.codex"
-adopt_file "$DEV_HOME/.codex/auth.json" "$AUTH_HOME/codex/auth.json"
-adopt_file "$DEV_HOME/.codex/.credentials.json" "$AUTH_HOME/codex/mcp-credentials.json"
-install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$DEV_HOME/.local/share/opencode"
-adopt_file "$DEV_HOME/.local/share/opencode/auth.json" "$AUTH_HOME/opencode/auth.json"
+# Codex/OpenCode perform state writes and refresh OAuth tokens. Move the whole
+# state directories so every process mutates one underlying store.
+adopt_dir "$DEV_HOME/.codex" "$AUTH_HOME/codex"
+adopt_dir "$DEV_HOME/.local/share/opencode" "$AUTH_HOME/opencode"
 adopt_dir "$DEV_HOME/.kaggle" "$AUTH_HOME/kaggle"
 adopt_dir "$DEV_HOME/.docker" "$AUTH_HOME/docker"
 install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$DEV_HOME/.config/tunnel-client"
@@ -86,7 +95,7 @@ export GH_CONFIG_DIR="$AUTH_HOME/gh"
 export FLY_CONFIG_DIR="$AUTH_HOME/fly"
 export KAGGLE_CONFIG_DIR="$AUTH_HOME/kaggle"
 export DOCKER_CONFIG="$AUTH_HOME/docker"
-export CODEX_HOME="$DEV_HOME/.codex"
+export CODEX_HOME="$AUTH_HOME/codex"
 EOF
 chown "$DEV_USER:$DEV_USER" "$AUTH_ENV"; chmod 0644 "$AUTH_ENV"
 
@@ -96,7 +105,7 @@ GH_CONFIG_DIR=$AUTH_HOME/gh
 FLY_CONFIG_DIR=$AUTH_HOME/fly
 KAGGLE_CONFIG_DIR=$AUTH_HOME/kaggle
 DOCKER_CONFIG=$AUTH_HOME/docker
-CODEX_HOME=$DEV_HOME/.codex
+CODEX_HOME=$AUTH_HOME/codex
 EOF
 chown "$DEV_USER:$DEV_USER" "$SYSTEMD_ENV"; chmod 0644 "$SYSTEMD_ENV"
 
@@ -120,7 +129,7 @@ ensure_shell_source "$DEV_HOME/.bashrc"
 # OAuth refresh tokens must be refreshed in the same underlying file.
 runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" python3 - <<'PY'
 from pathlib import Path
-p = Path("/home/dev/.codex/config.toml")
+p = Path("/home/dev/.local/share/devcoveer/auth/codex/config.toml")
 text = p.read_text(encoding="utf-8") if p.exists() else ""
 wanted = {
     "cli_auth_credentials_store": 'cli_auth_credentials_store = "file"',
@@ -153,7 +162,7 @@ user_systemctl() {
 if [[ -S "$USER_RUNTIME_DIR/bus" ]]; then
   user_systemctl systemctl --user set-environment \
     "DEVCOVEER_AUTH_HOME=$AUTH_HOME" "GH_CONFIG_DIR=$AUTH_HOME/gh" "FLY_CONFIG_DIR=$AUTH_HOME/fly" \
-    "KAGGLE_CONFIG_DIR=$AUTH_HOME/kaggle" "DOCKER_CONFIG=$AUTH_HOME/docker" "CODEX_HOME=$DEV_HOME/.codex"
+    "KAGGLE_CONFIG_DIR=$AUTH_HOME/kaggle" "DOCKER_CONFIG=$AUTH_HOME/docker" "CODEX_HOME=$AUTH_HOME/codex"
   user_systemctl systemctl --user daemon-reload
   for unit in opencode-devcoveer.service codex-devserver-tunnel.service; do
     if user_systemctl systemctl --user is-active --quiet "$unit"; then
@@ -187,7 +196,7 @@ status opencode opencode auth list
 if [[ -s "$KAGGLE_CONFIG_DIR/access_token" || -s "$KAGGLE_CONFIG_DIR/kaggle.json" ]]; then printf "%-14s PASS\n" kaggle; else printf "%-14s OWNER_ENV_OR_LOGIN_REQUIRED\n" kaggle; fi
 for spec in \
   "gh:$HOME/.config/gh" "fly:$HOME/.fly/config.yml" "yc:$HOME/.config/yandex-cloud" \
-  "codex:$HOME/.codex/auth.json" "opencode:$HOME/.local/share/opencode/auth.json" "kaggle:$HOME/.kaggle"; do
+  "codex:$HOME/.codex" "opencode:$HOME/.local/share/opencode" "kaggle:$HOME/.kaggle"; do
   name="${spec%%:*}"; path="${spec#*:}"
   if [[ -L "$path" ]]; then printf "link:%-9s %s -> %s\n" "$name" "$path" "$(readlink "$path")"; else printf "link:%-9s MISSING_OR_NOT_SYMLINK %s\n" "$name" "$path"; fi
 done
