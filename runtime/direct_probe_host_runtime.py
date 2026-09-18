@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import http.client
 import ipaddress
 import json
@@ -173,5 +174,138 @@ async def _config_presence(binding: dict[str, Any], check: dict[str, Any]) -> di
     data = await asyncio.to_thread(_config_presence_file,path,allowed,list(check["keys"])); data["source"]=alias; data["values_returned"]=False
     return data
 
+
+def _read_fixed_basic_auth(path: Path, username_key: str, password_key: str) -> str:
+    st = path.lstat()
+    if statmod.S_ISLNK(st.st_mode) or not statmod.S_ISREG(st.st_mode) or st.st_size > 8192:
+        raise ProbeError("config", "OpenCode auth source must be a small regular non-symlink file")
+    values: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    username = values.get(username_key, "")
+    password = values.get(password_key, "")
+    if not username or not password or len(username) > 128 or len(password) > 2048:
+        raise ProbeError("config", "OpenCode server authentication is unavailable")
+    return "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
+
+
+def _opencode_catalog_request(cfg: dict[str, Any], provider_filter: str | None) -> dict[str, Any]:
+    url = str(cfg.get("url") or "")
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "http"
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or not parsed.hostname
+        or (parsed.path and parsed.path != "/config/providers")
+    ):
+        raise ProbeError("config", "OpenCode catalog URL must be fixed loopback /config/providers")
+    try:
+        address = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        if parsed.hostname != "localhost":
+            raise ProbeError("config", "OpenCode catalog host is not loopback")
+    else:
+        if not address.is_loopback:
+            raise ProbeError("config", "OpenCode catalog host is not loopback")
+
+    auth_file = Path(str(cfg.get("auth_file") or ""))
+    if not auth_file.is_absolute():
+        raise ProbeError("config", "OpenCode auth file must be absolute")
+    authorization = _read_fixed_basic_auth(
+        auth_file,
+        str(cfg.get("username_key") or "OPENCODE_SERVER_USERNAME"),
+        str(cfg.get("password_key") or "OPENCODE_SERVER_PASSWORD"),
+    )
+
+    conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=5.0)
+    try:
+        conn.request(
+            "GET",
+            "/config/providers",
+            headers={
+                "Authorization": authorization,
+                "Accept": "application/json",
+                "User-Agent": "DevCoveer-Direct-Probe/1",
+            },
+        )
+        response = conn.getresponse()
+        raw = response.read(2_000_001)
+    finally:
+        conn.close()
+    if response.status != 200:
+        raise ProbeError("opencode_catalog", f"OpenCode catalog returned HTTP {response.status}")
+    if len(raw) > 2_000_000:
+        raise ProbeError("opencode_catalog", "OpenCode catalog exceeded bounded response size")
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProbeError("opencode_catalog", "OpenCode catalog returned invalid JSON") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("providers"), list):
+        raise ProbeError("opencode_catalog", "OpenCode catalog response shape is invalid")
+
+    summaries: list[dict[str, Any]] = []
+    selected_models: list[dict[str, Any]] = []
+    for item in payload["providers"]:
+        if not isinstance(item, dict):
+            continue
+        provider_id = item.get("id")
+        if not isinstance(provider_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", provider_id):
+            continue
+        models = item.get("models") if isinstance(item.get("models"), dict) else {}
+        active_model_ids = [
+            model_id for model_id, model in models.items()
+            if isinstance(model_id, str)
+            and isinstance(model, dict)
+            and model.get("status") != "deprecated"
+        ]
+        summaries.append({"id": provider_id, "model_count": len(active_model_ids)})
+        if provider_filter == provider_id:
+            for model_id in sorted(active_model_ids)[:300]:
+                model = models[model_id]
+                caps = model.get("capabilities") if isinstance(model.get("capabilities"), dict) else {}
+                selected_models.append({
+                    "id": model_id,
+                    "name": str(model.get("name") or "")[:160],
+                    "status": model.get("status"),
+                    "reasoning": caps.get("reasoning") is True,
+                    "toolcall": caps.get("toolcall") is True,
+                })
+
+    summaries.sort(key=lambda row: row["id"])
+    if provider_filter and not any(row["id"] == provider_filter for row in summaries):
+        raise ProbeError("not_found", "requested OpenCode provider is not connected", status="not_found")
+
+    return {
+        "providers": summaries,
+        "provider_filter": provider_filter,
+        "models": selected_models if provider_filter else [],
+        "values_returned": False,
+        "complete": not provider_filter or len(selected_models) < 300,
+        "truncated": bool(provider_filter and len(selected_models) >= 300),
+    }
+
+
+async def _opencode_catalog(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
+    alias = _validate_alias(check["catalog"])
+    cfg = _host_section(binding, "opencode_catalogs").get(alias)
+    if not isinstance(cfg, dict):
+        raise ProbeError("target_denied", "OpenCode catalog is not registered", status="denied")
+    provider_filter = check.get("provider")
+    if provider_filter is not None:
+        provider_filter = _validate_alias(provider_filter)
+    data = await asyncio.wait_for(
+        asyncio.to_thread(_opencode_catalog_request, cfg, provider_filter),
+        timeout=8.0,
+    )
+    data["catalog"] = alias
+    return data
+
 def _inventory(binding: dict[str, Any]) -> dict[str, Any]:
-    return {"services":sorted(_host_section(binding,"services")),"logs":sorted(_host_section(binding,"logs")),"roots":sorted(_host_section(binding,"roots")),"health":sorted(_host_section(binding,"health")),"runtimes":sorted(_host_section(binding,"runtimes")),"runtime_files":sorted(_host_section(binding,"runtime_files")),"config_presence":sorted(_host_section(binding,"config_presence"))}
+    return {"services":sorted(_host_section(binding,"services")),"logs":sorted(_host_section(binding,"logs")),"roots":sorted(_host_section(binding,"roots")),"health":sorted(_host_section(binding,"health")),"runtimes":sorted(_host_section(binding,"runtimes")),"runtime_files":sorted(_host_section(binding,"runtime_files")),"config_presence":sorted(_host_section(binding,"config_presence")),"opencode_catalogs":sorted(_host_section(binding,"opencode_catalogs"))}
