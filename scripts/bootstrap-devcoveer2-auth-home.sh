@@ -179,6 +179,25 @@ EOF
 ensure_shell_source "$DEV_HOME/.profile"
 ensure_shell_source "$DEV_HOME/.bashrc"
 
+# Pin long-lived user services to the same auth paths even if they are launched
+# outside an interactive shell. OpenCode also receives only the generated
+# provider credential subset derived from /home/dev/.env.
+install -d -m 0755 -o "$DEV_USER" -g "$DEV_USER"   "$DEV_HOME/.config/systemd/user/opencode-devcoveer.service.d"   "$DEV_HOME/.config/systemd/user/codex-devserver-tunnel.service.d"
+
+cat >"$DEV_HOME/.config/systemd/user/opencode-devcoveer.service.d/20-devcoveer-auth.conf" <<EOF
+[Service]
+EnvironmentFile=-$SYSTEMD_ENV
+EnvironmentFile=-$DEV_HOME/.config/opencode/devcoveer-providers.env
+EOF
+
+cat >"$DEV_HOME/.config/systemd/user/codex-devserver-tunnel.service.d/20-devcoveer-auth.conf" <<EOF
+[Service]
+EnvironmentFile=-$SYSTEMD_ENV
+EOF
+
+chown -R "$DEV_USER:$DEV_USER"   "$DEV_HOME/.config/systemd/user/opencode-devcoveer.service.d"   "$DEV_HOME/.config/systemd/user/codex-devserver-tunnel.service.d"
+chmod 0644   "$DEV_HOME/.config/systemd/user/opencode-devcoveer.service.d/20-devcoveer-auth.conf"   "$DEV_HOME/.config/systemd/user/codex-devserver-tunnel.service.d/20-devcoveer-auth.conf"
+
 # OpenCode receives only the generated model-provider credential subset. The
 # control-plane/tunnel service never receives these provider keys.
 OPENCODE_DROPIN_DIR="$DEV_HOME/.config/systemd/user/opencode-devcoveer.service.d"
