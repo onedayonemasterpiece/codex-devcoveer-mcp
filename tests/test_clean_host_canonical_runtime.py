@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import stat
+import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / "historical" / "3.6.1" / "source"
 INSTALLER = ROOT / "scripts" / "install-current-canonical-runtime.sh"
+BUILDER = ROOT / "scripts" / "build-clean-host-runtime.py"
 
 EXPECTED = {
     "codex-chatgpt-bridge.py": "73756c81b852cb183943c880d5918faadeee25ea9b034504a80df9f5f05d2107",
@@ -31,15 +35,15 @@ def test_clean_host_installer_does_not_use_bootstrap_as_source() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
     assert 'SOURCE_REF="${DEVCOVEER_SOURCE_REF:-origin/main}"' in source
     assert 'git -C "$WORK_REPO" archive "$SOURCE_SHA"' in source
-    assert 'cp -a "$BASE/." "$CAND"' in source
+    assert 'build-clean-host-runtime.py" "$CAND"' in source
     assert 'cp -a "$BOOT" "$CAND"' not in source
-    assert 'source_baseline_sha_gate=PASS' in source
+    assert 'git -C "$WORK_REPO" archive "$SOURCE_SHA"' in source
 
 
 def test_clean_host_installer_accepts_probes_before_tunnel_switch() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
-    assert '"project_probe", "host_probe"' in source
-    assert "wrapper_required_tools=PASS" in source
+    assert 'required={"project_probe","host_probe","list_models","start_task","read_task"}' in source
+    assert "=== canonical wrapper acceptance ===" in source
     assert "systemctl --user restart codex-devserver-tunnel.service" in source
 
 
@@ -48,10 +52,27 @@ def test_clean_host_installer_runs_normally_as_dev_without_sudo() -> None:
     assert 'ERROR: run as root' not in source
     assert 'sudo ' not in source
     assert 'CURRENT_UID="$(id -u)"' in source
-    assert 'if [ "$CURRENT_UID" -eq "$DEV_UID" ]; then' in source
+    assert '[ "$CURRENT_UID" -eq "$DEV_UID" ]' in source
     assert 'systemctl --user restart codex-devserver-tunnel.service' in source
 
 
 def test_clean_host_installer_is_executable() -> None:
     mode = INSTALLER.stat().st_mode
     assert mode & stat.S_IXUSR
+
+
+def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "runtime"
+        completed = subprocess.run(
+            [sys.executable, str(BUILDER), str(out)],
+            text=True, capture_output=True, check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
+        assert 'name="project_probe"' in bridge
+        assert 'name="host_probe"' in bridge
+        assert '"reason": "default_opencode"' in bridge
+        assert 'BRIDGE_VERSION = "3.10.0-clean-host.1"' in bridge
+        for name in ("direct_probes.py", "direct_probe_config.json", "opencode_backend.py"):
+            assert (out / name).is_file()
