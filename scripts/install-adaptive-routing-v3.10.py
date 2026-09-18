@@ -98,8 +98,9 @@ CURRENT_LIST_TOOL_TEXT = '''        description=("List provider-filtered models 
 ADAPTIVE_LIST_TOOL_TEXT = '''        description=("List provider-filtered models available to DevCoveer with short-horizon runtime "
             "health, active usage and routing suggestions. Historical verification receipts are kept "
             "separate from current availability, so fresh quota/429/timeout/EOL observations override "
-            "stale verified status. Default OpenCode resource priority is Zen, then NVIDIA, then metered "
-            "reserve providers such as GigaChat; NVIDIA is non-scarce but dynamically loaded. Listing "
+            "stale verified status. Default OpenCode resource priority is Zen, then the Groq GPT-OSS-120B "
+            "key pool (groq -> groq2 -> groq3), then NVIDIA, then metered reserve providers such as "
+            "GigaChat; NVIDIA is non-scarce but dynamically loaded. Listing "
             "never performs inference or exposes credentials and never applies a global model lock."),'''
 
 

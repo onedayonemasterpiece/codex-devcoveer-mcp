@@ -89,13 +89,26 @@ Default routing priority: third.
 
 Current example: GigaChat. Future examples may include other explicitly metered providers.
 
+DevCoveer owner credential pool:
+- `GIGACHAT_API_KEY`;
+- `GIGACHAT_API_KEY2`;
+- `GIGACHAT_API_KEY3`.
+
+The historical integration used local `gpt2giga` OpenAI-compatible gateways rather than
+passing a GigaChat credential directly to the OpenCode process. DevCoveer2 recovery must
+therefore preserve the three owner credentials and verify the actual local provider/gateway
+topology before enabling them. It must never collapse a three-key pool to one
+`GIGACHAT_CREDENTIALS` field merely because one historical gateway used that compatibility
+name.
+
 Properties:
 - expected to be comparatively reliable/fast when available;
 - consumes a limited token/quota budget;
 - do not spend on routine health probing while R1/R2 can do the work;
-- use as fallback or when quality/capability requirements justify it.
+- use as fallback or when quality/capability requirements justify it;
+- every admitted `giga*` provider is tracked separately for health and usage.
 
-Default OpenCode routing priority: third.
+Default OpenCode routing priority: fourth.
 
 Canonical default order for ordinary OpenCode execution:
 

@@ -97,6 +97,10 @@ ALIASES = {
     # events-bot benchmark/fallback code explicitly treats this as the same
     # 4o credential, not a separate owner-managed secret.
     "FOUR_4O_TOKEN": "FOUR_O_TOKEN",
+
+    # Historical first GigaChat gateway consumed GIGACHAT_CREDENTIALS while the
+    # owner-facing canonical pool uses the *_API_KEY spelling.
+    "GIGACHAT_CREDENTIALS": "GIGACHAT_API_KEY",
 }
 
 # Blank entries in /home/dev/.env are intentionally a short owner action list,
@@ -109,7 +113,9 @@ OWNER_REQUIRED_INPUTS = {
     "GROQ_API_KEY2",
     "GROQ_API_KEY3",
     "NVIDIA_API_KEY",
-    "GIGACHAT_CREDENTIALS",
+    "GIGACHAT_API_KEY",
+    "GIGACHAT_API_KEY2",
+    "GIGACHAT_API_KEY3",
 
     # Shared Google provider pool used by the existing products.
     "GOOGLE_API_KEY",
@@ -1342,14 +1348,15 @@ def write_opencode_provider_env(owner: dict[str, str]) -> int:
 
     /home/dev/.env remains the sole human-edited source. Compatibility names are
     emitted here because historical OpenCode configs used both GROQ_KEY* and
-    GROQ_API_KEY* spellings.
+    GROQ_API_KEY* spellings. GigaChat owner keys are intentionally not injected
+    directly into OpenCode: the historical integration used local gpt2giga
+    gateway providers, so their credentials belong to those gateway services.
     """
     runtime_names = {
         "GROQ_API_KEY": ["GROQ_API_KEY", "GROQ_KEY"],
         "GROQ_API_KEY2": ["GROQ_API_KEY2", "GROQ_KEY2"],
         "GROQ_API_KEY3": ["GROQ_API_KEY3", "GROQ_KEY3"],
         "NVIDIA_API_KEY": ["NVIDIA_API_KEY"],
-        "GIGACHAT_CREDENTIALS": ["GIGACHAT_CREDENTIALS"],
     }
     values: dict[str, str] = {}
     for owner_name, aliases in runtime_names.items():
