@@ -274,7 +274,7 @@ groq_model = {
 
 providers["groq2"] = {
     "id": "groq2",
-    "name": "Groq GPT-OSS-120B â key 2",
+    "name": "Groq GPT-OSS-120B - key 2",
     "npm": "@ai-sdk/openai-compatible",
     "options": {
         "baseURL": "https://api.groq.com/openai/v1",
@@ -284,7 +284,7 @@ providers["groq2"] = {
 }
 providers["groq3"] = {
     "id": "groq3",
-    "name": "Groq GPT-OSS-120B â key 3",
+    "name": "Groq GPT-OSS-120B - key 3",
     "npm": "@ai-sdk/openai-compatible",
     "options": {
         "baseURL": "https://api.groq.com/openai/v1",
@@ -294,7 +294,7 @@ providers["groq3"] = {
 }
 providers["giga1"] = {
     "id": "giga1",
-    "name": "GigaChat 3.5 Ultra â key 1",
+    "name": "GigaChat 3.5 Ultra - key 1",
     "npm": "@ai-sdk/openai-compatible",
     "options": {"baseURL": "http://127.0.0.1:8091/v1"},
     "models": {
@@ -397,7 +397,7 @@ smoke_model() {
   local selection="$1"
   local label="$2"
   local out="/tmp/devcoveer-smoke-${label}.txt"
-  if runuser -u "$DEVWUSER" -- env \
+  if runuser -u "$DEV_USER" -- env \
       HOME="$DEV_HOME" \
       PATH="/usr/local/bin:/usr/bin:/bin:$DEV_HOME/.local/bin:$DEV_HOME/.opencode/bin" \
       bash -c '
