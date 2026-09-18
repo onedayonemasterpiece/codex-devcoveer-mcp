@@ -1224,7 +1224,16 @@ def write_readme() -> None:
 
 /home/dev/.env
   The only human-edited credential file. dev:dev 0600.
-  Common credentials keep their normal env names and exist once.
+  It contains only owner-supplied credentials: provider keys/tokens, account
+  logins/passwords, Telegram/VK/MAX sessions, database/provider credentials.
+
+Not stored in /home/dev/.env
+  - auth state created by local CLIs/services (for example gh/fly login tokens);
+  - locally generated MCP/control-plane/service-to-service secrets;
+  - feature flags, paths, ports, timeouts, endpoints and other settings.
+
+Those runtime-only secrets stay in their native auth/config store or, when
+recovered from factual runtime, in generated per-service envs.
 
 /etc/devcoveer/env/owner.env
 /etc/devcoveer/env/master.env
@@ -1238,15 +1247,16 @@ def write_readme() -> None:
 
 Rules
   VARIABLE=value
-    Normal/common credential used wherever that runtime variable is required.
+    Common owner-managed credential. Stored once.
 
   PROJECT__VARIABLE=value
-    Exists only when recovered runtimes prove that the same variable name had
-    different values in different projects. It overrides VARIABLE for that project.
+    Appears only when factual recovered runtimes prove different values for the
+    same canonical owner-managed variable.
 
-  No @ref aliases, no SHARED__ namespace, no duplicated common credentials.
-  Feature flags, paths, timeouts, endpoints and ordinary application settings
-  do not belong in /home/dev/.env.
+Aliases
+  Compatibility env names are mapped to one canonical owner variable. They are
+  listed as comments at the bottom of /home/dev/.env and expanded automatically
+  into the generated service envs. No duplicate secret value is required.
 
 Saving /home/dev/.env regenerates services/*.env. A running process still needs
 a controlled restart/reload to receive a changed environment value in memory.
@@ -1287,13 +1297,18 @@ def recover(args: argparse.Namespace) -> int:
         for x in fly.get("apps", {}).values()
     )
     missing_total = sum(1 for value in owner.values() if not value)
-    credential_total = sum(
+    runtime_secret_total = sum(
         1 for x in catalog["variables"].values() if x["sensitive"]
     )
+    owner_input_total = sum(
+        1 for x in catalog["variables"].values() if x.get("owner_managed")
+    )
+    runtime_only_total = runtime_secret_total - owner_input_total
 
     print("ENV_RECOVERY_COMPLETE")
     print(f"projects={len(projects)}")
-    print(f"credential_variable_families={credential_total}")
+    print(f"owner_input_variable_families={owner_input_total}")
+    print(f"runtime_only_secret_families={runtime_only_total}")
     print(f"fly_available={fly.get('available', False)}")
     print(f"fly_authenticated={fly.get('authenticated', False)}")
     print(f"fly_apps_seen={len(fly.get('apps', {}))}")
