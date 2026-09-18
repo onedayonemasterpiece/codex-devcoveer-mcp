@@ -18,7 +18,7 @@ from direct_probe_project import (
 )
 from direct_probe_host import (
     _config_presence, _health, _host_section, _inventory, _listeners, _logs, _opencode_catalog, _resources, _runtime,
-    _runtime_file, _systemctl_show,
+    _runtime_file, _service_action, _systemctl_show,
 )
 
 def _base_result(check: dict[str, Any], started: float) -> dict[str, Any]:
@@ -220,3 +220,80 @@ async def run_project_probe(project_root: str, project_id: str, checks: list[dic
 
 async def run_host_probe(project_root: str, project_id: str, checks: list[dict[str, Any]], *, config_path: Path | None = None) -> dict[str, Any]:
     return await _run_probe(project_root, project_id, checks, host=True, config_path=config_path)
+
+
+async def run_host_action(
+    project_root: str,
+    project_id: str,
+    actions: list[dict[str, Any]],
+    *,
+    config_path: Path | None = None,
+) -> dict[str, Any]:
+    """Execute only server-registered, explicitly allowlisted low-risk actions.
+
+    This is deliberately not a shell and not a generic systemd wrapper.
+    Actions are sequential so restart ordering remains deterministic.
+    """
+    request_started = time.monotonic()
+    observed = _now_iso()
+    root = Path(project_root).resolve(strict=True)
+    config = _load_config(config_path or DEFAULT_CONFIG_PATH)
+    binding = _binding(config, project_id)
+    if project_id not in config["projects"]:
+        raise ProbeError("host_unbound", "project has no trusted host binding", status="denied")
+
+    results: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for action in actions:
+        started = time.monotonic()
+        base = {
+            "id": action["id"],
+            "operation": action["operation"],
+            "observed_at": _now_iso(),
+            "duration_ms": 0,
+            "complete": True,
+            "truncated": False,
+            "redacted": False,
+        }
+        if action["id"] in seen_ids:
+            base.update({
+                "status": "error",
+                "complete": False,
+                "error": {"type": "duplicate_id", "message": "action ids must be unique"},
+            })
+            results.append(base)
+            continue
+        seen_ids.add(action["id"])
+        try:
+            data = await asyncio.wait_for(_service_action(binding, action), timeout=25.0)
+            base.update({"status": "ok", "source": "allowlisted-systemd-user-action", "data": data, "exit_code": 0})
+        except asyncio.TimeoutError:
+            base.update({
+                "status": "timeout",
+                "complete": False,
+                "error": {"type": "timeout", "message": "direct service action exceeded bounded deadline"},
+            })
+        except ProbeError as exc:
+            msg, red = _redact_text(str(exc))
+            base.update({
+                "status": exc.status,
+                "complete": False,
+                "redacted": red,
+                "error": {"type": exc.category, "message": msg},
+            })
+            if exc.exit_code is not None:
+                base["exit_code"] = exc.exit_code
+        base["duration_ms"] = int((time.monotonic() - started) * 1000)
+        base["observed_at"] = _now_iso()
+        results.append(base)
+
+    payload = {
+        "execution": "direct",
+        "observed_at": observed,
+        "target": {"project": project_id, "cwd": str(root), "host_binding": True},
+        "duration_ms": int((time.monotonic() - request_started) * 1000),
+        "atomic": False,
+        "results": results,
+        "response_truncated": False,
+    }
+    return _fit_response(payload)
