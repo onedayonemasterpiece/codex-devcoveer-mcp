@@ -332,6 +332,14 @@ def secret_like(name: str) -> bool:
         return False
     if re.search(r"_(?:KEY|TOKEN|SECRET|AUTH_BUNDLE|SESSION|CREDENTIALS?)_VAR(?:S|_NAME)?$", n):
         return False
+    if re.search(r"_(?:KEY|TOKEN|SECRET|AUTH_BUNDLE|SESSION|CREDENTIALS?)_(?:NAMES?|BINDINGS?|DATASET|ID|VERSION)(?:_|$)", n):
+        return False
+    if "SECRET_CANDIDATE" in n:
+        return False
+    if re.search(r"(?:^|_)TOKEN_(?:LIMIT|MAX|MIN|TTL|LIFETIME|BUDGET|COUNT|CAP)(?:_|$)", n):
+        return False
+    if re.search(r"(?:^|_)CREDENTIAL_(?:LENGTH|MAX|MIN|COUNT)(?:_|$)", n):
+        return False
     if n.endswith(("_PATH", "_DIR", "_ROOT", "_FILE", "_FILES", "_LINK")):
         return False
     if n.endswith(("_MODEL_KEY", "_PROFILE_KEY", "_CACHE_KEY", "_IDEMPOTENCY_KEY", "_POLICY_KEY")):
