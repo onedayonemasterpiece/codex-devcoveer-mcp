@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "scripts" / "devcoveer-env-recovery.py"
@@ -124,3 +125,15 @@ def test_direct_host_surface_is_allowlist_only_and_knows_provider_catalog() -> N
     assert 'name="host_action"' in installer
     assert '"host_action": Draft202012Validator(HOST_ACTION_INPUT_SCHEMA)' in installer
     assert '"tools":["project_probe","host_probe","host_action"]' in installer
+
+
+def test_recovery_shell_scripts_parse_with_bash() -> None:
+    for script in (PROVIDER_BOOTSTRAP, TUNNEL_BOOTSTRAP):
+        completed = subprocess.run(
+            ["bash", "-n", str(script)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, f"{script}: {completed.stderr}"
