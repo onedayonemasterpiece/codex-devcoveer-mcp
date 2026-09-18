@@ -9,6 +9,7 @@ AUTH_ENV="$DEV_HOME/.config/devcoveer/auth-paths.sh"
 SYSTEMD_ENV="$DEV_HOME/.config/environment.d/60-devcoveer-auth.conf"
 USER_RUNTIME_DIR="/run/user/$DEV_UID"
 USER_BUS="unix:path=$USER_RUNTIME_DIR/bus"
+export PATH="/usr/local/bin:/usr/bin:/bin:$DEV_HOME/.local/bin:$DEV_HOME/.fly/bin:$DEV_HOME/.opencode/bin:$DEV_HOME/yandex-cloud/bin"
 
 [[ "$(id -u)" -eq 0 ]] || { echo "Run as root." >&2; exit 2; }
 
