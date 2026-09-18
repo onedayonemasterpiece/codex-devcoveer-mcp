@@ -953,13 +953,23 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
     # Preserve only flat/current owner choices. Temporary SHARED__ entries are
     # migrated to their canonical flat name; project-prefixed migration artifacts
     # are deliberately not trusted as factual evidence.
-    flat_existing: dict[str, str] = {}
+    flat_existing_values: dict[str, set[str]] = defaultdict(set)
+    flat_existing_seen: set[str] = set()
     for key, value in previous.items():
         prefix, canon = _split_owner_key(key)
         if prefix is not None or not owner_managed_credential(canon):
             continue
-        if value or canon not in flat_existing:
-            flat_existing[canon] = value
+        flat_existing_seen.add(canon)
+        if value:
+            flat_existing_values[canon].add(value)
+
+    # Never pick arbitrarily when an earlier migration left two flat alias names
+    # with different values. Factual runtime evidence below resolves that case.
+    flat_existing: dict[str, str] = {
+        canon: next(iter(values)) if len(values) == 1 else ""
+        for canon in flat_existing_seen
+        for values in [flat_existing_values.get(canon, set())]
+    }
 
     recovered_sets: dict[tuple[str, str], set[str]] = defaultdict(set)
     for app, info in catalog.get("fly", {}).get("apps", {}).items():
