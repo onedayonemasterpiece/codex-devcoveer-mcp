@@ -355,7 +355,6 @@ def secret_like(name: str) -> bool:
         r"(?:^|_)ACCESS_KEY_ID(?:_|$)",
         r"(?:^|_)SECRET_ACCESS_KEY(?:_|$)",
         r"(?:^|_)(?:USERNAME|USER_NAME|LOGIN)(?:_|$)",
-        r"(?:^|_)CLIENT_ID(?:_|$)",
         r"(?:^|_)CLIENT_SECRET(?:_|$)",
         r"(?:^|_)SESSION(?:_|$)",
         r"(?:^|_)AUTH_BUNDLE(?:_|$)",
@@ -1031,24 +1030,39 @@ def merge_master(catalog: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
     return owner, notes
 
 
-def observed_equal_credential_names() -> list[tuple[str, ...]]:
-    """Return name groups that held the same owner-managed secret in recovery.
+def _secret_value_alias_candidate(name: str) -> bool:
+    """Only compare opaque secret-bearing values, not public IDs/usernames."""
+    n = canonical(name)
+    if re.search(r"(?:^|_)(?:USERNAME|USER_NAME|LOGIN|API_ID|CLIENT_ID)(?:_|$)", n):
+        return False
+    return bool(re.search(
+        r"(?:^|_)(?:TOKEN|KEY|SECRET|PASSWORD|PASS|SESSION|AUTH_BUNDLE|"
+        r"CREDENTIALS?|API_HASH|DATABASE_URL|DSN)(?:_|$)",
+        n,
+    ))
 
-    This is informational only. It does not silently merge different semantic
-    variable names. Values are compared by SHA-256 and are never printed.
+
+def observed_equal_credential_names() -> list[tuple[str, ...]]:
+    """List different env names that held the exact same recovered secret value.
+
+    This is informational only; it never merges variables automatically.
+    Values are compared by SHA-256 and are never printed.
     """
-    groups: dict[tuple[str, str], set[str]] = defaultdict(set)
+    groups: dict[str, set[str]] = defaultdict(set)
     if not RECOVERED.is_dir():
         return []
     for snapshot in sorted(RECOVERED.glob("*.env")):
         for actual, value in parse_master(snapshot).items():
-            if not value or not owner_managed_credential(actual):
+            if (
+                not value
+                or not owner_managed_credential(actual)
+                or not _secret_value_alias_candidate(actual)
+            ):
                 continue
-            family = credential_family(actual)
             digest = hashlib.sha256(
                 value.encode("utf-8", errors="surrogateescape")
             ).hexdigest()
-            groups[(family, digest)].add(actual)
+            groups[digest].add(actual)
     out = {
         tuple(sorted(names))
         for names in groups.values()
@@ -1137,12 +1151,12 @@ def write_master(
             "# These are comments only. Secret values are stored once above.",
         ])
         for alias, target in aliases:
-            lines.append(f"# {alias} = {target}")
+            lines.append(f"# {alias}={target}")
         if observed_equal:
             lines.append("#")
             lines.append("# Same secret value observed in recovered runtime; informational only:")
             for names in observed_equal:
-                lines.append("# " + " = ".join(names))
+                lines.append("# " + "=".join(names))
         lines.append("")
 
     tmp = OWNER.with_name(OWNER.name + ".tmp")
