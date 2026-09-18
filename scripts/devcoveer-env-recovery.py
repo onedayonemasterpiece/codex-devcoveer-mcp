@@ -34,14 +34,16 @@ DEV = "dev"
 DEV_HOME = Path("/home/dev")
 PROJECTS_ROOT = DEV_HOME / "projects"
 ROOT = Path("/etc/devcoveer/env")
-MASTER = ROOT / "master.env"
+OWNER = ROOT / "owner.env"
+LEGACY_MASTER = ROOT / "master.env"
+MASTER = OWNER
 TODO = ROOT / "todo.env"
 CATALOG = ROOT / "catalog.json"
 RECOVERED = ROOT / "recovered" / "fly"
 SERVICES = ROOT / "services"
 README = ROOT / "README.txt"
-OWNER_FILL = ROOT / "owner-fill.env"
-OWNER_FILL_SUMMARY = ROOT / "owner-fill-summary.json"
+LEGACY_OWNER_FILL = ROOT / "owner-fill.env"
+LEGACY_OWNER_FILL_SUMMARY = ROOT / "owner-fill-summary.json"
 FLY_RELEASE_ENV = DEV_HOME / ".config" / "fly" / "release.env"
 FLY_COMMON = (
     DEV_HOME / ".fly" / "bin" / "flyctl",
@@ -64,7 +66,8 @@ ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
 SENSITIVE = re.compile(
     r"(?:^|_)(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIALS?|SESSION|AUTH|"
     r"BUNDLE|API_ID|API_HASH|DATABASE_URL|DSN|PRIVATE|SIGNING|SALT|COOKIE|"
-    r"BEARER|OAUTH|ACCESS_KEY|SERVICE_ACCOUNT)(?:_|$)"
+    r"BEARER|OAUTH|ACCESS_KEY|SERVICE_ACCOUNT|USERNAME|USER_NAME|LOGIN|"
+    r"CLIENT_ID|CLIENT_SECRET|POSTGRES_USER|DB_USER)(?:_|$)"
 )
 PY_PATTERNS = (
     re.compile(r"""os\.getenv\(\s*["']([A-Z][A-Z0-9_]+)["']"""),
