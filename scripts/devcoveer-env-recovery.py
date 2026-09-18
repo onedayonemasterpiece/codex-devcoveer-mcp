@@ -664,15 +664,15 @@ def build_catalog(project_info: dict[str, dict[str, Any]], fly: dict[str, Any]) 
         if not project:
             project = f"flyapp-{app}"
             app_info["project"] = project
-            all_projects.setdefault(project, {
-                "project": project,
-                "path": None,
-                "fly_app": app,
-                "env_examples": [],
-                "required": sorted(app_info.get("secret_names", [])),
-                "source_controlled_env": [],
-                "scope_kind": "fly_app",
-            })
+        all_projects.setdefault(project, {
+            "project": project,
+            "path": None,
+            "fly_app": app,
+            "env_examples": [],
+            "required": sorted(app_info.get("secret_names", [])),
+            "source_controlled_env": [],
+            "scope_kind": "fly_app",
+        })
         for actual in app_info.get("secret_names", []):
             canon = canonical(actual)
             fly_secret_canons.add(canon)
