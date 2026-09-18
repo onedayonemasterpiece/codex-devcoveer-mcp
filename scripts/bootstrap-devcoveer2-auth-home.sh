@@ -105,72 +105,106 @@ adopt_file() {
 fly_identity_from_dir() {
   local config_dir="$1"
   [[ -f "$config_dir/config.yml" ]] || return 1
-  runuser -u "$DEV_USER" -- env -u FLY_API_TOKEN -u FLY_ACCESS_TOKEN \
-    HOME="$DEV_HOME" \
-    FLY_CONFIG_DIR="$config_dir" \
-    PATH="$DEV_HOME/.fly/bin:/usr/local/bin:/usr/bin:/bin:$DEV_HOME/.local/bin" \
-    timeout 30 flyctl auth whoami 2>/dev/null \
-    | tr -d '\r\n'
+
+  local flyctl_bin=""
+  for candidate in     "$DEV_HOME/.fly/bin/flyctl"     "$AUTH_HOME/fly/bin/flyctl"     /usr/local/bin/flyctl     /usr/bin/flyctl
+  do
+    if [[ -x "$candidate" ]]; then
+      flyctl_bin="$candidate"
+      break
+    fi
+  done
+  [[ -n "$flyctl_bin" ]] || return 1
+
+  runuser -u "$DEV_USER" -- env -u FLY_API_TOKEN -u FLY_ACCESS_TOKEN     HOME="$DEV_HOME"     FLY_CONFIG_DIR="$config_dir"     PATH="$DEV_HOME/.fly/bin:$AUTH_HOME/fly/bin:/usr/local/bin:/usr/bin:/bin:$DEV_HOME/.local/bin"     timeout 30 "$flyctl_bin" auth whoami 2>/dev/null     | tr -d '\r\n'
 }
 
-reconcile_fly_config() {
-  local native="$DEV_HOME/.fly/config.yml"
-  local target="$AUTH_HOME/fly/config.yml"
-  local target_dir
-  target_dir="$(dirname "$target")"
-
-  install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$target_dir"
-  install -d -m 0755 -o "$DEV_USER" -g "$DEV_USER" "$(dirname "$native")"
-
-  same_target "$native" "$target" && return 0
-  [[ ! -L "$native" ]] || fail "unexpected Fly symlink $native -> $(readlink "$native")"
-
-  if [[ ! -e "$native" || ! -e "$target" ]]; then
-    adopt_file "$native" "$target"
-    return 0
-  fi
-
-  [[ -f "$native" && -f "$target" ]] || fail "Fly config paths are not regular files"
-
-  if cmp -s "$native" "$target"; then
-    rm -f "$native"
-    ln -s "$target" "$native"
-    chown -h "$DEV_USER:$DEV_USER" "$native"
-    chown "$DEV_USER:$DEV_USER" "$target"
-    chmod 0600 "$target"
-    return 0
-  fi
-
-  local native_identity="" target_identity=""
-  native_identity="$(fly_identity_from_dir "$DEV_HOME/.fly" || true)"
-  target_identity="$(fly_identity_from_dir "$AUTH_HOME/fly" || true)"
-
-  if [[ -n "$native_identity" && -n "$target_identity" && "$native_identity" != "$target_identity" ]]; then
-    fail "native and canonical Fly configs authenticate as different accounts; refusing to choose"
-  fi
-
-  local backup_dir="$AUTH_HOME/fly/conflicts"
+reconcile_fly_home() {
+  # flyctl rewrites config.yml atomically. A symlink to config.yml itself can be
+  # replaced by such a write, which recreates split auth state. Therefore the
+  # whole ~/.fly directory is the native compatibility symlink.
+  local native="$DEV_HOME/.fly"
+  local target="$AUTH_HOME/fly"
+  local conflicts="$target/conflicts"
   local stamp
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$backup_dir"
 
-  if [[ -n "$target_identity" && -z "$native_identity" ]]; then
-    mv "$native" "$backup_dir/native-config-$stamp.yml"
-    echo "fly_config_reconcile=kept_canonical_valid archived_native"
-  else
-    mv "$target" "$backup_dir/canonical-config-$stamp.yml"
-    mv "$native" "$target"
-    if [[ -n "$native_identity" ]]; then
-      echo "fly_config_reconcile=kept_native_valid archived_canonical"
-    else
-      echo "fly_config_reconcile=no_valid_session_detected kept_native archived_canonical"
-    fi
+  if same_target "$native" "$target"; then
+    return 0
+  fi
+  [[ ! -L "$native" ]] || fail "unexpected Fly home symlink $native -> $(readlink "$native")"
+
+  if [[ ! -e "$native" ]]; then
+    install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$target"
+    ln -s "$target" "$native"
+    chown -h "$DEV_USER:$DEV_USER" "$native"
+    return 0
   fi
 
+  [[ -d "$native" ]] || fail "$native exists but is not a directory"
+
+  if [[ ! -e "$target" ]]; then
+    mv "$native" "$target"
+    ln -s "$target" "$native"
+    chown -h "$DEV_USER:$DEV_USER" "$native"
+    chown -R "$DEV_USER:$DEV_USER" "$target"
+    find "$target" -type d -exec chmod 0700 {} +
+    return 0
+  fi
+
+  [[ -d "$target" ]] || fail "$target exists but is not a directory"
+  install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$conflicts"
+
+  local native_identity="" target_identity=""
+  native_identity="$(fly_identity_from_dir "$native" || true)"
+  target_identity="$(fly_identity_from_dir "$target" || true)"
+
+  if [[ -n "$native_identity" && -n "$target_identity" && "$native_identity" != "$target_identity" ]]; then
+    fail "native and canonical Fly homes authenticate as different accounts; refusing to choose"
+  fi
+
+  # Reconcile config.yml first. The losing copy is always archived.
+  if [[ -f "$native/config.yml" && -f "$target/config.yml" ]]; then
+    if cmp -s "$native/config.yml" "$target/config.yml"; then
+      rm -f "$native/config.yml"
+    elif [[ -n "$target_identity" && -z "$native_identity" ]]; then
+      mv "$native/config.yml" "$conflicts/native-config-$stamp.yml"
+      echo "fly_home_reconcile=kept_canonical_valid archived_native_config"
+    else
+      mv "$target/config.yml" "$conflicts/canonical-config-$stamp.yml"
+      mv "$native/config.yml" "$target/config.yml"
+      if [[ -n "$native_identity" ]]; then
+        echo "fly_home_reconcile=kept_native_valid archived_canonical_config"
+      else
+        echo "fly_home_reconcile=no_valid_session_detected kept_native_config archived_canonical_config"
+      fi
+    fi
+  elif [[ -f "$native/config.yml" ]]; then
+    mv "$native/config.yml" "$target/config.yml"
+  fi
+
+  # Merge the remaining native Fly home (notably ~/.fly/bin) without overwriting
+  # canonical state. Unexpected collisions are archived rather than discarded.
+  shopt -s dotglob nullglob
+  local item base
+  for item in "$native"/*; do
+    base="$(basename "$item")"
+    if [[ -e "$target/$base" || -L "$target/$base" ]]; then
+      mv "$item" "$conflicts/native-$base-$stamp"
+      echo "fly_home_reconcile=archived_collision:$base"
+    else
+      mv "$item" "$target/$base"
+    fi
+  done
+  shopt -u dotglob nullglob
+
+  rmdir "$native"
   ln -s "$target" "$native"
   chown -h "$DEV_USER:$DEV_USER" "$native"
-  chown -R "$DEV_USER:$DEV_USER" "$target_dir"
-  chmod 0600 "$target"
+  chown -R "$DEV_USER:$DEV_USER" "$target"
+  find "$target" -type d -exec chmod 0700 {} +
+
+  same_target "$native" "$target" || fail "Fly home canonicalization did not produce the expected directory symlink"
 }
 
 echo "=== CANONICAL AUTH HOME ==="
@@ -183,7 +217,7 @@ fi
 
 # Native CLI auth/session stores -> one canonical tree.
 adopt_dir "$DEV_HOME/.config/gh" "$AUTH_HOME/gh"
-reconcile_fly_config
+reconcile_fly_home
 adopt_dir "$DEV_HOME/.config/yandex-cloud" "$AUTH_HOME/yc"
 # Codex/OpenCode perform state writes and refresh OAuth tokens. Move the whole
 # state directories so every process mutates one underlying store.
@@ -355,7 +389,7 @@ if command -v aws >/dev/null 2>&1; then status aws timeout 30 aws sts get-caller
 if command -v supabase >/dev/null 2>&1; then status supabase timeout 30 supabase projects list; else printf "%-14s NOT_INSTALLED\n" supabase; fi
 if [[ -s "$KAGGLE_CONFIG_DIR/access_token" || -s "$KAGGLE_CONFIG_DIR/kaggle.json" ]]; then printf "%-14s PASS\n" kaggle; else printf "%-14s OWNER_ENV_OR_LOGIN_REQUIRED\n" kaggle; fi
 for spec in \
-  "gh:$HOME/.config/gh" "fly:$HOME/.fly/config.yml" "yc:$HOME/.config/yandex-cloud" \
+  "gh:$HOME/.config/gh" "fly:$HOME/.fly" "yc:$HOME/.config/yandex-cloud" \
   "codex:$HOME/.codex" "opencode:$HOME/.local/share/opencode" "kaggle:$HOME/.kaggle" \
   "aws:$HOME/.aws" "supabase:$HOME/.supabase" "docker:$HOME/.docker" \
   "tunnel:$HOME/.config/tunnel-client"; do
