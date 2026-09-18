@@ -83,8 +83,20 @@ JS_PATTERNS = (
 # Safe syntactic aliases observed in the project code. These are names for the
 # same Telegram application credential, not two independent secrets.
 ALIASES = {
+    # Telegram legacy names.
     "TG_API_ID": "TELEGRAM_API_ID",
     "TG_API_HASH": "TELEGRAM_API_HASH",
+
+    # Google key-pool spellings used by older jobs and newer shared clients.
+    "GOOGLE_API_KEY_2": "GOOGLE_API_KEY2",
+    "GOOGLE_API_KEY_3": "GOOGLE_API_KEY3",
+    "GOOGLE_API_KEY_4": "GOOGLE_API_KEY4",
+    "GOOGLE_API_KEY_5": "GOOGLE_API_KEY5",
+    "GOOGLE_API_KEY_6": "GOOGLE_API_KEY6",
+
+    # events-bot benchmark/fallback code explicitly treats this as the same
+    # 4o credential, not a separate owner-managed secret.
+    "FOUR_4O_TOKEN": "FOUR_O_TOKEN",
 }
 
 # Canonical project ownership for Fly apps. This is intentionally explicit:
@@ -103,6 +115,27 @@ DENY = {
     "GITHUB_ACTIONS", "GITHUB_SHA", "GITHUB_REF", "GITHUB_ENV",
     "GITHUB_OUTPUT", "GITHUB_EVENT_PATH", "CI", "PORT",
 }
+
+# Authentication state produced by local CLIs/services is not an owner input.
+# It stays in the corresponding tool's own auth/config store and must not clutter
+# /home/dev/.env. Project-specific provider credentials are NOT excluded here.
+DERIVED_AUTH_STATE_NAMES = {
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "FLY_API_TOKEN",
+    "FLY_ACCESS_TOKEN",
+}
+
+# Locally generated service-to-service/control-plane secrets are runtime state,
+# not credentials the owner obtains externally and pastes into the shared .env.
+# They may still be preserved in recovered runtime snapshots and rendered into
+# service-specific envs where available.
+INTERNAL_RUNTIME_SECRET_PATTERNS = (
+    re.compile(r"(?:^|_)MCP_(?:DEVELOPMENT_TOKEN|BEARER_TOKEN|REF_SECRET|PATH_SECRET|OPERATOR_TOKEN|SOCIAL_APPROVAL_TOKEN|SIGNING_KEY)(?:_|$)"),
+    re.compile(r"(?:^|_)WORKER_RESULT_TOKEN(?:_|$)"),
+    re.compile(r"(?:^|_)CONNECTOR_CREDENTIALS_JSON(?:_|$)"),
+    re.compile(r"(?:^|_)SERVICE_TOKEN(?:_|$)"),
+)
 
 
 class CommandError(RuntimeError):
