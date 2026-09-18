@@ -370,7 +370,8 @@ def force_shared_credential(name: str) -> bool:
         r"^KAGGLE_(?:USERNAME|KEY)$",
         r"^TELEGRAM_API_(?:ID|HASH)$",
         r"^TELEGRAM_(?:AUTH_BUNDLE|SESSION)(?:_|$).*",
-        r"^MAX_.*(?:SESSION|AUTH|TOKEN|KEY|CREDENTIAL).*$",
+        r"^VK_.*(?:TOKEN|SESSION|KEY|CREDENTIAL|CLIENT_ID|CLIENT_SECRET|APP_ID).*$",
+        r"^MAX_.*(?:SESSION|AUTH|TOKEN|KEY|CREDENTIAL|CLIENT_ID|CLIENT_SECRET).*$",
         r"^SUPABASE_(?:URL|KEY|SERVICE_KEY)$",
         r"^GOOGLE_AI_LIMITER_SUPABASE_(?:URL|SERVICE_KEY)$",
     )
@@ -1158,8 +1159,9 @@ def write_master(
         if family in {
             "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
             "KAGGLE", "TELEGRAM", "VK", "MAX", "SUPABASE", "YDB",
-            "YANDEX CLOUD / S3", "GITHUB", "FLY.IO", "MAIL", "OAUTH / MCP",
-            "DATABASES", "SERVICE ACCOUNTS / SIGNING",
+            "YANDEX CLOUD / S3", "GITHUB", "FLY.IO", "POSTBOX", "NOTISEND",
+            "MAIL / IMAP / SMTP", "TELEGRAPH", "SPACEWEB", "TUNNEL / CLOUDFLARE",
+            "OAUTH / MCP", "DATABASES", "SERVICE ACCOUNTS / SIGNING",
         }:
             section = family
         else:
@@ -1172,14 +1174,15 @@ def write_master(
 
     order = [
         "GOOGLE AI", "NVIDIA", "GIGACHAT", "GROQ", "OPENAI / CODEX",
-        "KAGGLE", "TELEGRAM", "VK", "MAX", "SUPABASE", "YDB",
-        "YANDEX CLOUD / S3", "GITHUB", "FLY.IO", "MAIL", "OAUTH / MCP",
-        "DATABASES", "SERVICE ACCOUNTS / SIGNING",
+        "KAGGLE", "TELEGRAM", "VK", "MAX",
+        "SUPABASE", "YDB", "YANDEX CLOUD / S3",
+        "GITHUB", "FLY.IO", "TUNNEL / CLOUDFLARE",
+        "POSTBOX", "NOTISEND", "MAIL / IMAP / SMTP", "TELEGRAPH", "SPACEWEB",
+        "OAUTH / MCP", "DATABASES", "SERVICE ACCOUNTS / SIGNING",
     ]
-    ordered_sections = sorted(
-        sections,
-        key=lambda s: (order.index(s) if s in order else len(order), s),
-    )
+    # Stable provider sections are always visible, even before a credential is
+    # discovered. Dynamic/project sections follow alphabetically.
+    ordered_sections = order + sorted(s for s in sections if s not in order)
 
     lines = [
         "# DEVCOVEER SHARED CREDENTIALS — SINGLE SOURCE OF TRUTH.",
@@ -1196,7 +1199,9 @@ def write_master(
             f"# {section}",
             "# ============================================================================",
         ])
-        for key in sorted(sections[section]):
+        if not sections.get(section):
+            lines.append("# (credentials not detected yet)")
+        for key in sorted(sections.get(section, [])):
             if catalog is not None:
                 usage = _owner_usage_comment(key, catalog)
                 if usage:
