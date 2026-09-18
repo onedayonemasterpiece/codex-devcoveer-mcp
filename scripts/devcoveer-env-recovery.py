@@ -129,6 +129,8 @@ DERIVED_AUTH_STATE_NAMES = {
 
     # Short-lived/injected cloud access tokens minted from longer-lived identity.
     "YC_IAM_TOKEN",
+    "YANDEX_IAM_TOKEN",
+    "POSTBOX_EMAIL_IAM_TOKEN",
     "REGION_TALK_YDB_IAM_TOKEN",
     "YDB_ACCESS_TOKEN",
     "AWS_SESSION_TOKEN",
