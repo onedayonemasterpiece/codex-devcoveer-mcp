@@ -534,13 +534,21 @@ def fly_runtime_env(
     return {}, None, any_ssh_success
 
 
-def write_private_env(path: Path, values: dict[str, str], mode: int = 0o600) -> None:
-    lines = []
+def write_private_env(
+    path: Path, values: dict[str, str], mode: int = 0o600, *, generated: bool = False
+) -> None:
+    lines: list[str] = []
+    if generated:
+        lines.extend([
+            "# GENERATED FROM /etc/devcoveer/env/owner.env — DO NOT EDIT.",
+            "# Edit owner.env only; this file is regenerated automatically.",
+            "",
+        ])
     for key in sorted(values):
         value = values[key]
         lines.append(f"{key}={json.dumps(value, ensure_ascii=False)}")
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8", errors="surrogateescape")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8", errors="surrogateescape")
     os.chmod(tmp, mode)
     os.replace(tmp, path)
 
