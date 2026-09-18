@@ -1022,34 +1022,37 @@ def render(catalog: dict[str, Any] | None = None) -> dict[str, int]:
 
 def write_readme() -> None:
     README.write_text(
-        """DevCoveer2 centralized env layout
+        """DevCoveer2 credential layout
+
+owner.env
+  The ONLY human-editable credential file. Root-only 0600.
+  Tokens, API keys, logins/usernames, passwords, sessions/auth bundles, DSNs,
+  private/signing/service-account credentials live here.
 
 master.env
-  Human-editable root-only source of truth. Never give it directly to a service.
+  Compatibility symlink to owner.env. It is not a second source of truth.
 
 todo.env
-  Generated list of unresolved names. Fill master.env, then rerender.
+  Generated missing-credential view. Never edit it.
 
 catalog.json
-  Machine-readable project/env usage, aliases, Fly app mapping and recovery status.
-  Contains names and hashes only, never recovered secret values.
+  Generated mapping from canonical owner credentials to runtime variable names
+  and projects. It contains no recovered plaintext values.
 
 recovered/fly/*.env
-  Root-only exact values recovered from running Fly Machines. Recovery evidence;
-  services should not consume these files directly.
+  Root-only recovery evidence from Fly. Never edit or consume directly.
 
 services/<project>.env
-  Least-privilege rendered env for one project, mode root:dev 0640.
+  Generated least-privilege runtime env files, root:dev 0640. Never edit.
 
-owner-fill.env
-  Compact blank-only owner input template. Fill missing values here, then run
-  the apply-owner-fill subcommand as root.
+Editing owner.env automatically regenerates services/*.env via the systemd
+devcoveer-env-render.path watcher. Running processes still require a controlled
+restart/reload before a changed environment value takes effect in memory.
 
 Resolution:
   PROJECT__VARIABLE overrides SHARED__VARIABLE.
-  SHARED values are populated automatically only when recovery proves equality
-  across at least two project runtimes. Otherwise they remain blank until the
-  owner chooses to share them.
+  A SHARED value is created automatically only from proven identical recovered
+  credentials, or when the owner explicitly fills a shared blank.
 """,
         encoding="utf-8",
     )
@@ -1074,49 +1077,48 @@ def recover(args: argparse.Namespace) -> int:
     CATALOG.write_text(json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(CATALOG, 0o600)
 
-    master, notes = merge_master(catalog)
-    write_master(master, notes)
-    write_todo(master, notes)
-    owner_fill_summary = write_owner_fill(master, catalog)
+    owner, notes = merge_master(catalog)
+    write_master(owner, notes, catalog)
     counts = render(catalog)
+    write_todo(owner, notes)
+    _cleanup_legacy_owner_fill()
+    install_render_watcher()
     write_readme()
 
     recovered_total = sum(
         len(x.get("recovered_names", []))
         for x in fly.get("apps", {}).values()
     )
-    missing_total = sum(1 for value in master.values() if not value)
-    sensitive_total = sum(
+    missing_total = sum(1 for value in owner.values() if not value)
+    credential_total = sum(
         1 for x in catalog["variables"].values() if x["sensitive"]
     )
 
-    # No values are ever printed.
     print("ENV_RECOVERY_COMPLETE")
     print(f"projects={len(projects)}")
-    print(f"sensitive_variable_families={sensitive_total}")
+    print(f"credential_variable_families={credential_total}")
     print(f"fly_available={fly.get('available', False)}")
     print(f"fly_authenticated={fly.get('authenticated', False)}")
     print(f"fly_apps_seen={len(fly.get('apps', {}))}")
     print(f"fly_secret_values_recovered={recovered_total}")
     app_diag = {
         app: {
-            "secret_names": len(info.get("secret_names", [])),
-            "running_machines": int(info.get("running_machine_count", 0)),
-            "secret_list_ok": bool(info.get("secret_list_ok", False)),
-            "machine_list_ok": bool(info.get("machine_list_ok", False)),
-            "ssh_ok": bool(info.get("ssh_ok", False)),
-            "ssh_method": info.get("ssh_method"),
-            "recovered": len(info.get("recovered_names", [])),
-            "missing": len(info.get("missing_runtime_names", [])),
+            "secret_names": len(app_info.get("secret_names", [])),
+            "running_machines": int(app_info.get("running_machine_count", 0)),
+            "secret_list_ok": bool(app_info.get("secret_list_ok", False)),
+            "machine_list_ok": bool(app_info.get("machine_list_ok", False)),
+            "ssh_ok": bool(app_info.get("ssh_ok", False)),
+            "ssh_method": app_info.get("ssh_method"),
+            "recovered": len(app_info.get("recovered_names", [])),
+            "missing": len(app_info.get("missing_runtime_names", [])),
         }
-        for app, info in sorted(fly.get("apps", {}).items())
+        for app, app_info in sorted(fly.get("apps", {}).items())
     }
     print("fly_app_recovery=" + json.dumps(app_diag, sort_keys=True))
-    print(f"master_missing_values={missing_total}")
-    print(f"master={MASTER}")
+    print(f"owner_missing_values={missing_total}")
+    print(f"owner={OWNER}")
+    print(f"master_compat={LEGACY_MASTER}")
     print(f"todo={TODO}")
-    print(f"owner_fill={OWNER_FILL}")
-    print("owner_fill_summary=" + json.dumps(owner_fill_summary, sort_keys=True))
     print(f"catalog={CATALOG}")
     print(f"service_envs={SERVICES}")
     print("rendered_project_counts=" + json.dumps(counts, sort_keys=True))
@@ -1126,31 +1128,11 @@ def recover(args: argparse.Namespace) -> int:
 def render_cmd(_: argparse.Namespace) -> int:
     ensure_root()
     counts = render()
-    master = parse_master(MASTER)
-    # Regenerate TODO/owner template without source notes on a render-only pass.
-    write_todo(master, {})
-    if not CATALOG.is_file():
-        raise SystemExit("catalog.json is missing")
-    catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-    owner_fill_summary = write_owner_fill(master, catalog)
     print("ENV_RENDER_COMPLETE")
     print("rendered_project_counts=" + json.dumps(counts, sort_keys=True))
+    print(f"owner={OWNER}")
     print(f"todo={TODO}")
-    print(f"owner_fill={OWNER_FILL}")
-    print("owner_fill_summary=" + json.dumps(owner_fill_summary, sort_keys=True))
     return 0
-
-
-def apply_owner_fill_cmd(_: argparse.Namespace) -> int:
-    ensure_root()
-    result = apply_owner_fill()
-    print("OWNER_FILL_APPLIED")
-    print("applied=" + str(result["applied"]))
-    print("skipped=" + str(result["skipped"]))
-    print(f"master={MASTER}")
-    print(f"owner_fill={OWNER_FILL}")
-    return 0
-
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -1161,8 +1143,6 @@ def main() -> int:
     p_recover.set_defaults(func=recover)
     p_render = sub.add_parser("render")
     p_render.set_defaults(func=render_cmd)
-    p_apply = sub.add_parser("apply-owner-fill")
-    p_apply.set_defaults(func=apply_owner_fill_cmd)
     args = parser.parse_args()
     return int(args.func(args))
 
