@@ -398,119 +398,8 @@ def install_flyctl() -> Path | None:
     return find_flyctl()
 
 
-def read_release_env() -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not FLY_RELEASE_ENV.is_file() or FLY_RELEASE_ENV.is_symlink():
-        return values
-    try:
-        text = FLY_RELEASE_ENV.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return values
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        if line.startswith("export "):
-            line = line[7:].lstrip()
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        if key in {"FLY_ACCESS_TOKEN", "FLY_API_TOKEN"} and value:
-            values[key] = value
-    return values
-
-
-def fly_env() -> dict[str, str]:
-    out = read_release_env()
-    # An inherited token is useful but never persisted unless explicitly entered.
-    for key in ("FLY_ACCESS_TOKEN", "FLY_API_TOKEN"):
-        if os.environ.get(key):
-            out[key] = os.environ[key]
-    return out
-
-
-def fly_whoami(flyctl: Path, env: dict[str, str]) -> bool:
-    cp = run([str(flyctl), "auth", "whoami"], as_dev=True, env=env, check=False, timeout=30)
-    return cp.returncode == 0
-
-
-def persist_fly_token(token: str, flyctl: Path) -> dict[str, str] | None:
-    candidate = {"FLY_ACCESS_TOKEN": token}
-    if not fly_whoami(flyctl, candidate):
-        candidate = {"FLY_API_TOKEN": token}
-        if not fly_whoami(flyctl, candidate):
-            return None
-    safe_mkdir(FLY_RELEASE_ENV.parent, 0o700, owner_dev=True)
-    key = next(iter(candidate))
-    tmp = FLY_RELEASE_ENV.with_suffix(".tmp")
-    tmp.write_text(f"{key}={json.dumps(token)}\n", encoding="utf-8")
-    import pwd
-    pw = pwd.getpwnam(DEV)
-    os.chown(tmp, pw.pw_uid, pw.pw_gid)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, FLY_RELEASE_ENV)
-    return candidate
-
-
-def recover_fly_token_from_history(flyctl: Path) -> dict[str, str] | None:
-    """Search bounded user-local history for a previously used Fly token.
-
-    The candidate value is never printed. Every candidate is validated only via
-    flyctl auth whoami before it is persisted to release.env.
-    """
-    token_re = re.compile(rb"FlyV1[ \\t]+[A-Za-z0-9_=.\\-]{20,}")
-    roots = [
-        DEV_HOME / ".codex" / "sessions",
-        DEV_HOME / ".codex",
-        DEV_HOME / ".claude" / "projects",
-        DEV_HOME / ".claude" / "file-history",
-    ]
-    seen: set[bytes] = set()
-    inspected = 0
-    for root in roots:
-        if not root.exists():
-            continue
-        candidates = [root] if root.is_file() else root.rglob("*")
-        for p in candidates:
-            if inspected >= 600:
-                return None
-            if not p.is_file() or p.is_symlink():
-                continue
-            try:
-                size = p.stat().st_size
-            except OSError:
-                continue
-            if size <= 0 or size > 128 * 1024 * 1024:
-                continue
-            inspected += 1
-            try:
-                data = p.read_bytes()
-            except OSError:
-                continue
-            for match in token_re.findall(data):
-                token_b = re.sub(rb"[ \\t]+", b" ", match.strip())
-                if token_b in seen:
-                    continue
-                seen.add(token_b)
-                try:
-                    token = token_b.decode("ascii")
-                except UnicodeError:
-                    continue
-                validated = persist_fly_token(token, flyctl)
-                if validated is not None:
-                    return validated
-    return None
-
-
 def maybe_fly_auth(flyctl: Path, *, allow_prompt: bool) -> dict[str, str] | None:
-    """Use only the normal full-account flyctl cached login.
-
-    Authentication is intentionally a separate human step (fly auth login).
-    Do not inject historical/release tokens here: scope-limited tokens can make
-    fly apps list silently incomplete, which is unacceptable for recovery.
-    """
+    """Use the normal cached Fly account login; otherwise use saved snapshots."""
     del allow_prompt
     if fly_whoami(flyctl, {}):
         return {}
@@ -1108,14 +997,14 @@ def install_render_watcher() -> None:
     path_unit = Path("/etc/systemd/system/devcoveer-env-render.path")
     script = Path(__file__).resolve()
     service.write_text(
-        "[Unit]\nDescription=Render DevCoveer service envs from owner.env\n\n"
+        "[Unit]\nDescription=Render DevCoveer service envs from /home/dev/.env\n\n"
         "[Service]\nType=oneshot\n"
         f"ExecStart=/usr/bin/python3 {script} render\n"
         "UMask=0027\n",
         encoding="utf-8",
     )
     path_unit.write_text(
-        "[Unit]\nDescription=Watch DevCoveer owner credentials\n\n"
+        "[Unit]\nDescription=Watch DevCoveer /home/dev/.env credentials\n\n"
         "[Path]\nPathChanged=/home/dev/.env\n"
         "Unit=devcoveer-env-render.service\n\n"
         "[Install]\nWantedBy=multi-user.target\n",
@@ -1176,35 +1065,34 @@ def write_readme() -> None:
     README.write_text(
         """DevCoveer2 credential layout
 
-.env (/home/dev/.env)
-  The ONLY human-editable credential file. Owned by dev:dev, mode 0600.
-  Tokens, API keys, logins/usernames, passwords, sessions/auth bundles, DSNs,
-  private/signing/service-account credentials live here.
+/home/dev/.env
+  The only human-edited credential file. dev:dev 0600.
+  Common credentials keep their normal env names and exist once.
 
-/etc/devcoveer/env/owner.env and master.env
-  Compatibility symlinks to /home/dev/.env. They are not second sources of truth.
+/etc/devcoveer/env/owner.env
+/etc/devcoveer/env/master.env
+  Compatibility symlinks to /home/dev/.env.
 
-todo.env
-  Generated missing-credential view. Never edit it.
+/etc/devcoveer/env/recovered/fly/*.env
+  Read-only recovery snapshots captured from real Fly runtimes.
 
-catalog.json
-  Generated mapping from canonical owner credentials to runtime variable names
-  and projects. It contains no recovered plaintext values.
+/etc/devcoveer/env/services/<project>.env
+  Generated runtime views. Never edit them.
 
-recovered/fly/*.env
-  Root-only recovery evidence from Fly. Never edit or consume directly.
+Rules
+  VARIABLE=value
+    Normal/common credential used wherever that runtime variable is required.
 
-services/<project>.env
-  Generated least-privilege runtime env files, root:dev 0640. Never edit.
+  PROJECT__VARIABLE=value
+    Exists only when recovered runtimes prove that the same variable name had
+    different values in different projects. It overrides VARIABLE for that project.
 
-Editing /home/dev/.env as user dev automatically regenerates services/*.env via the systemd
-devcoveer-env-render.path watcher. Running processes still require a controlled
-restart/reload before a changed environment value takes effect in memory.
+  No @ref aliases, no SHARED__ namespace, no duplicated common credentials.
+  Feature flags, paths, timeouts, endpoints and ordinary application settings
+  do not belong in /home/dev/.env.
 
-Resolution:
-  PROJECT__VARIABLE overrides SHARED__VARIABLE.
-  A SHARED value is created automatically only from proven identical recovered
-  credentials, or when the owner explicitly fills a shared blank.
+Saving /home/dev/.env regenerates services/*.env. A running process still needs
+a controlled restart/reload to receive a changed environment value in memory.
 """,
         encoding="utf-8",
     )
@@ -1267,7 +1155,16 @@ def recover(args: argparse.Namespace) -> int:
         for app, app_info in sorted(fly.get("apps", {}).items())
     }
     print("fly_app_recovery=" + json.dumps(app_diag, sort_keys=True))
+    owner_sections: dict[str, int] = defaultdict(int)
+    runtime_conflicts = 0
+    for key in owner:
+        _prefix, canon = _split_owner_key(key)
+        owner_sections[credential_family(canon)] += 1
+        if "__" in key:
+            runtime_conflicts += 1
     print(f"owner_missing_values={missing_total}")
+    print(f"runtime_conflict_overrides={runtime_conflicts}")
+    print("owner_sections=" + json.dumps(dict(sorted(owner_sections.items())), sort_keys=True))
     print(f"owner={OWNER}")
     print(f"master_compat={LEGACY_MASTER}")
     print(f"todo={TODO}")
