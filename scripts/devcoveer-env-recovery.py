@@ -471,16 +471,45 @@ def parse_env_bytes(raw: bytes) -> dict[str, str]:
     return out
 
 
-def fly_runtime_env(flyctl: Path, app: str, env: dict[str, str]) -> dict[str, str]:
-    # No value is sent to stderr/stdout by this recovery tool. flyctl stdout is
-    # captured in-memory and filtered to names listed by "fly secrets list".
+def fly_running_machine_ids(flyctl: Path, app: str, env: dict[str, str]) -> list[str]:
     cp = run(
-        [str(flyctl), "ssh", "console", "-a", app, "-C", "env -0"],
-        as_dev=True, env=env, check=False, timeout=90, binary=True,
+        [str(flyctl), "machine", "list", "-a", app, "--json"],
+        as_dev=True, env=env, check=False, timeout=60,
     )
     if cp.returncode != 0:
-        return {}
-    return parse_env_bytes(cp.stdout or b"")
+        return []
+    try:
+        data = parse_json_output(cp)
+    except Exception:
+        return []
+    items = data if isinstance(data, list) else []
+    out: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        state = str(item.get("state") or item.get("State") or "").lower()
+        machine_id = item.get("id") or item.get("ID")
+        if state in {"started", "running"} and isinstance(machine_id, str) and machine_id:
+            out.append(machine_id)
+    return out
+
+
+def fly_runtime_env(flyctl: Path, app: str, env: dict[str, str]) -> dict[str, str]:
+    # Secrets are only recoverable from a live Machine environment. Try every
+    # currently running Machine explicitly; never start/restart a Machine here.
+    # /proc/1/environ is NUL-separated and reflects the actual app process env.
+    machine_ids = fly_running_machine_ids(flyctl, app, env)
+    for machine_id in machine_ids:
+        cp = run(
+            [str(flyctl), "ssh", "console", "-a", app, "--machine", machine_id,
+             "--pty=false", "-C", "cat /proc/1/environ"],
+            as_dev=True, env=env, check=False, timeout=90, binary=True,
+        )
+        if cp.returncode == 0:
+            parsed = parse_env_bytes(cp.stdout or b"")
+            if parsed:
+                return parsed
+    return {}
 
 
 def write_private_env(path: Path, values: dict[str, str], mode: int = 0o600) -> None:
