@@ -15,6 +15,35 @@ USER_BUS="unix:path=$USER_RUNTIME_DIR/bus"
 install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$AUTH_HOME"
 install -d -m 0755 -o "$DEV_USER" -g "$DEV_USER" "$DEV_HOME/.config/devcoveer" "$DEV_HOME/.config/environment.d" "$DEV_HOME/.local/bin"
 
+user_systemctl() {
+  runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$USER_BUS" "$@"
+}
+
+WAS_OPENCODE=0
+WAS_TUNNEL=0
+if [[ -S "$USER_RUNTIME_DIR/bus" ]]; then
+  if user_systemctl systemctl --user is-active --quiet opencode-devcoveer.service; then
+    WAS_OPENCODE=1
+    user_systemctl systemctl --user stop opencode-devcoveer.service
+  fi
+  if user_systemctl systemctl --user is-active --quiet codex-devserver-tunnel.service; then
+    WAS_TUNNEL=1
+    user_systemctl systemctl --user stop codex-devserver-tunnel.service
+  fi
+fi
+
+restore_stopped_services() {
+  if [[ -S "$USER_RUNTIME_DIR/bus" ]]; then
+    if [[ "$WAS_OPENCODE" == 1 ]]; then
+      user_systemctl systemctl --user start opencode-devcoveer.service || true
+    fi
+    if [[ "$WAS_TUNNEL" == 1 ]]; then
+      user_systemctl systemctl --user start codex-devserver-tunnel.service || true
+    fi
+  fi
+}
+trap restore_stopped_services EXIT
+
 fail() { echo "AUTH_HOME_BLOCKED: $*" >&2; exit 1; }
 dir_empty() { [[ ! -d "$1" || -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; }
 same_target() {
@@ -155,25 +184,29 @@ p.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 p.chmod(0o600)
 PY
 
-user_systemctl() {
-  runuser -u "$DEV_USER" -- env HOME="$DEV_HOME" XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$USER_BUS" "$@"
-}
-
 if [[ -S "$USER_RUNTIME_DIR/bus" ]]; then
   user_systemctl systemctl --user set-environment \
     "DEVCOVEER_AUTH_HOME=$AUTH_HOME" "GH_CONFIG_DIR=$AUTH_HOME/gh" "FLY_CONFIG_DIR=$AUTH_HOME/fly" \
     "KAGGLE_CONFIG_DIR=$AUTH_HOME/kaggle" "DOCKER_CONFIG=$AUTH_HOME/docker" "CODEX_HOME=$AUTH_HOME/codex"
   user_systemctl systemctl --user daemon-reload
-  for unit in opencode-devcoveer.service codex-devserver-tunnel.service; do
-    if user_systemctl systemctl --user is-active --quiet "$unit"; then
-      user_systemctl systemctl --user restart "$unit"
-      for _ in $(seq 1 30); do
-        user_systemctl systemctl --user is-active --quiet "$unit" && break
-        sleep 1
-      done
-      user_systemctl systemctl --user is-active --quiet "$unit" || fail "$unit did not return active"
-    fi
-  done
+  if [[ "$WAS_OPENCODE" == 1 ]]; then
+    user_systemctl systemctl --user start opencode-devcoveer.service
+    for _ in $(seq 1 30); do
+      user_systemctl systemctl --user is-active --quiet opencode-devcoveer.service && break
+      sleep 1
+    done
+    user_systemctl systemctl --user is-active --quiet opencode-devcoveer.service || fail "opencode-devcoveer.service did not return active"
+    WAS_OPENCODE=0
+  fi
+  if [[ "$WAS_TUNNEL" == 1 ]]; then
+    user_systemctl systemctl --user start codex-devserver-tunnel.service
+    for _ in $(seq 1 30); do
+      user_systemctl systemctl --user is-active --quiet codex-devserver-tunnel.service && break
+      sleep 1
+    done
+    user_systemctl systemctl --user is-active --quiet codex-devserver-tunnel.service || fail "codex-devserver-tunnel.service did not return active"
+    WAS_TUNNEL=0
+  fi
 fi
 
 if command -v gh >/dev/null 2>&1; then
