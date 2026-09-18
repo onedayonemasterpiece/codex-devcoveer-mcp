@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-[ "$(id -u)" -eq 0 ] || { echo "ERROR: run as root"; exit 1; }
-
 DEV=dev
 DEV_UID="$(id -u "$DEV")"
+CURRENT_UID="$(id -u)"
+
+if [ "$CURRENT_UID" -ne "$DEV_UID" ] && [ "$CURRENT_UID" -ne 0 ]; then
+  echo "ERROR: run as dev (normal path) or root (compatibility path)." >&2
+  exit 1
+fi
 WORK_REPO=/home/dev/projects/codex-devcoveer-mcp
 SOURCE_REF="${DEVCOVEER_SOURCE_REF:-origin/main}"
 REPO=
@@ -36,7 +40,17 @@ DEV_ENV=(
   DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${DEV_UID}/bus"
   PATH="/home/dev/.opencode/bin:/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin"
 )
-as_dev(){ runuser -u "$DEV" -- env "${DEV_ENV[@]}" "$@"; }
+as_dev(){
+  if [ "$CURRENT_UID" -eq "$DEV_UID" ]; then
+    env "${DEV_ENV[@]}" "$@"
+  else
+    runuser -u "$DEV" -- env "${DEV_ENV[@]}" "$@"
+  fi
+}
+chown_dev(){
+  [ "$CURRENT_UID" -eq 0 ] || return 0
+  chown "$@"
+}
 sha(){ sha256sum "$1" | awk '{print $1}'; }
 bridge_sha(){ [ -f "$CAN/codex-chatgpt-bridge.py" ] && sha "$CAN/codex-chatgpt-bridge.py" || echo MISSING; }
 backend_sha(){ [ -f "$CAN/opencode_backend.py" ] && sha "$CAN/opencode_backend.py" || echo MISSING; }
@@ -167,7 +181,7 @@ if observed != expected:
 print("exact_3_9_sha_gate=PASS")
 PY
 
-chown -R dev:dev "$CAND"
+chown_dev -R dev:dev "$CAND"
 as_dev "$BRIDGE_PY" -m py_compile \
   "$CAND/codex-chatgpt-bridge.py" \
   "$CAND/opencode_backend.py" \
@@ -188,7 +202,7 @@ if [ -e "$CAN" ]; then
   esac
 else
   mv "$CAND" "$CAN"
-  chown -R dev:dev "$CAN"
+  chown_dev -R dev:dev "$CAN"
   echo "canonical_3_9=MATERIALIZED"
 fi
 
@@ -317,7 +331,7 @@ echo "wrapper_backup=$WRAP_BACKUP"
 
 restore_wrapper(){
   cp -a "$WRAP_BACKUP" "$WRAP"
-  chown dev:dev "$WRAP" 2>/dev/null || true
+  chown_dev dev:dev "$WRAP" 2>/dev/null || true
 }
 
 if [ -L "$WRAP" ]; then
@@ -330,7 +344,7 @@ if [ -L "$WRAP" ]; then
       new_target="${target/$BOOT/$CAN}"
       [ -e "$new_target" ] || { restore_wrapper; die "canonical wrapper target missing"; }
       ln -sfn "$new_target" "$WRAP"
-      chown -h dev:dev "$WRAP"
+      chown_dev -h dev:dev "$WRAP"
       echo "wrapper=SWITCHED_TO_CANONICAL"
       ;;
     *)
@@ -350,7 +364,7 @@ s=p.read_text(encoding="utf-8")
 if old not in s: raise SystemExit("bootstrap path disappeared")
 p.write_text(s.replace(old,new),encoding="utf-8")
 PY
-    chown dev:dev "$WRAP"
+    chown_dev dev:dev "$WRAP"
     echo "wrapper=SWITCHED_TO_CANONICAL"
   else
     restore_wrapper

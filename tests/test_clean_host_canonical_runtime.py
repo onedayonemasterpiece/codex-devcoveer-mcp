@@ -40,3 +40,12 @@ def test_clean_host_installer_accepts_probes_before_tunnel_switch() -> None:
     assert '"project_probe", "host_probe"' in source
     assert "wrapper_required_tools=PASS" in source
     assert "systemctl --user restart codex-devserver-tunnel.service" in source
+
+
+def test_clean_host_installer_runs_normally_as_dev_without_sudo() -> None:
+    source = INSTALLER.read_text(encoding="utf-8")
+    assert 'ERROR: run as root' not in source
+    assert 'sudo ' not in source
+    assert 'CURRENT_UID="$(id -u)"' in source
+    assert 'if [ "$CURRENT_UID" -eq "$DEV_UID" ]; then' in source
+    assert 'systemctl --user restart codex-devserver-tunnel.service' in source
