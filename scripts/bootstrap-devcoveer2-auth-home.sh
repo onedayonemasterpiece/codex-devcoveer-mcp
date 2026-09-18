@@ -104,6 +104,11 @@ adopt_file() {
 echo "=== CANONICAL AUTH HOME ==="
 echo "auth_home=$AUTH_HOME"
 
+GH_ACTIVE_TOKEN=""
+if command -v gh >/dev/null 2>&1; then
+  GH_ACTIVE_TOKEN="$(runuser -u "$DEV_USER" -- env -u GH_TOKEN -u GITHUB_TOKEN HOME="$DEV_HOME" gh auth token --hostname github.com 2>/dev/null || true)"
+fi
+
 # Native CLI auth/session stores -> one canonical tree.
 adopt_dir "$DEV_HOME/.config/gh" "$AUTH_HOME/gh"
 adopt_file "$DEV_HOME/.fly/config.yml" "$AUTH_HOME/fly/config.yml"
@@ -114,8 +119,18 @@ adopt_dir "$DEV_HOME/.codex" "$AUTH_HOME/codex"
 adopt_dir "$DEV_HOME/.local/share/opencode" "$AUTH_HOME/opencode"
 adopt_dir "$DEV_HOME/.kaggle" "$AUTH_HOME/kaggle"
 adopt_dir "$DEV_HOME/.docker" "$AUTH_HOME/docker"
+adopt_dir "$DEV_HOME/.aws" "$AUTH_HOME/aws"
+adopt_dir "$DEV_HOME/.supabase" "$AUTH_HOME/supabase"
 install -d -m 0700 -o "$DEV_USER" -g "$DEV_USER" "$DEV_HOME/.config/tunnel-client"
 adopt_file "$DEV_HOME/.config/tunnel-client/runtime-api-key" "$AUTH_HOME/tunnel-client/runtime-api-key"
+
+# GitHub CLI may otherwise keep the token in a desktop keyring. On this headless
+# host force the active account into the canonical 0600 GH_CONFIG_DIR so agents,
+# shells and git credential-helper calls resolve the exact same persisted login.
+if [[ -n "$GH_ACTIVE_TOKEN" ]] && command -v gh >/dev/null 2>&1; then
+  printf '%s\n' "$GH_ACTIVE_TOKEN" | runuser -u "$DEV_USER" -- env     -u GH_TOKEN -u GITHUB_TOKEN     HOME="$DEV_HOME" GH_CONFIG_DIR="$AUTH_HOME/gh"     gh auth login --hostname github.com --with-token --insecure-storage >/dev/null
+  GH_ACTIVE_TOKEN=""
+fi
 
 cat >"$AUTH_ENV" <<EOF
 # Non-secret canonical auth paths.
@@ -124,6 +139,8 @@ export GH_CONFIG_DIR="$AUTH_HOME/gh"
 export FLY_CONFIG_DIR="$AUTH_HOME/fly"
 export KAGGLE_CONFIG_DIR="$AUTH_HOME/kaggle"
 export DOCKER_CONFIG="$AUTH_HOME/docker"
+export AWS_SHARED_CREDENTIALS_FILE="$AUTH_HOME/aws/credentials"
+export AWS_CONFIG_FILE="$AUTH_HOME/aws/config"
 export CODEX_HOME="$AUTH_HOME/codex"
 EOF
 chown "$DEV_USER:$DEV_USER" "$AUTH_ENV"; chmod 0644 "$AUTH_ENV"
@@ -134,6 +151,8 @@ GH_CONFIG_DIR=$AUTH_HOME/gh
 FLY_CONFIG_DIR=$AUTH_HOME/fly
 KAGGLE_CONFIG_DIR=$AUTH_HOME/kaggle
 DOCKER_CONFIG=$AUTH_HOME/docker
+AWS_SHARED_CREDENTIALS_FILE=$AUTH_HOME/aws/credentials
+AWS_CONFIG_FILE=$AUTH_HOME/aws/config
 CODEX_HOME=$AUTH_HOME/codex
 EOF
 chown "$DEV_USER:$DEV_USER" "$SYSTEMD_ENV"; chmod 0644 "$SYSTEMD_ENV"
@@ -187,7 +206,9 @@ PY
 if [[ -S "$USER_RUNTIME_DIR/bus" ]]; then
   user_systemctl systemctl --user set-environment \
     "DEVCOVEER_AUTH_HOME=$AUTH_HOME" "GH_CONFIG_DIR=$AUTH_HOME/gh" "FLY_CONFIG_DIR=$AUTH_HOME/fly" \
-    "KAGGLE_CONFIG_DIR=$AUTH_HOME/kaggle" "DOCKER_CONFIG=$AUTH_HOME/docker" "CODEX_HOME=$AUTH_HOME/codex"
+    "KAGGLE_CONFIG_DIR=$AUTH_HOME/kaggle" "DOCKER_CONFIG=$AUTH_HOME/docker" \
+    "AWS_SHARED_CREDENTIALS_FILE=$AUTH_HOME/aws/credentials" "AWS_CONFIG_FILE=$AUTH_HOME/aws/config" \
+    "CODEX_HOME=$AUTH_HOME/codex"
   user_systemctl systemctl --user daemon-reload
   if [[ "$WAS_OPENCODE" == 1 ]]; then
     user_systemctl systemctl --user start opencode-devcoveer.service
@@ -232,10 +253,13 @@ status fly flyctl auth whoami
 status yc yc config profile list
 status codex codex login status
 status opencode opencode auth list
+if command -v aws >/dev/null 2>&1; then status aws aws sts get-caller-identity; else printf "%-14s NOT_INSTALLED\n" aws; fi
+if command -v supabase >/dev/null 2>&1; then status supabase supabase projects list; else printf "%-14s NOT_INSTALLED\n" supabase; fi
 if [[ -s "$KAGGLE_CONFIG_DIR/access_token" || -s "$KAGGLE_CONFIG_DIR/kaggle.json" ]]; then printf "%-14s PASS\n" kaggle; else printf "%-14s OWNER_ENV_OR_LOGIN_REQUIRED\n" kaggle; fi
 for spec in \
   "gh:$HOME/.config/gh" "fly:$HOME/.fly/config.yml" "yc:$HOME/.config/yandex-cloud" \
-  "codex:$HOME/.codex" "opencode:$HOME/.local/share/opencode" "kaggle:$HOME/.kaggle"; do
+  "codex:$HOME/.codex" "opencode:$HOME/.local/share/opencode" "kaggle:$HOME/.kaggle" \
+  "aws:$HOME/.aws" "supabase:$HOME/.supabase" "docker:$HOME/.docker"; do
   name="${spec%%:*}"; path="${spec#*:}"
   if [[ -L "$path" ]]; then printf "link:%-9s %s -> %s\n" "$name" "$path" "$(readlink "$path")"; else printf "link:%-9s MISSING_OR_NOT_SYMLINK %s\n" "$name" "$path"; fi
 done
