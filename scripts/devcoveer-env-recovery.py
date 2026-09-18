@@ -468,7 +468,7 @@ def credential_family(name: str) -> str:
         return "OPENAI / CODEX"
     if n.startswith("KAGGLE_") or "_KAGGLE_" in n:
         return "KAGGLE"
-    if n.startswith(("TELEGRAM_", "TG_")) or "_TELEGRAM_" in n:
+    if n.startswith(("TELEGRAM_", "TG_")) or "_TELEGRAM_" in n or "_TG_" in n:
         return "TELEGRAM"
     if n.startswith("VK_") or "_VK_" in n:
         return "VK"
