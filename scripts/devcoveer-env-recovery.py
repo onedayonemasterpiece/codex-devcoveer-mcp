@@ -1695,6 +1695,26 @@ def render_cmd(_: argparse.Namespace) -> int:
     print(f"todo={TODO}")
     return 0
 
+
+def render_providers_cmd(_: argparse.Namespace) -> int:
+    """Refresh only the generated OpenCode provider credential view.
+
+    This deliberately does not scan repositories, contact Fly, rewrite
+    /home/dev/.env, or render unrelated project envs. It is the safe command to
+    use after the owner manually updates model-provider credentials.
+    """
+    ensure_root()
+    owner = parse_master(OWNER)
+    validate_owner_store(owner)
+    count = write_opencode_provider_env(owner)
+    install_opencode_provider_dropin()
+    print("OPENCODE_PROVIDER_ENV_RENDER_COMPLETE")
+    print(f"values={count}")
+    print(f"source={OWNER}")
+    print(f"target={OPENCODE_PROVIDER_ENV}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1704,6 +1724,8 @@ def main() -> int:
     p_recover.set_defaults(func=recover)
     p_render = sub.add_parser("render")
     p_render.set_defaults(func=render_cmd)
+    p_provider = sub.add_parser("render-providers")
+    p_provider.set_defaults(func=render_providers_cmd)
     args = parser.parse_args()
     return int(args.func(args))
 
