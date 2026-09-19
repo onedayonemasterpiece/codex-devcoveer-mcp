@@ -83,6 +83,9 @@ async def _gh(binding: dict[str, Any], args: list[str], *, timeout: float = 15.0
     gh_path = str(binding.get("executables", {}).get("gh", "/usr/bin/gh"))
     if not gh_path.startswith("/"):
         raise ProbeError("config", "gh executable is not trusted")
+    gh = Path(gh_path)
+    if not gh.is_file() or not os.access(gh, os.X_OK):
+        raise ProbeError("tool_unavailable", f"trusted gh executable is unavailable: {gh_path}")
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": os.environ.get("HOME", "/home/dev"), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
     result = await _run_process([gh_path, *args], env=env, timeout=timeout, output_limit=limit)
     if result.exit_code != 0:
@@ -100,17 +103,48 @@ async def _remote_head(root: Path, binding: dict[str, Any], remote: str, branch:
     repo = remotes.get(remote)
     if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", str(repo)):
         raise ProbeError("remote_denied", "remote is not bound to a trusted GitHub repository", status="denied")
-    endpoint = f"repos/{repo}/branches/{quote(branch, safe='')}"
-    fresh = await _gh(binding, ["api", "--method", "GET", endpoint, "--jq", ".commit.sha"], limit=512)
-    sha = fresh.stdout.decode().strip().lower()
-    if not HEX40_RE.fullmatch(sha):
-        raise ProbeError("github", "fresh remote branch response did not contain a commit sha")
+
+    # Resolve the configured Git remote without fetching or mutating refs, and
+    # verify that it still points at the allowlisted GitHub repository.
+    url_res = await _git(root, "remote", "get-url", remote, output_limit=2048)
+    remote_url = url_res.stdout.decode("utf-8", "replace").strip()
+    expected = str(repo).removesuffix(".git")
+    trusted_urls = {
+        f"https://github.com/{expected}",
+        f"https://github.com/{expected}.git",
+        f"git@github.com:{expected}",
+        f"git@github.com:{expected}.git",
+        f"ssh://git@github.com/{expected}",
+        f"ssh://git@github.com/{expected}.git",
+    }
+    if remote_url not in trusted_urls:
+        raise ProbeError(
+            "remote_drift",
+            "configured Git remote no longer matches the trusted GitHub binding",
+            status="error",
+        )
+
+    ref = f"refs/heads/{branch}"
+    fresh = await _git(root, "ls-remote", "--heads", remote, ref, timeout=12.0, output_limit=2048)
+    rows = [line.split("\t", 1) for line in fresh.stdout.decode("utf-8", "replace").splitlines() if line]
+    rows = [row for row in rows if len(row) == 2 and row[1] == ref]
+    if len(rows) != 1 or not HEX40_RE.fullmatch(rows[0][0].lower()):
+        raise ProbeError("github", "fresh remote branch response did not contain exactly one commit sha")
+    sha = rows[0][0].lower()
+
     tracking_ref = f"refs/remotes/{remote}/{branch}"
     tracking = await _git(root, "rev-parse", "--verify", tracking_ref, ok_codes=(0, 128), output_limit=256)
     local_tracking = tracking.stdout.decode().strip() if tracking.exit_code == 0 else None
-    return {"remote": remote, "branch": branch, "repository": repo, "fresh_remote_sha": sha,
-            "local_tracking_ref": tracking_ref, "local_tracking_sha": local_tracking,
-            "same_as_local_tracking": (local_tracking == sha) if local_tracking else None}
+    return {
+        "remote": remote,
+        "branch": branch,
+        "repository": repo,
+        "remote_url_verified": True,
+        "fresh_remote_sha": sha,
+        "local_tracking_ref": tracking_ref,
+        "local_tracking_sha": local_tracking,
+        "same_as_local_tracking": (local_tracking == sha) if local_tracking else None,
+    }
 
 
 async def _git_log(root: Path, check: dict[str, Any]) -> dict[str, Any]:
