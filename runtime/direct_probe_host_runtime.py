@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat as statmod
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,39 @@ from urllib.parse import urlsplit
 from direct_probe_core import ProbeError, _redact_text, _run_process, _sha256_path, _validate_alias
 from direct_probe_disk_forensics import resolve_resource_target, run_resource_profile
 from direct_probe_host_services import _host_section
+
+_PROCESS_RUNTIME_SNAPSHOT_NS = time.time_ns()
+
+
+def _capture_loaded_module_fingerprints() -> dict[str, dict[str, str]]:
+    """Snapshot source hashes for modules already loaded in this MCP process.
+
+    The snapshot is immutable for the lifetime of the process. A later on-disk
+    deployment can therefore be distinguished from code that was present when
+    this process imported the runtime modules, without executing arbitrary code.
+    """
+    result: dict[str, dict[str, str]] = {}
+    for name, module in tuple(sys.modules.items()):
+        raw = getattr(module, "__file__", None)
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            path = Path(raw).resolve(strict=True)
+            st = path.lstat()
+            if statmod.S_ISLNK(st.st_mode) or not statmod.S_ISREG(st.st_mode):
+                continue
+            if st.st_size > 128 * 1024 * 1024:
+                continue
+            result[str(path)] = {
+                "module": name or "<anonymous>",
+                "sha256": _sha256_path(path, 128 * 1024 * 1024),
+            }
+        except (OSError, ValueError):
+            continue
+    return result
+
+
+_LOADED_MODULE_FINGERPRINTS = _capture_loaded_module_fingerprints()
 
 def _disk_usage(path: Path) -> dict[str, int]:
     v = os.statvfs(path)
@@ -162,12 +196,44 @@ async def _runtime(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, 
 
 async def _runtime_file(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
     alias = _validate_alias(check["file"])
-    raw = _host_section(binding,"runtime_files").get(alias)
-    if not isinstance(raw,str) or not raw.startswith("/"): raise ProbeError("target_denied","runtime file is not registered",status="denied")
-    path = Path(raw).resolve(strict=True); st = path.lstat()
-    if statmod.S_ISLNK(st.st_mode) or not statmod.S_ISREG(st.st_mode): raise ProbeError("file_type","runtime file must be regular and non-symlink",status="denied")
-    digest = await asyncio.to_thread(_sha256_path,path,128*1024*1024)
-    return {"file":alias,"path":str(path),"sha256":digest,"size":st.st_size,"mtime_ns":st.st_mtime_ns,"loaded_process_version":"unknown","note":"disk hash does not prove code already loaded in process memory"}
+    raw = _host_section(binding, "runtime_files").get(alias)
+    if not isinstance(raw, str) or not raw.startswith("/"):
+        raise ProbeError("target_denied", "runtime file is not registered", status="denied")
+    path = Path(raw).resolve(strict=True)
+    st = path.lstat()
+    if statmod.S_ISLNK(st.st_mode) or not statmod.S_ISREG(st.st_mode):
+        raise ProbeError("file_type", "runtime file must be regular and non-symlink", status="denied")
+    digest = await asyncio.to_thread(_sha256_path, path, 128 * 1024 * 1024)
+
+    loaded = _LOADED_MODULE_FINGERPRINTS.get(str(path))
+    loaded_sha = loaded.get("sha256") if isinstance(loaded, dict) else None
+    loaded_module = loaded.get("module") if isinstance(loaded, dict) else None
+    matches = digest == loaded_sha if isinstance(loaded_sha, str) else None
+    state = (
+        "matches_disk" if matches is True
+        else "disk_changed_after_process_import" if matches is False
+        else "not_observable"
+    )
+    return {
+        "file": alias,
+        "path": str(path),
+        "sha256": digest,
+        "size": st.st_size,
+        "mtime_ns": st.st_mtime_ns,
+        "loaded_process_version": loaded_sha or "not_observable",
+        "loaded_process_sha256": loaded_sha,
+        "loaded_module": loaded_module,
+        "process_import_snapshot_ns": _PROCESS_RUNTIME_SNAPSHOT_NS,
+        "disk_matches_loaded_process": matches,
+        "loaded_process_state": state,
+        "note": (
+            "Startup source fingerprint matches the current installed file."
+            if matches is True else
+            "The installed file changed after this MCP process imported the module; restart is required."
+            if matches is False else
+            "This registered file was not present in the process module table when the runtime fingerprint snapshot was captured."
+        ),
+    }
 
 def _config_presence_file(path: Path, allowed_keys: set[str], requested: list[str]) -> dict[str, Any]:
     st = path.lstat()
