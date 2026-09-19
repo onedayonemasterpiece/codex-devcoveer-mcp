@@ -7,7 +7,7 @@
         "origin": "onedayonemasterpiece/codex-devcoveer-mcp"
       },
       "executables": {
-        "gh": "/usr/local/bin/gh"
+        "gh": "/usr/bin/gh"
       },
       "services": {
         "mcp_tunnel": {
@@ -90,7 +90,7 @@
         "origin": "onedayonemasterpiece/vibepublish"
       },
       "executables": {
-        "gh": "/usr/local/bin/gh"
+        "gh": "/usr/bin/gh"
       },
       "services": {
         "server": {
@@ -161,7 +161,7 @@
         "origin": "onedayonemasterpiece/dataset-loop-mcp"
       },
       "executables": {
-        "gh": "/usr/local/bin/gh"
+        "gh": "/usr/bin/gh"
       },
       "services": {
         "mcp": {
