@@ -11,8 +11,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-
 DEFAULT_HANDOFF_ROOT = Path.home() / ".local" / "share" / "openai-codex-mcp" / "handoffs"
 MAX_PATCH_BYTES = 16 * 1024 * 1024
 MIN_FREE_BYTES = 512 * 1024 * 1024
