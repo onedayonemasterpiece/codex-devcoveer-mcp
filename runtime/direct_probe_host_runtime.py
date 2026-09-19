@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import http.client
 import ipaddress
 import json
@@ -19,31 +18,42 @@ from direct_probe_disk_forensics import resolve_resource_target, run_resource_pr
 from direct_probe_host_services import _host_section
 
 _PROCESS_RUNTIME_SNAPSHOT_NS = time.time_ns()
-LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+_RUNTIME_FINGERPRINT_MODULES = ("source_handoff", "direct_probes", __name__)
+
+
+def _capture_loaded_module_fingerprints() -> dict[str, dict[str, str]]:
+    """Capture hashes for the small allowlist of MCP modules already loaded.
+
+    The bridge imports source_handoff before direct_probes, and direct_probes
+    imports this host runtime. Capturing these three known modules at startup is
+    bounded and lets later probes distinguish an on-disk replacement from the
+    source that this process actually imported.
+    """
+    result: dict[str, dict[str, str]] = {}
+    for name in _RUNTIME_FINGERPRINT_MODULES:
+        module = sys.modules.get(name)
+        raw = getattr(module, "__file__", None) if module is not None else None
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            path = Path(raw).resolve(strict=True)
+            st = path.lstat()
+            if statmod.S_ISLNK(st.st_mode) or not statmod.S_ISREG(st.st_mode):
+                continue
+            result[str(path)] = {
+                "module": name,
+                "sha256": _sha256_path(path, 128 * 1024 * 1024),
+            }
+        except (OSError, ValueError):
+            continue
+    return result
+
+
+_LOADED_MODULE_FINGERPRINTS = _capture_loaded_module_fingerprints()
 
 
 def _loaded_module_fingerprint(path: Path) -> dict[str, str] | None:
-    """Return an immutable import-time fingerprint for one loaded runtime module.
-
-    Runtime modules opt in by capturing LOADED_SOURCE_SHA256 when they are
-    imported. Probe-time code only looks up that captured value; it never hashes
-    the current disk file and therefore cannot confuse a deployed-but-unloaded
-    replacement with code that is actually serving this process.
-    """
-    target = str(path)
-    for name, module in tuple(sys.modules.items()):
-        raw = getattr(module, "__file__", None)
-        loaded_sha = getattr(module, "LOADED_SOURCE_SHA256", None)
-        if not isinstance(raw, str) or not isinstance(loaded_sha, str):
-            continue
-        if not re.fullmatch(r"[0-9a-f]{64}", loaded_sha):
-            continue
-        try:
-            if str(Path(raw).resolve(strict=True)) == target:
-                return {"module": name or "<anonymous>", "sha256": loaded_sha}
-        except (OSError, ValueError):
-            continue
-    return None
+    return _LOADED_MODULE_FINGERPRINTS.get(str(path))
 
 
 def _disk_usage(path: Path) -> dict[str, int]:
