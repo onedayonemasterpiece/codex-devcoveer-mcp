@@ -13,12 +13,24 @@
         "mcp_tunnel": {
           "unit": "codex-devserver-tunnel.service",
           "scope": "user",
-          "ports": []
+          "ports": [
+            18080
+          ],
+          "transport": "reverse_tunnel_with_loopback_health",
+          "endpoints": [
+            "http://127.0.0.1:18080"
+          ]
         },
         "opencode": {
           "unit": "opencode-devcoveer.service",
           "scope": "user",
-          "ports": []
+          "ports": [
+            4097
+          ],
+          "transport": "loopback_http",
+          "endpoints": [
+            "http://127.0.0.1:4097"
+          ]
         }
       },
       "logs": {
@@ -65,7 +77,10 @@
         "bridge": "/home/dev/.local/libexec/openai-codex-mcp/codex-chatgpt-bridge.py",
         "opencode_backend": "/home/dev/.local/libexec/openai-codex-mcp/opencode_backend.py",
         "model_health": "/home/dev/.local/libexec/openai-codex-mcp/model_health.py",
-        "source_handoff": "/home/dev/.local/libexec/openai-codex-mcp/source_handoff.py"
+        "source_handoff": "/home/dev/.local/libexec/openai-codex-mcp/source_handoff.py",
+        "direct_probes": "/home/dev/.local/libexec/openai-codex-mcp/direct_probes.py",
+        "direct_probe_host_services": "/home/dev/.local/libexec/openai-codex-mcp/direct_probe_host_services.py",
+        "direct_probe_host_runtime": "/home/dev/.local/libexec/openai-codex-mcp/direct_probe_host_runtime.py"
       },
       "config_presence": {}
     },
@@ -116,7 +131,7 @@
             "GET",
             "HEAD"
           ],
-          "timeout_seconds": 2.0,
+          "timeout_seconds": 2,
           "body_bytes": 4096
         }
       },
@@ -173,7 +188,7 @@
             "GET",
             "HEAD"
           ],
-          "timeout_seconds": 2.0,
+          "timeout_seconds": 2,
           "body_bytes": 4096
         }
       },
