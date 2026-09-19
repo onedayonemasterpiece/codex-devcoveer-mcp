@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import py_compile
 import shutil
 from pathlib import Path
@@ -33,7 +34,7 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.11.1-liberal-probes-handoff.1"', "version")
+                          'BRIDGE_VERSION = "3.12.0-routing-evidence"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -223,7 +224,11 @@ CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA: dict[str, Any] = {
                     "errorCategory": "source_handoff", "content": str(exc)}, error=True)
 
 '''
-    return replace_once(source, handler_anchor, handlers + handler_anchor, "probe dispatch")
+    source = replace_once(source, handler_anchor, handlers + handler_anchor, "probe dispatch")
+    spec = importlib.util.spec_from_file_location("restore_contract", ROOT / "scripts" / "restore-integration-contract.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.transform(source, replace_once)
 
 def transform_backend(source: str) -> str:
     source = replace_once(source, '''        self.base_url = base_url
@@ -355,6 +360,8 @@ def main() -> int:
                  out / "direct_probe_config.json")
     shutil.copy2(ROOT / "runtime" / "source_handoff.py",
                  out / "source_handoff.py")
+    for name in ("session_evidence.py", "opencode_routing.py", "model_health.py"):
+        shutil.copy2(ROOT / "runtime" / name, out / name)
     for path in out.glob("*.py"):
         py_compile.compile(str(path), doraise=True)
     print(f"bridge_sha256={sha(bridge)}")

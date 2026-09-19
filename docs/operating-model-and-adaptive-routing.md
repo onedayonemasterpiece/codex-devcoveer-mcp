@@ -322,3 +322,32 @@ source_handoff_coverage
 ```
 
 A successful next-day check targets zero for the three violation counters and 100% `source_handoff_coverage` whenever Source Handoff was required. If a violation occurs, fix the routing/reminder/tool contract rather than relying on the owner to repeat the rule in every chat.
+
+## Clean-host runtime acceptance (3.12)
+
+The canonical builder now includes the same ordered routing policy in model
+listing and task creation. Only free Zen models, the Groq GPT-OSS-120B key pool,
+agent-capable NVIDIA models, and configured GigaChat providers are eligible for
+automatic selection. Missing providers are skipped; an explicit model/provider
+selection is preserved. Native Codex always requires `provider=codex`.
+
+For automatically routed tasks, observed provider errors or retry states can
+continue the same OpenCode session on the next healthy eligible selection.
+Attempts and reasons are retained in the task registry. Rotation is bounded to
+16 selections per task, including at most three NVIDIA endpoints, so the metered
+reserve can be reached. A merely busy session is never switched because it is
+slow. Zen quota exhaustion cools down the Zen provider; NVIDIA failures remain
+endpoint-specific. Temporary cooldowns expire and allow recovery probes.
+
+Completed, failed, and interrupted turns produce content-addressed redacted
+session evidence under the private runtime state directory. The task reader and
+background monitor capture it; `get_task_evidence` exposes summary, suspicious,
+or full-safe views. Hidden reasoning is excluded. `record_task_review` requires
+the exact current digest and records an external accepted/rejected verdict.
+Continuation invalidates the previous acceptance while keeping old evidence.
+The review MCP is for the external controller, never for OpenCode itself.
+
+Codex auth-home validation compares resolved paths so the canonical auth store
+and its legacy symlink are treated as the same directory. The installer requires
+a commit on local `main`, checks evidence tools before switching, and retains its
+source, rollback copy, and failed candidates in a managed central artifact task.

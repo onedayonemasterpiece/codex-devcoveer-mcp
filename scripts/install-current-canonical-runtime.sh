@@ -25,9 +25,9 @@ test -d "$WORK_REPO/.git" || die "repository missing"
 test -x "$BRIDGE_PY" || die "bridge Python missing"
 test -e "$WRAP" || die "MCP wrapper missing"
 
-TMP="$(mktemp -d /tmp/devcoveer-current-runtime.XXXXXX)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(dev-artifacts new codex-devcoveer-mcp install-current-runtime --retain --reason "Runtime deployment and rollback evidence")"
 SOURCE_SHA="$(git -C "$WORK_REPO" rev-parse "$SOURCE_REF^{commit}")" || die "cannot resolve $SOURCE_REF"
+git -C "$WORK_REPO" merge-base --is-ancestor "$SOURCE_SHA" main || die "source must be a validated main commit"
 SRC="$TMP/source"
 mkdir -p "$SRC"
 git -C "$WORK_REPO" archive "$SOURCE_SHA" | tar -x -C "$SRC"
@@ -43,7 +43,7 @@ PYTHONPATH="$CAND" "$BRIDGE_PY" - "$CAND/codex-chatgpt-bridge.py" <<'PY'
 import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-required={"project_probe","host_probe","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff"}
+required={"project_probe","host_probe","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review"}
 async def main():
     async with stdio_client(StdioServerParameters(command=sys.executable,args=[sys.argv[1]])) as (r,w):
         async with ClientSession(r,w) as s:
@@ -58,22 +58,22 @@ PY
 
 CAN_BACKUP=
 if [ -e "$CAN" ]; then
-  CAN_BACKUP="${CAN}.bak.clean-host-${STAMP}"
+  CAN_BACKUP="$TMP/previous-runtime"
   mv "$CAN" "$CAN_BACKUP"
   echo "canonical_backup=$CAN_BACKUP"
 fi
 mv "$CAND" "$CAN"
 
-WRAP_BACKUP="${WRAP}.bak.clean-host-${STAMP}"
+WRAP_BACKUP="$TMP/previous-wrapper"
 cp -a "$WRAP" "$WRAP_BACKUP"
 restore_previous(){
   cp -a "$WRAP_BACKUP" "$WRAP" 2>/dev/null || true
   if [ -n "$CAN_BACKUP" ] && [ -e "$CAN_BACKUP" ]; then
-    mv "$CAN" "${CAN}.failed-${STAMP}" 2>/dev/null || true
+    mv "$CAN" "$TMP/failed-runtime" 2>/dev/null || true
     mv "$CAN_BACKUP" "$CAN" 2>/dev/null || true
   fi
 }
-trap 'rc=$?; if [ "$rc" -ne 0 ]; then restore_previous; fi; rm -rf "$TMP"; exit "$rc"' EXIT
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then restore_previous; systemctl --user restart codex-devserver-tunnel.service || true; fi; exit "$rc"' EXIT
 
 if [ -L "$WRAP" ]; then
   target="$(readlink -f "$WRAP")"
@@ -103,7 +103,7 @@ echo "=== canonical wrapper acceptance ==="
 import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-required={"project_probe","host_probe","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff"}
+required={"project_probe","host_probe","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review"}
 async def main():
     async with stdio_client(StdioServerParameters(command=sys.argv[1],args=[])) as (r,w):
         async with ClientSession(r,w) as s:
@@ -124,8 +124,9 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 [ "$ready" -eq 1 ] || die "tunnel did not become ready"
-trap 'rm -rf "$TMP"' EXIT
+trap - EXIT
 echo "bridge=$BRIDGE_SHA"
 echo "backend=$BACKEND_SHA"
 echo "wrapper_canonical=PASS"
 echo "tunnel_ready=PASS"
+echo "deployment_evidence=$TMP"

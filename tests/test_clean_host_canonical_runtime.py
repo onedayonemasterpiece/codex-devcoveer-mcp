@@ -77,9 +77,11 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
         assert 'name="project_probe"' in bridge
         assert 'name="host_probe"' in bridge
-        assert '"reason": "default_opencode"' in bridge
-        assert 'provider="groq", model="groq/openai/gpt-oss-120b", directory=project.path' in bridge
-        assert 'BRIDGE_VERSION = "3.11.1-liberal-probes-handoff.1"' in bridge
+        assert 'reason = "adaptive_opencode_default"' in bridge
+        assert 'eligible = [m for m in _routing_candidates' in bridge
+        assert 'name="get_task_evidence"' in bridge
+        assert 'name="record_task_review"' in bridge
+        assert 'BRIDGE_VERSION = "3.12.0-routing-evidence"' in bridge
         assert 'name="stage_source_handoff"' in bridge
         assert 'name="cleanup_source_handoff"' in bridge
         assert 'raw_hint.startswith("handoff:")' in bridge
