@@ -174,8 +174,14 @@ def test_remote_head_distinguishes_tracking_from_fresh(monkeypatch, tmp_path: Pa
     repo = init_repo(tmp_path / "r"); old = git(repo, "rev-parse", "HEAD"); git(repo, "update-ref", "refs/remotes/origin/main", old)
     (repo / "a.txt").write_text("next", encoding="utf-8"); git(repo, "add", "a.txt"); git(repo, "commit", "-q", "-m", "next")
     fresh = git(repo, "rev-parse", "HEAD")
-    async def fake_gh(binding, args, **kwargs): return dp.ProcessResult((fresh+"\n").encode(), b"", 0, False, 1)
-    monkeypatch.setattr(project_git, "_gh", fake_gh)
+    real_git = project_git._git
+    async def fake_git(root, *args, **kwargs):
+        if args[:3] == ("remote", "get-url", "origin"):
+            return dp.ProcessResult(b"https://github.com/o/r.git\n", b"", 0, False, 1)
+        if args[:3] == ("ls-remote", "--heads", "origin"):
+            return dp.ProcessResult((fresh+"\trefs/heads/main\n").encode(), b"", 0, False, 1)
+        return await real_git(root, *args, **kwargs)
+    monkeypatch.setattr(project_git, "_git", fake_git)
     out = run(dp._remote_head(repo, {"github_repo":"o/r", "remotes":{"origin":"o/r"}}, "origin", "main"))
     assert out["fresh_remote_sha"] == fresh and out["local_tracking_sha"] == old and out["same_as_local_tracking"] is False
 
