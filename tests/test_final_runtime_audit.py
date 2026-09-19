@@ -72,14 +72,9 @@ def test_runtime_file_distinguishes_loaded_snapshot_from_changed_disk(monkeypatc
     loaded_sha = hashlib.sha256(path.read_bytes()).hexdigest()
     resolved = str(path.resolve())
     monkeypatch.setattr(host_runtime, "_PROCESS_RUNTIME_SNAPSHOT_NS", 123456789)
-    monkeypatch.setattr(
-        host_runtime,
-        "_loaded_module_fingerprint",
-        lambda candidate: (
-            {"module": "fixture_loaded", "sha256": loaded_sha}
-            if str(candidate) == resolved else None
-        ),
-    )
+    monkeypatch.setattr(host_runtime, "_LOADED_MODULE_FINGERPRINTS", {
+        resolved: {"module": "fixture_loaded", "sha256": loaded_sha}
+    })
     binding = {"runtime_files": {"fixture": resolved}}
 
     before = run(host_runtime._runtime_file(binding, {"file": "fixture"}))
@@ -97,15 +92,16 @@ def test_runtime_file_distinguishes_loaded_snapshot_from_changed_disk(monkeypatc
 
 
 
-def test_runtime_modules_capture_import_time_source_fingerprints():
+def test_runtime_modules_capture_bounded_startup_source_fingerprints():
     import direct_probes
     import source_handoff
 
+    captured = host_runtime._capture_loaded_module_fingerprints()
     for module in (host_runtime, direct_probes, source_handoff):
-        digest = getattr(module, "LOADED_SOURCE_SHA256", "")
-        assert len(digest) == 64
-        assert all(ch in "0123456789abcdef" for ch in digest)
-        assert digest == hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
+        resolved = str(Path(module.__file__).resolve())
+        assert captured[resolved]["sha256"] == hashlib.sha256(
+            Path(module.__file__).read_bytes()
+        ).hexdigest()
 
 def test_remote_head_uses_verified_git_remote_not_gh(monkeypatch, tmp_path):
     remote_sha = "a" * 40
