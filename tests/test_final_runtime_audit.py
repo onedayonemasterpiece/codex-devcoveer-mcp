@@ -142,3 +142,129 @@ def test_source_routing_metadata_matches_ordered_runtime_fallback():
     )
     assert '"automaticFallbackScope": "ordered_providers_for_automatic_tasks"' in source
     assert '"automaticFallbackScope": "groq_key_pool"' not in source
+
+
+def _cancellation_fragment_env(record, inspected):
+    class FakeOpenCodeError(Exception):
+        category = "unavailable"
+
+    class FakeRegistry:
+        def update(self, _task_id, **changes):
+            record.update(changes)
+            return record
+
+    class FakeEvidenceStore:
+        def has_evidence(self, _task_id, _turn_id):
+            return False
+
+        def create_snapshot(self, *_args, **_kwargs):
+            return {"safeSessionSha256": "e" * 64}
+
+        def load_evidence(self, *_args, **_kwargs):
+            return None
+
+    class FakeBackend:
+        async def inspect(self, **_kwargs):
+            return dict(inspected)
+
+    env = {
+        "Any": object,
+        "time": __import__("time"),
+        "OpenCodeError": FakeOpenCodeError,
+        "TASK_REGISTRY": FakeRegistry(),
+        "EVIDENCE_STORE": FakeEvidenceStore(),
+        "OPENCODE_BACKEND": FakeBackend(),
+        "_registry_public": lambda value: dict(value),
+    }
+    source = (
+        RUNTIME / "bridge_fragments" / "read_opencode_task_adaptive.py"
+    ).read_text(encoding="utf-8")
+    exec(compile(source, "<read-opencode-task-adaptive>", "exec"), env)
+    return env
+
+
+def test_cancelling_task_cannot_regress_to_running():
+    record = {
+        "taskId": "dvt_" + "a" * 32,
+        "backend": "opencode",
+        "backendSessionId": "ses_test",
+        "cwd": "/repo",
+        "provider": "opencode",
+        "model": "big-pickle",
+        "selection": "opencode/big-pickle",
+        "access": "write",
+        "status": "cancelling",
+        "createdAt": 1,
+    }
+    inspected = {
+        "status": "running",
+        "sessionStatus": "busy",
+        "providerState": {"type": "busy"},
+        "finalResponse": None,
+        "error": None,
+        "messageId": "msg_live",
+        "messages": [],
+    }
+    env = _cancellation_fragment_env(record, inspected)
+    result = run(env["_read_opencode_task"](record))
+    assert result["status"] == "running"
+    assert record["status"] == "cancelling"
+
+
+def test_cancelling_idle_provider_becomes_interrupted():
+    record = {
+        "taskId": "dvt_" + "b" * 32,
+        "backend": "opencode",
+        "backendSessionId": "ses_test",
+        "cwd": "/repo",
+        "provider": "opencode",
+        "model": "big-pickle",
+        "selection": "opencode/big-pickle",
+        "access": "write",
+        "status": "cancelling",
+        "createdAt": 1,
+    }
+    inspected = {
+        "status": "running",
+        "sessionStatus": "idle",
+        "providerState": {"type": "idle"},
+        "finalResponse": None,
+        "error": None,
+        "messageId": "msg_cancelled",
+        "messages": [],
+    }
+    env = _cancellation_fragment_env(record, inspected)
+    result = run(env["_read_opencode_task"](record))
+    assert result["status"] == "interrupted"
+    assert result["executionStatus"] == "interrupted"
+    assert record["status"] == "interrupted"
+    assert record["acceptanceStatus"] == "review_required"
+
+
+def test_cancelling_groq_task_never_auto_falls_back():
+    record = {
+        "taskId": "dvt_" + "c" * 32,
+        "backend": "opencode",
+        "backendSessionId": "ses_test",
+        "cwd": "/repo",
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b",
+        "selection": "groq/openai/gpt-oss-120b",
+        "access": "write",
+        "status": "cancelling",
+    }
+    inspected = {
+        "providerErrorCategory": "rate_limited",
+        "sessionStatus": "retry",
+    }
+    env = _cancellation_fragment_env(record, {
+        "status": "running",
+        "sessionStatus": "busy",
+        "providerState": {"type": "busy"},
+        "finalResponse": None,
+        "error": None,
+        "messageId": "msg_live",
+        "messages": [],
+    })
+    result = run(env["_maybe_auto_groq_fallback"](record, inspected, status="running"))
+    assert result is None
