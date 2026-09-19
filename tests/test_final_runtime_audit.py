@@ -58,6 +58,8 @@ def test_unobservable_main_pid_does_not_claim_global_listener_ownership(monkeypa
 
 def test_canonical_control_plane_listener_endpoints_are_registered():
     cfg = json.loads((RUNTIME / "direct_probe_config.json").read_text(encoding="utf-8"))
+    for project in ("codex-devcoveer-mcp", "vibepublish", "dataset-loop-mcp"):
+        assert cfg["projects"][project]["executables"]["gh"] == "/usr/bin/gh"
     services = cfg["projects"]["codex-devcoveer-mcp"]["services"]
     assert services["opencode"]["ports"] == [4097]
     assert services["opencode"]["transport"] == "loopback_http"
