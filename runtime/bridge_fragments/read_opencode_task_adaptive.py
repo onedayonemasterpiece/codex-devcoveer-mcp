@@ -5,6 +5,8 @@ _GROQ_CAPACITY_CATEGORIES = {"rate_limited", "quota_exhausted"}
 async def _maybe_auto_groq_fallback(
     record: dict[str, Any], inspected: dict[str, Any], *, status: str,
 ) -> dict[str, Any] | None:
+    if record.get("status") == "cancelling":
+        return None
     provider = record.get("provider")
     category = inspected.get("providerErrorCategory")
     session_status = inspected.get("sessionStatus")
@@ -111,10 +113,24 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
         else:
             status = "failed"
 
+    provider_state = inspected.get("providerState")
+    provider_state_type = provider_state.get("type") if isinstance(provider_state, dict) else None
+    if (
+        record.get("status") == "cancelling"
+        and status == "running"
+        and (inspected.get("sessionStatus") == "idle" or provider_state_type == "idle")
+    ):
+        status = "interrupted"
+
     groq_fallback = await _maybe_auto_groq_fallback(record, inspected, status=status)
     if groq_fallback is not None:
         return groq_fallback
-    changes: dict[str, Any] = {"status": status}
+    durable_status = (
+        "cancelling"
+        if record.get("status") == "cancelling" and status == "running"
+        else status
+    )
+    changes: dict[str, Any] = {"status": durable_status}
     if status in {"completed", "failed", "interrupted"}:
         changes["finishedAt"] = int(time.time() * 1000)
     if status == "failed":
