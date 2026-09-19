@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import time
 from pathlib import Path
 from typing import Any
-
-LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 from direct_probe_core import (
     BATCH_DEADLINE_SECONDS, CHECK_TIMEOUT_SECONDS, DEFAULT_CONFIG_PATH, HOST_PROBE_INPUT_SCHEMA,
