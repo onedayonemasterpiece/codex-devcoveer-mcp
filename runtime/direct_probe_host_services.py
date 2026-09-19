@@ -113,25 +113,83 @@ def _network_listeners() -> dict[str, Any]:
     return {"listeners": listeners, "count": len(listeners), "complete": True}
 
 async def _listeners(service_cfg: dict[str, Any]) -> dict[str, Any]:
-    status=await _systemctl_show(service_cfg); pid=int(status.get("MainPID") or 0)
-    registered_ports={int(p) for p in service_cfg.get("ports",[]) if isinstance(p,int) and 0<p<65536}
+    status = await _systemctl_show(service_cfg)
+    pid = int(status.get("MainPID") or 0)
+    registered_ports = {
+        int(p) for p in service_cfg.get("ports", [])
+        if isinstance(p, int) and 0 < p < 65536
+    }
+    transport = service_cfg.get("transport")
+    endpoints = [
+        str(value) for value in service_cfg.get("endpoints", [])
+        if isinstance(value, str) and value
+    ]
+    base = {
+        "unit": status["unit"],
+        "main_pid": pid or None,
+        "registered_ports": sorted(registered_ports),
+        "registered_endpoints": endpoints,
+        "transport": transport if isinstance(transport, str) and transport else (
+            "tcp" if registered_ports else "not_declared"
+        ),
+    }
     if not registered_ports:
-        return {"unit":status["unit"],"main_pid":pid or None,"registered_ports":[],"listeners":[],"complete":True}
-    socket_inodes:set[str]=set()
-    if pid>0:
+        return {
+            **base,
+            "listeners": [],
+            "complete": False,
+            "observability": "not_observable",
+            "note": (
+                "No listener ports are registered for this service; an empty result "
+                "must not be interpreted as proof that the service has no endpoint."
+            ),
+        }
+
+    socket_inodes: set[str] = set()
+    fd_scan_complete = False
+    if pid > 0:
         try:
             for fd in Path(f"/proc/{pid}/fd").iterdir():
-                try: target=os.readlink(fd)
-                except OSError: continue
-                m=re.fullmatch(r"socket:\[(\d+)\]",target)
-                if m: socket_inodes.add(m.group(1))
-        except OSError: pass
-    listeners=[]
-    for proc_file in (Path("/proc/net/tcp"),Path("/proc/net/tcp6")):
-        for _host,port,inode in _parse_proc_tcp(proc_file):
-            if port in registered_ports and (not socket_inodes or inode in socket_inodes):
-                listeners.append({"port":port,"pid":pid or None,"protocol":"tcp6" if proc_file.name=="tcp6" else "tcp"})
-    return {"unit":status["unit"],"main_pid":pid or None,"registered_ports":sorted(registered_ports),"listeners":listeners,"complete":True}
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                match = re.fullmatch(r"socket:\\[(\\d+)\\]", target)
+                if match:
+                    socket_inodes.add(match.group(1))
+            fd_scan_complete = True
+        except OSError:
+            fd_scan_complete = False
+
+    listeners = []
+    observed_ports: set[int] = set()
+    if fd_scan_complete:
+        for proc_file in (Path("/proc/net/tcp"), Path("/proc/net/tcp6")):
+            for _host, port, inode in _parse_proc_tcp(proc_file):
+                if port in registered_ports and inode in socket_inodes:
+                    observed_ports.add(port)
+                    listeners.append({
+                        "port": port,
+                        "pid": pid,
+                        "protocol": "tcp6" if proc_file.name == "tcp6" else "tcp",
+                        "ownership_verified": True,
+                    })
+
+    missing_ports = sorted(registered_ports - observed_ports)
+    complete = fd_scan_complete and not missing_ports
+    return {
+        **base,
+        "listeners": listeners,
+        "complete": complete,
+        "observability": "observed" if complete else "partial",
+        "missing_registered_ports": missing_ports,
+        "fd_scan_complete": fd_scan_complete,
+        "note": (
+            None if complete else
+            "One or more registered listener ports could not be attributed to the "
+            "service MainPID; the result is intentionally not marked complete."
+        ),
+    }
 
 def _tail_file(path: Path, lines: int, max_bytes: int = MAX_TEXT_BYTES) -> tuple[str,bool]:
     st=path.lstat()
