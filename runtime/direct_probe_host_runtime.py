@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -18,37 +19,32 @@ from direct_probe_disk_forensics import resolve_resource_target, run_resource_pr
 from direct_probe_host_services import _host_section
 
 _PROCESS_RUNTIME_SNAPSHOT_NS = time.time_ns()
+LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
-def _capture_loaded_module_fingerprints() -> dict[str, dict[str, str]]:
-    """Snapshot source hashes for modules already loaded in this MCP process.
+def _loaded_module_fingerprint(path: Path) -> dict[str, str] | None:
+    """Return an immutable import-time fingerprint for one loaded runtime module.
 
-    The snapshot is immutable for the lifetime of the process. A later on-disk
-    deployment can therefore be distinguished from code that was present when
-    this process imported the runtime modules, without executing arbitrary code.
+    Runtime modules opt in by capturing LOADED_SOURCE_SHA256 when they are
+    imported. Probe-time code only looks up that captured value; it never hashes
+    the current disk file and therefore cannot confuse a deployed-but-unloaded
+    replacement with code that is actually serving this process.
     """
-    result: dict[str, dict[str, str]] = {}
+    target = str(path)
     for name, module in tuple(sys.modules.items()):
         raw = getattr(module, "__file__", None)
-        if not isinstance(raw, str) or not raw:
+        loaded_sha = getattr(module, "LOADED_SOURCE_SHA256", None)
+        if not isinstance(raw, str) or not isinstance(loaded_sha, str):
+            continue
+        if not re.fullmatch(r"[0-9a-f]{64}", loaded_sha):
             continue
         try:
-            path = Path(raw).resolve(strict=True)
-            st = path.lstat()
-            if statmod.S_ISLNK(st.st_mode) or not statmod.S_ISREG(st.st_mode):
-                continue
-            if st.st_size > 128 * 1024 * 1024:
-                continue
-            result[str(path)] = {
-                "module": name or "<anonymous>",
-                "sha256": _sha256_path(path, 128 * 1024 * 1024),
-            }
+            if str(Path(raw).resolve(strict=True)) == target:
+                return {"module": name or "<anonymous>", "sha256": loaded_sha}
         except (OSError, ValueError):
             continue
-    return result
+    return None
 
-
-_LOADED_MODULE_FINGERPRINTS = _capture_loaded_module_fingerprints()
 
 def _disk_usage(path: Path) -> dict[str, int]:
     v = os.statvfs(path)
@@ -205,7 +201,7 @@ async def _runtime_file(binding: dict[str, Any], check: dict[str, Any]) -> dict[
         raise ProbeError("file_type", "runtime file must be regular and non-symlink", status="denied")
     digest = await asyncio.to_thread(_sha256_path, path, 128 * 1024 * 1024)
 
-    loaded = _LOADED_MODULE_FINGERPRINTS.get(str(path))
+    loaded = _loaded_module_fingerprint(path)
     loaded_sha = loaded.get("sha256") if isinstance(loaded, dict) else None
     loaded_module = loaded.get("module") if isinstance(loaded, dict) else None
     matches = digest == loaded_sha if isinstance(loaded_sha, str) else None
