@@ -1,6 +1,6 @@
 # Direct Ops 2 - liberal typed operator surface
 
-Status: implementation slice started 2026-09-20.
+Status: production-accepted operator surface as of 2026-09-20. The remaining roadmap is intentionally narrow.
 
 Codex DevCoveer should not start OpenCode for work that is deterministic once the operation is known. The direct surface is intentionally liberal. The hard boundary is narrow: no caller-supplied arbitrary shell/eval, no arbitrary sudo or host path/systemd unit, no secrets/env/cookies/private browser state, no force push, no unconditional destructive reset, and no arbitrary authenticated HTTP request.
 
@@ -25,15 +25,8 @@ Host writes:
 Recovery rule:
 A dirty production checkout is evidence, not permission to reset. workspace_compare answers which files already match a target release and which are independent recovery changes. capture_handoff preserves the actual overlay before any convergence.
 
-To-be, using the same typed design rather than project-specific one-off tools:
-- registered host-root read/stat/hash and process-tree/sanitized argv/cwd;
-- DNS/TCP/TLS and bounded unauthenticated HTTP rollout probes with SSRF denial;
-- MCP runtime capability manifest with version/tool/schema digest;
-- generic release_materialize/release_deploy/release_activate/edge_route_publish and generic deployment receipts;
-- daemon-reload plus registered unit/drop-in materialization through host_files;
-- asynchronous deterministic jobs and cancellation/status for long builds/deployments;
-- fail-fast batch actions with per-step receipts;
-- guarded workspace restore/reconcile that requires a prior capture receipt.
+Remaining roadmap:
+- generic release/deploy/activate/edge-route primitives and generic deployment receipts, replacing the remaining product-specific deployment operators where that abstraction is actually useful.
 
 Capabilities should evolve independently by contract. They must not be coupled to another project's SHA.
 
@@ -61,9 +54,7 @@ Implemented after the initial Direct Ops 2 project slice:
 - delete_registered_file with alias-only addressing and optional expected SHA-256.
 
 Still to-be:
-- generic release materialization/deploy/activate/edge-route receipts;
-- async deterministic jobs and typed batch actions;
-- guarded workspace reconcile tied to a capture receipt;
+- generic release materialization/deploy/activate/edge-route receipts.
 
 ## Project-owned runtime worktrees and guarded reconciliation
 
