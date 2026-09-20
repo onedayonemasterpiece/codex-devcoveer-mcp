@@ -336,4 +336,3 @@ def test_stale_watcher_cannot_overwrite_fresh_cancelling_busy_state():
     assert result["task"]["status"] == "cancelling"
     assert durable["status"] == "cancelling"
     assert stale["status"] == "running"
-
