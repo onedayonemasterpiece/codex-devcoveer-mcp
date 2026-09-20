@@ -15,6 +15,7 @@ from direct_probe_core import (
     _load_config,
     _redact_text,
     _run_process,
+    _safe_worktree_path,
     _validate_alias,
     _validate_branch,
 )
@@ -26,6 +27,8 @@ ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 SECRET_ENV_RE = re.compile(r"(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|AUTH|COOKIE)", re.I)
 MAX_ACTION_OUTPUT = 256 * 1024
 MAX_ACTION_TIMEOUT = 3600.0
+ARG_RE = re.compile(r"^[^\\x00\\r\\n]{0,500}$")
+NPM_SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,79}$")
 
 _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
     "oneOf": [
@@ -40,6 +43,24 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
                 "expected_sha": {"type": "string", "pattern": r"^[0-9a-f]{40}$"},
             },
             "required": ["kind", "remote", "branch", "expected_sha"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "kind": {"const": "run_tool"},
+                "tool": {"type": "string", "enum": [
+                    "pytest", "bash_script", "python_script", "node_script", "npm_script"
+                ]},
+                "path": {"type": "string", "minLength": 1, "maxLength": 500},
+                "script": {"type": "string", "minLength": 1, "maxLength": 80,
+                           "pattern": r"^[A-Za-z0-9][A-Za-z0-9:._-]*$"},
+                "cwd": {"type": "string", "maxLength": 500},
+                "args": {"type": "array", "maxItems": 64,
+                         "items": {"type": "string", "maxLength": 500}},
+                "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+            },
+            "required": ["kind", "tool"],
             "additionalProperties": False,
         },
         {
@@ -236,6 +257,90 @@ async def _sync_ff(root: Path, binding: dict[str, Any], action: dict[str, Any], 
     }
 
 
+def _project_cwd(root: Path, raw: str | None) -> Path:
+    if raw in (None, "", "."):
+        return root.resolve(strict=True)
+    return _safe_worktree_path(root, raw, require_file=False)
+
+
+def _args(action: dict[str, Any]) -> list[str]:
+    values = action.get("args") or []
+    if not isinstance(values, list) or len(values) > 64:
+        raise ProbeError("invalid_input", "args must be a bounded array")
+    out: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not ARG_RE.fullmatch(value):
+            raise ProbeError("invalid_input", "argument contains a denied character or is too long")
+        out.append(value)
+    return out
+
+
+def _fixed_executable(*candidates: str) -> str:
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.is_file() and os.access(path, os.X_OK):
+            return candidate
+    raise ProbeError("tool_unavailable", "requested direct project tool is not installed", status="unavailable")
+
+
+async def _run_tool(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    tool = action["tool"]
+    cwd = _project_cwd(root, action.get("cwd"))
+    args = _args(action)
+    timeout = float(action.get("timeout_seconds", 900))
+    if not (1 <= timeout <= MAX_ACTION_TIMEOUT):
+        raise ProbeError("invalid_input", "tool timeout is out of bounds")
+
+    if tool == "pytest":
+        argv = ["/usr/bin/python3", "-m", "pytest", *args]
+    elif tool in {"bash_script", "python_script", "node_script"}:
+        raw_path = action.get("path")
+        if not isinstance(raw_path, str):
+            raise ProbeError("invalid_input", f"{tool} requires path")
+        script = _safe_worktree_path(root, raw_path, require_file=True)
+        if tool == "python_script":
+            if script.suffix != ".py":
+                raise ProbeError("invalid_input", "python_script requires a .py repository file")
+            executable = "/usr/bin/python3"
+        elif tool == "node_script":
+            if script.suffix not in {".js", ".mjs", ".cjs"}:
+                raise ProbeError("invalid_input", "node_script requires a .js/.mjs/.cjs repository file")
+            executable = _fixed_executable("/usr/local/bin/node", "/usr/bin/node")
+        else:
+            executable = "/usr/bin/bash"
+        argv = [executable, str(script), *args]
+    elif tool == "npm_script":
+        script = action.get("script")
+        if not isinstance(script, str) or NPM_SCRIPT_RE.fullmatch(script) is None:
+            raise ProbeError("invalid_input", "npm_script requires a safe script name")
+        package_json = cwd / "package.json"
+        if not package_json.is_file() or package_json.is_symlink():
+            raise ProbeError("not_found", "package.json is missing in requested project cwd", status="not_found")
+        executable = _fixed_executable("/usr/local/bin/npm", "/usr/bin/npm")
+        argv = [executable, "run", "--silent", script]
+        if args:
+            argv.extend(["--", *args])
+    else:
+        raise ProbeError("invalid_input", f"unknown direct project tool {tool!r}")
+
+    result = await _run_process(
+        argv, cwd=cwd, env=_action_env({}), timeout=timeout, output_limit=MAX_ACTION_OUTPUT,
+    )
+    stdout, out_red = _decode(result, "stdout")
+    stderr, err_red = _decode(result, "stderr")
+    return {
+        "status": "ok" if result.exit_code == 0 else "failed",
+        "action": "run_tool",
+        "tool": tool,
+        "exit_code": result.exit_code,
+        "duration_ms": result.duration_ms,
+        "stdout": stdout,
+        "stderr": stderr,
+        "truncated": result.truncated,
+        "redacted": out_red or err_red,
+    }
+
+
 def _profile(binding: dict[str, Any], section: str, name: str) -> dict[str, Any]:
     name = _validate_alias(name)
     profiles = binding.get(section) or {}
@@ -402,6 +507,8 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
     kind = action["kind"]
     if kind == "sync_ff":
         return await _sync_ff(root, binding, action, handoff=handoff)
+    if kind == "run_tool":
+        return await _run_tool(root, action)
     if kind == "run_profile":
         return await _run_profile(root, binding, action["profile"], section="project_actions", handoff=handoff)
     if kind == "handoff_commit_push":
