@@ -44,7 +44,8 @@ def test_clean_host_installer_does_not_use_bootstrap_as_source() -> None:
 def test_clean_host_installer_accepts_probes_before_tunnel_switch() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
     required_tools = (
-        "project_probe", "host_probe", "list_models", "start_task", "read_task",
+        "project_probe", "host_probe", "project_action", "host_action",
+        "list_models", "start_task", "read_task",
         "stage_source_handoff", "cleanup_source_handoff",
         "street_story_materialize_release", "street_story_deploy_user_service",
         "street_story_publish_edge_route", "street_story_service",
@@ -81,11 +82,13 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
         assert 'name="project_probe"' in bridge
         assert 'name="host_probe"' in bridge
+        assert 'name="project_action"' in bridge
+        assert 'name="host_action"' in bridge
         assert 'reason = "adaptive_opencode_default"' in bridge
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.13.0-street-story-deploy"' in bridge
+        assert 'BRIDGE_VERSION = "3.14.0-direct-ops"' in bridge
         assert 'name="stage_source_handoff"' in bridge
         assert 'name="cleanup_source_handoff"' in bridge
         assert 'name="street_story_materialize_release"' in bridge
@@ -105,11 +108,32 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert '"tools": tools' not in backend
         assert '"title": title[:200]' not in backend
         for name in (
-            "direct_probes.py", "direct_probe_disk_forensics.py",
+            "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py",
             "direct_probe_config.json", "opencode_backend.py",
             "source_handoff.py", "street_story_operator.py",
         ):
             assert (out / name).is_file()
+
+
+def test_direct_action_profiles_are_registered_for_mcp_rollout() -> None:
+    config = json.loads(
+        (ROOT / "runtime" / "direct_probe_config.json").read_text(encoding="utf-8")
+    )
+    binding = config["projects"]["codex-devcoveer-mcp"]
+    actions = binding["project_actions"]
+    assert actions["tests"]["argv"] == ["/usr/bin/python3", "-m", "pytest", "-q"]
+    assert actions["tests"]["allow_handoff"] is True
+    assert actions["canonical_install"]["argv"] == [
+        "/usr/bin/bash", "scripts/install-current-canonical-runtime.sh"
+    ]
+    assert actions["canonical_install"]["env"]["DEVCOVEER_SKIP_TUNNEL_RESTART"] == "1"
+
+
+def test_direct_rollout_can_defer_self_restart() -> None:
+    source = INSTALLER.read_text(encoding="utf-8")
+    assert 'DEVCOVEER_SKIP_TUNNEL_RESTART' in source
+    assert 'tunnel_restart=DEFERRED' in source
+    assert '"project_action","host_action"' in source
 
 
 def test_my_browser_bridge_is_registered_for_host_observability() -> None:
