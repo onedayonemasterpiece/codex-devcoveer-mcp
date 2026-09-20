@@ -97,6 +97,13 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
                              finishedAt=int(time.time() * 1000))
         return {"status": "failed", "task": _registry_public(TASK_REGISTRY.get(record["taskId"]) or record),
                 "errorCategory": exc.category, "content": str(exc)}
+    # Re-read the durable lifecycle after the async backend inspection.  A
+    # cancel request or another watcher may have changed the registry while
+    # inspect() was in flight; decisions based on the caller's stale record can
+    # otherwise resurrect a cancelling/terminal writer as running.
+    lifecycle = TASK_REGISTRY.get(record["taskId"]) or record
+    lifecycle_status = str(lifecycle.get("status") or record.get("status") or "")
+
     status = inspected["status"]
     inspected_error = inspected.get("error")
     if (
@@ -106,7 +113,7 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     ):
         status = "interrupted"
     if status == "idle" and inspected.get("finalResponse") is None:
-        if record.get("status") == "cancelling":
+        if lifecycle_status == "cancelling":
             status = "interrupted"
         elif int(time.time() * 1000) - int(record.get("createdAt") or 0) < 900_000:
             status = "running"
@@ -116,18 +123,23 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     provider_state = inspected.get("providerState")
     provider_state_type = provider_state.get("type") if isinstance(provider_state, dict) else None
     if (
-        record.get("status") == "cancelling"
+        lifecycle_status == "cancelling"
         and status == "running"
         and (inspected.get("sessionStatus") == "idle" or provider_state_type == "idle")
     ):
         status = "interrupted"
 
-    groq_fallback = await _maybe_auto_groq_fallback(record, inspected, status=status)
+    terminal_statuses = {"completed", "failed", "interrupted"}
+    if lifecycle_status in terminal_statuses and status not in terminal_statuses:
+        status = lifecycle_status
+
+    groq_fallback = await _maybe_auto_groq_fallback(lifecycle, inspected, status=status)
     if groq_fallback is not None:
         return groq_fallback
+
     durable_status = (
         "cancelling"
-        if record.get("status") == "cancelling" and status == "running"
+        if lifecycle_status == "cancelling" and status == "running"
         else status
     )
     changes: dict[str, Any] = {"status": durable_status}
@@ -195,6 +207,16 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
         all_changes = {**changes, **reg_changes}
         updated = TASK_REGISTRY.update(record["taskId"], **all_changes)
     else:
+        # Refresh one final time immediately before the registry write.  This
+        # closes the narrower race where cancel_task marks the task cancelling
+        # after inspect() completed but before this watcher commits readback.
+        commit_lifecycle = TASK_REGISTRY.get(record["taskId"]) or lifecycle
+        commit_status = str(commit_lifecycle.get("status") or "")
+        if commit_status == "cancelling" and changes.get("status") == "running":
+            changes["status"] = "cancelling"
+        elif commit_status in terminal_statuses and changes.get("status") not in terminal_statuses:
+            changes["status"] = commit_status
+            status = commit_status
         updated = TASK_REGISTRY.update(record["taskId"], **changes)
 
     payload = {
