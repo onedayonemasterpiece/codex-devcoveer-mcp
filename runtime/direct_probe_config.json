@@ -94,66 +94,48 @@
       },
       "services": {
         "server": {
-          "unit": "vibepublish-acceptance-20260905-server.service",
+          "unit": "vibepublish.service",
           "scope": "user",
           "ports": [
-            18766
+            18765
           ],
-          "executable": "/home/dev/projects/vibepublish-acceptance-20260905/.venv/bin/python",
-          "working_directory": "/home/dev/projects/vibepublish-acceptance-20260905"
-        },
-        "worker": {
-          "unit": "vibepublish-acceptance-20260905-worker.service",
-          "scope": "user",
-          "ports": [],
-          "executable": "/home/dev/projects/vibepublish-acceptance-20260905/.venv/bin/python",
-          "working_directory": "/home/dev/projects/vibepublish-acceptance-20260905"
+          "executable": "/home/dev/.local/opt/vibepublish/bin/python",
+          "working_directory": "/home/dev/projects/vibepublish"
         }
       },
       "logs": {
         "server": {
           "type": "journal",
           "service": "server"
-        },
-        "worker": {
-          "type": "journal",
-          "service": "worker"
         }
       },
       "roots": {
-        "runtime_source": "/home/dev/projects/vibepublish-acceptance-20260905",
-        "runtime_state": "/home/dev/.local/state/vibepublish-acceptance-20260905"
+        "runtime_source": "/home/dev/projects/vibepublish",
+        "runtime_state": "/home/dev/.local/state/vibepublish"
       },
-      "health": {
-        "server": {
-          "url": "http://127.0.0.1:18766/health",
-          "methods": [
-            "GET",
-            "HEAD"
-          ],
-          "timeout_seconds": 2,
-          "body_bytes": 4096
-        }
-      },
+      "health": {},
       "runtimes": {
         "python": {
           "type": "cli",
           "argv": [
-            "/home/dev/projects/vibepublish-acceptance-20260905/.venv/bin/python",
+            "/home/dev/.local/opt/vibepublish/bin/python",
             "--version"
           ]
         },
         "telethon": {
           "type": "package",
-          "python": "/home/dev/projects/vibepublish-acceptance-20260905/.venv/bin/python",
+          "python": "/home/dev/.local/opt/vibepublish/bin/python",
           "distribution": "Telethon"
         }
       },
       "runtime_files": {
-        "server_source": "/home/dev/projects/vibepublish-acceptance-20260905/deploy/devcoveer/serve.py",
-        "worker_source": "/home/dev/projects/vibepublish-acceptance-20260905/deploy/devcoveer/native_worker.py"
+        "server_source": "/home/dev/projects/vibepublish/deploy/devcoveer/serve.py",
+        "production_worker": "/home/dev/projects/vibepublish/deploy/devcoveer/production_worker.py"
       },
-      "config_presence": {}
+      "config_presence": {
+        "owner_token": "/home/dev/.local/state/vibepublish/owner-token.txt",
+        "database": "/home/dev/.local/state/vibepublish/vibepublish.sqlite3"
+      }
     },
     "dataset-loop-mcp": {
       "github_repo": "onedayonemasterpiece/dataset-loop-mcp",
@@ -195,6 +177,65 @@
       "runtimes": {},
       "runtime_files": {},
       "config_presence": {}
+    },
+    "street-story": {
+      "github_repo": "onedayonemasterpiece/street-story",
+      "remotes": {
+        "origin": "onedayonemasterpiece/street-story"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {
+        "backend": {
+          "unit": "street-story.service",
+          "scope": "user",
+          "ports": [
+            8188
+          ],
+          "executable": "/home/dev/.local/share/street-story/current/venv/bin/uvicorn",
+          "working_directory": "/home/dev/.local/share/street-story/current/source"
+        }
+      },
+      "logs": {
+        "backend": {
+          "type": "journal",
+          "service": "backend"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/street-story",
+        "releases": "/home/dev/.local/share/street-story/releases",
+        "runtime_state": "/home/dev/.local/state/street-story"
+      },
+      "health": {
+        "backend": {
+          "url": "http://127.0.0.1:8188/healthz",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 3,
+          "body_bytes": 4096
+        }
+      },
+      "runtimes": {
+        "python": {
+          "type": "cli",
+          "argv": [
+            "/home/dev/.local/share/street-story/current/venv/bin/python",
+            "--version"
+          ]
+        }
+      },
+      "runtime_files": {
+        "app": "/home/dev/.local/share/street-story/current/source/backend/street_story/app.py",
+        "service_env": "/home/dev/.local/state/street-story/service.env",
+        "provider_env": "/home/dev/.local/state/street-story/providers.env"
+      },
+      "config_presence": {
+        "device_token": "/home/dev/.local/state/street-story/device-token"
+      }
     }
   }
 }
