@@ -78,7 +78,7 @@ class RoutingBackend(OpenCodeBackend):
         result['sessionStatus'] = state.get('type', 'idle')
         if result['sessionStatus'] in ('busy', 'retry'): result['status'] = 'running'
         elif result['error']: result['status'] = 'failed'
-        elif info.get('time', {}).get('completed') and text: result['status'] = 'completed'
+        elif info.get('time', {}).get('completed'): result['status'] = 'completed'
         else:
             user_time = messages[last_user].get('info', {}).get('time', {}).get('created', 0) if last_user >= 0 else 0
             result['status'] = 'running' if user_time and time.time() * 1000 - user_time < 900_000 else 'idle'

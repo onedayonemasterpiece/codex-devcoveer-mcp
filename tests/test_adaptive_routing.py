@@ -190,6 +190,10 @@ def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     assert "for msg in reversed(messages):" in read_task
     assert "latest assistant turn" in read_task
 
+    routing = (RUNTIME / "opencode_routing.py").read_text(encoding="utf-8")
+    assert "elif info.get('time', {}).get('completed'): result['status'] = 'completed'" in routing
+    assert "elif info.get('time', {}).get('completed') and text:" not in routing
+
 
 def test_backend_patches_are_bounded_and_include_runtime_observability():
     patch1 = ROOT / "patches" / "opencode_backend_adaptive.patch.1"
