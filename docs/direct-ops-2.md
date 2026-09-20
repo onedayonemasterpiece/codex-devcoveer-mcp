@@ -83,3 +83,15 @@ Implemented:
 - instrumentation with a package-bound runner and bounded typed extras.
 
 There is intentionally no arbitrary adb shell, push, pull or unrestricted device filesystem access. Gradle wrapper tasks are already covered by the Direct Ops 2 project runner.
+
+## Durable direct jobs and typed batches
+
+Long deterministic work is no longer a reason to start an agent.
+
+Implemented:
+- job_start runs the same allowlisted project run_tool surface in a private systemd user transient job, with a fixed runner, bounded timeout and private spec/result files;
+- job_status reads durable redacted results even after the transient unit exits;
+- job_cancel and job_cleanup are bound to the exact project/worktree that created the job;
+- project batch executes up to 20 already-typed project actions sequentially, fail-fast, with no nested batch.
+
+Jobs do not accept an arbitrary executable, shell string or environment. Batch does not enlarge the set of allowed effects; it only reduces orchestration round trips.

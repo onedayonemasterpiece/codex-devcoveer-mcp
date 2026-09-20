@@ -28,6 +28,7 @@ from direct_ops2 import (
 from direct_ops2_host import daemon_reload, delete_registered_file
 from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
 from direct_ops2_android import adb_action
+from direct_jobs import cancel_job, cleanup_job, job_status, start_job
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -108,8 +109,23 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"owned_service_action"},"unit":{"type":"string","minLength":1,"maxLength":200,"pattern":r"^[A-Za-z0-9_.@:-]+\.service$"},"operation":{"type":"string","enum":["status","start","stop","restart","reload","enable","disable"]}},"required":["kind","unit","operation"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"adb"},"operation":{"type":"string","enum":["install","uninstall","force_stop","clear_data","start_activity","instrument"]},"serial":{"type":"string","minLength":1,"maxLength":128},"worktree":{"type":"string","minLength":1,"maxLength":1000},"apk":{"type":"string","minLength":1,"maxLength":500},"package":{"type":"string","minLength":2,"maxLength":255},"component":{"type":"string","minLength":3,"maxLength":512},"runner":{"type":"string","minLength":3,"maxLength":512},"extras":{"type":"object","maxProperties":32,"additionalProperties":{"oneOf":[{"type":"string","maxLength":1000},{"type":"integer"},{"type":"boolean"}]}},"confirm_clear_data":{"type":"boolean"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":1800}},"required":["kind","operation"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_start"},"tool":{"type":"string","enum":["pytest","bash_script","python_script","node_script","npm_script","pnpm_script","yarn_script","gradle_task","make_target","python_module"]},"path":{"type":"string","minLength":1,"maxLength":500},"script":{"type":"string","minLength":1,"maxLength":200},"cwd":{"type":"string","maxLength":500},"args":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":500}},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600}},"required":["kind","tool"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_status"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_cancel"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_cleanup"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
     ]
 }
+
+_BATCH_STEP_SCHEMA = {"oneOf": list(_PROJECT_ACTION_SCHEMA["oneOf"])}
+_PROJECT_ACTION_SCHEMA["oneOf"].append({
+    "type":"object",
+    "properties":{
+        "kind":{"const":"batch"},
+        "steps":{"type":"array","minItems":1,"maxItems":20,"items":_BATCH_STEP_SCHEMA},
+    },
+    "required":["kind","steps"],
+    "additionalProperties":False,
+})
 
 PROJECT_ACTION_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -534,12 +550,38 @@ async def _handoff_commit_push(root: Path, binding: dict[str, Any], action: dict
             "commit_sha": commit_sha, "reused_commit": False}
 
 
+async def _run_batch(project_root: str, project_id: str, action: dict[str, Any], *,
+                     config_path: Path | None) -> dict[str, Any]:
+    results=[]
+    for index,step in enumerate(action["steps"]):
+        try:
+            result=await run_project_action(project_root,project_id,step,config_path=config_path)
+        except ProbeError as exc:
+            message,redacted=_redact_text(str(exc))
+            return {"status":"failed","action":"batch","failed_index":index,"results":results,
+                    "error":{"category":exc.category,"message":message[:2000]},"redacted":redacted}
+        results.append(result)
+        if isinstance(result,dict) and result.get("status") in {"failed","error","denied","timeout"}:
+            return {"status":"failed","action":"batch","failed_index":index,"results":results}
+    return {"status":"ok","action":"batch","results":results}
+
+
 async def run_project_action(project_root: str, project_id: str, action: dict[str, Any], *,
                              config_path: Path | None = None) -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
     binding_id, handoff, meta = _handoff_binding(root, project_id)
     binding = _binding(_load_config(config_path or DEFAULT_CONFIG_PATH), binding_id)
     kind = action["kind"]
+    if kind == "batch":
+        return await _run_batch(project_root, project_id, action, config_path=config_path)
+    if kind == "job_start":
+        return await start_job(root, action)
+    if kind == "job_status":
+        return await job_status(root, action["job_id"])
+    if kind == "job_cancel":
+        return await cancel_job(root, action["job_id"])
+    if kind == "job_cleanup":
+        return cleanup_job(root, action["job_id"])
     if kind == "sync_ff":
         return await _sync_ff(root, binding, action, handoff=handoff)
     if kind == "run_tool":
