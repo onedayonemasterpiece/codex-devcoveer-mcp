@@ -261,6 +261,7 @@
           "argv": [
             "/usr/bin/systemctl",
             "--user",
+            "--machine=dev@.host",
             "show",
             "vibepublish-worker.service",
             "--no-pager",
