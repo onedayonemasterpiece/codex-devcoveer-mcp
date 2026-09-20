@@ -83,6 +83,31 @@ def test_user_systemctl_receives_fixed_user_bus_environment(monkeypatch):
     assert data["ActiveState"] == "active"
 
 
+def test_systemctl_show_allows_explicit_safe_extra_properties(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_run_process(argv, *, env, timeout, output_limit):
+        captured["argv"] = argv
+        return dp.ProcessResult(
+            b"LoadState=loaded\nExecStart={ path=/usr/bin/example ; argv[]=/usr/bin/example --flag ; }\nProtectHome=read-only\n",
+            b"",
+            0,
+            False,
+            1,
+        )
+
+    monkeypatch.setattr(host_services, "_run_process", fake_run_process)
+    data = run(host_services._systemctl_show({
+        "unit": "fixture.service",
+        "scope": "user",
+        "show_properties": ["ExecStart", "ProtectHome"],
+    }))
+
+    property_arg = next(item for item in captured["argv"] if item.startswith("--property="))
+    assert "ExecStart" in property_arg and "ProtectHome" in property_arg
+    assert data["ProtectHome"] == "read-only"
+
+
 def test_system_scope_does_not_receive_user_bus_environment():
     env = host_services._systemd_env("system")
     assert "XDG_RUNTIME_DIR" not in env

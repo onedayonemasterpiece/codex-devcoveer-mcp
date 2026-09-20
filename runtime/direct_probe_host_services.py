@@ -10,6 +10,23 @@ from typing import Any
 from direct_probe_core import MAX_LOG_LINES, MAX_TEXT_BYTES, ProbeError, _redact_text, _run_process, _validate_alias
 
 UNIT_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
+_BASE_SYSTEMD_SHOW_PROPERTIES = (
+    "LoadState",
+    "ActiveState",
+    "SubState",
+    "MainPID",
+    "ExecMainStartTimestamp",
+    "NRestarts",
+    "FragmentPath",
+    "WorkingDirectory",
+)
+_OPTIONAL_SYSTEMD_SHOW_PROPERTIES = frozenset({
+    "ExecStart",
+    "ProtectHome",
+    "ReadWritePaths",
+    "ReadOnlyPaths",
+    "InaccessiblePaths",
+})
 
 def _systemd_env(scope: str) -> dict[str, str]:
     env = {
@@ -33,15 +50,27 @@ async def _systemctl_show(service: dict[str, Any]) -> dict[str, Any]:
     unit = service.get("unit"); scope = service.get("scope", "user")
     if not isinstance(unit, str) or not re.fullmatch(r"[A-Za-z0-9_.@:-]+\.service", unit) or scope not in {"user","system"}:
         raise ProbeError("config", "service binding is invalid")
-    argv = ["/usr/bin/systemctl"] + (["--user"] if scope == "user" else []) + ["show", unit, "--no-pager", "--property=LoadState,ActiveState,SubState,MainPID,ExecMainStartTimestamp,NRestarts,FragmentPath,WorkingDirectory"]
+    extra = service.get("show_properties", [])
+    if (not isinstance(extra, list)
+            or not all(isinstance(item, str) and item in _OPTIONAL_SYSTEMD_SHOW_PROPERTIES for item in extra)):
+        raise ProbeError("config", "service show_properties contains a non-allowlisted property")
+    properties = list(_BASE_SYSTEMD_SHOW_PROPERTIES)
+    for item in extra:
+        if item not in properties:
+            properties.append(item)
+    argv = ["/usr/bin/systemctl"] + (["--user"] if scope == "user" else []) + [
+        "show", unit, "--no-pager", f"--property={','.join(properties)}"
+    ]
     result = await _run_process(argv, env=_systemd_env(scope), timeout=4.0, output_limit=16*1024)
     if result.exit_code != 0:
         err = result.stderr.decode("utf-8","replace")
         raise ProbeError("service", err.strip() or f"systemctl exited {result.exit_code}", exit_code=result.exit_code)
+    output, redacted = _redact_text(result.stdout.decode("utf-8","replace"))
     props: dict[str, Any] = {}
-    for line in result.stdout.decode("utf-8","replace").splitlines():
+    for line in output.splitlines():
         key,_,value = line.partition("="); props[key]=value
     props["unit"]=unit; props["scope"]=scope
+    if redacted: props["redacted"] = True
     if service.get("executable"): props["executable"] = service["executable"]
     if service.get("working_directory"): props["configured_working_directory"] = service["working_directory"]
     return props
