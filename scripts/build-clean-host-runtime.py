@@ -20,7 +20,7 @@ DIRECT_FILES = (
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
-    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_ops2_android.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py",
+    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_ops2_android.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py",
 )
 
 def sha(path: Path) -> str:
@@ -34,7 +34,7 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.20.0-direct-ops2"', "version")
+                          'BRIDGE_VERSION = "3.21.0-direct-ops2"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -66,6 +66,12 @@ from street_story_operator import (
     OperatorError as StreetStoryOperatorError,
     StreetStoryOperator,
 )
+from direct_ops_gateway import (
+    DIRECT_OPS_V2_INPUT_SCHEMA,
+    run_direct_ops_v2 as _run_direct_ops_v2,
+)
+from direct_tool_catalog import build_tool_refresh_listen_handler
+from mcp.server import NotificationOptions
 """
     source = replace_once(source, import_anchor, direct_import, "direct-probe import")
     schema_anchor = "\nTOOLS = [\n"
@@ -165,7 +171,14 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
         "source-handoff schemas",
     )
     tool_anchor = '    types.Tool(name="council_run", title="Run multi-model council",\n'
-    tool_block = '''    types.Tool(name="project_probe", title="Read deterministic project facts",
+    tool_block = '''    types.Tool(name="direct_ops_v2", title="Run stable Direct Ops gateway",
+        description=("Cache-resistant deterministic project/host operator gateway. "
+            "The client schema stays stable while the server validates operation+payload "
+            "against the current strict Direct Ops schemas."),
+        input_schema=DIRECT_OPS_V2_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=True,
+            idempotent_hint=False, open_world_hint=True)),
+    types.Tool(name="project_probe", title="Read deterministic project facts",
         description=("Read bounded deterministic project facts without starting an agent task. "
             "Use this for Git state, files, hashes, searches, and narrowly scoped CI status."),
         input_schema=PROJECT_PROBE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
@@ -237,7 +250,8 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
 '''
     source = replace_once(source, tool_anchor, tool_block + tool_anchor, "tool catalog")
     validator_anchor = '    "council_run": Draft202012Validator(COUNCIL_RUN_INPUT_SCHEMA),\n'
-    validators = ('    "project_probe": Draft202012Validator(PROJECT_PROBE_INPUT_SCHEMA),\n'
+    validators = ('    "direct_ops_v2": Draft202012Validator(DIRECT_OPS_V2_INPUT_SCHEMA),\n'
+                  '    "project_probe": Draft202012Validator(PROJECT_PROBE_INPUT_SCHEMA),\n'
                   '    "host_probe": Draft202012Validator(HOST_PROBE_INPUT_SCHEMA),\n'
                   '    "project_action": Draft202012Validator(PROJECT_ACTION_INPUT_SCHEMA),\n'
                   '    "host_action": Draft202012Validator(HOST_ACTION_INPUT_SCHEMA),\n'
@@ -295,7 +309,29 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     source = replace_once(source, project_anchor, project_with_handoff,
                           "source-handoff project resolver")
     handler_anchor = '        if name == "council_run":\n'
-    handlers = '''        if name == "project_probe":
+    handlers = '''        if name == "direct_ops_v2":
+            assert project is not None
+            try:
+                result = await _run_direct_ops_v2(
+                    project.path,
+                    project.canonical,
+                    arguments["plane"],
+                    arguments["operation"],
+                    arguments.get("payload") or {},
+                )
+                return _tool_result(
+                    result,
+                    error=isinstance(result, dict)
+                    and result.get("status") in {"failed", "error", "denied", "timeout"},
+                )
+            except ProbeError as exc:
+                payload = {"status": exc.status, "errorCategory": exc.category,
+                           "message": str(exc)}
+                if exc.exit_code is not None:
+                    payload["exitCode"] = exc.exit_code
+                return _tool_result(payload, error=True)
+
+        if name == "project_probe":
             assert project is not None
             try:
                 return _tool_result(await _run_project_probe(
@@ -409,6 +445,51 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
 
 '''
     source = replace_once(source, handler_anchor, handlers + handler_anchor, "probe dispatch")
+
+    # tool-list refresh capability transform
+    refresh_anchor = """    task_lifecycle_lock = anyio.Lock()
+
+    async def list_tools(_ctx: Any, _params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=TOOLS)
+"""
+    refresh_replacement = """    task_lifecycle_lock = anyio.Lock()
+    tool_refresh_listen_handler = build_tool_refresh_listen_handler()
+    legacy_tool_refresh_sessions: set[int] = set()
+
+    async def list_tools(_ctx: Any, _params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        session_key = id(_ctx.session)
+        if session_key not in legacy_tool_refresh_sessions:
+            legacy_tool_refresh_sessions.add(session_key)
+            try:
+                await _ctx.session.send_tool_list_changed()
+            except Exception:
+                log.debug("legacy tools/list_changed notification failed", exc_info=True)
+        return types.ListToolsResult(tools=TOOLS)
+"""
+    source = replace_once(
+        source, refresh_anchor, refresh_replacement, "tool-list refresh handler"
+    )
+    source = replace_once(
+        source,
+        """        on_list_tools=list_tools, on_call_tool=call_tool,
+    )
+""",
+        """        on_list_tools=list_tools, on_call_tool=call_tool,
+        on_subscriptions_listen=tool_refresh_listen_handler,
+    )
+""",
+        "subscriptions listen",
+    )
+    source = replace_once(
+        source,
+        """            server.create_initialization_options(),
+""",
+        """            server.create_initialization_options(
+                NotificationOptions(tools_changed=True)
+            ),
+""",
+        "legacy tools changed capability",
+    )
     spec = importlib.util.spec_from_file_location("restore_contract", ROOT / "scripts" / "restore-integration-contract.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -107,3 +107,27 @@ Implemented:
 - github_branch_delete: delete only chatgpt/* remote branches after exact SHA verification.
 
 These operations use the actual GitHub remote of the resolved project (or a stricter configured binding). No arbitrary GitHub API path is exposed.
+
+## Schema refresh and stable Direct Ops gateway
+
+The previous Direct Ops 2 rollout exposed a client-cache failure mode: the live MCP
+server returned new variants inside project_probe, project_action, host_probe and
+host_action, but the top-level tool names and tool count did not change. A ChatGPT
+connector could therefore retain an older JSON schema and reject a valid new
+operation before the request ever reached DevCoveer.
+
+The contract now fixes both layers:
+
+- the MCP server advertises tools.listChanged in legacy and 2026-07-28+ protocol eras;
+- modern clients receive an initial ToolsListChanged event through
+  subscriptions/listen; legacy sessions receive one on their first tools/list;
+- direct_ops_v2 is a new top-level tool with a deliberately stable envelope:
+  project + plane + operation + payload;
+- operation is intentionally not a client-side enum. The server re-validates
+  payload against the current strict concrete project/host probe/action schema.
+  Adding future typed operations therefore does not require changing the
+  ChatGPT-side schema for direct_ops_v2.
+
+The older strongly typed top-level tools remain available for compatibility and
+ergonomics when the client has a fresh schema. direct_ops_v2 is the cache-resistant
+operator surface and should be preferred when schema freshness is uncertain.
