@@ -534,7 +534,7 @@ class StreetStoryOperator:
                 "content": {"text": f"Street Story deployment preflight for {sha[:12]}. Preview only; do not dispatch."},
                 "mode": "preview",
             },
-            request_key=f"street-story-deploy-preview-{sha[:24]}",
+            request_key=f"street-story-deploy-preview-v2-{sha[:24]}",
         )
         operation_id = str(operation.get("operation_id") or "")
         if not operation_id:
