@@ -88,7 +88,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.16.0-direct-ops2"' in bridge
+        assert 'BRIDGE_VERSION = "3.17.0-direct-ops2"' in bridge
         assert 'name="stage_source_handoff"' in bridge
         assert 'name="cleanup_source_handoff"' in bridge
         assert 'name="street_story_materialize_release"' in bridge
@@ -108,7 +108,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert '"tools": tools' not in backend
         assert '"title": title[:200]' not in backend
         for name in (
-            "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py",
+            "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py",
             "direct_probe_config.json", "opencode_backend.py",
             "source_handoff.py", "street_story_operator.py",
         ):
