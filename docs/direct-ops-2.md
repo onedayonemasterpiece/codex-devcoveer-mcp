@@ -37,3 +37,19 @@ To-be, using the same typed design rather than project-specific one-off tools:
 - guarded workspace restore/reconcile that requires a prior capture receipt.
 
 Capabilities should evolve independently by contract. They must not be coupled to another project's SHA.
+
+## Direct Ops 2 host/runtime slice
+
+Implemented after the initial Direct Ops 2 project slice:
+- root_read_text, root_file_stat and root_file_sha256 inside registered host roots with the same secret/symlink policy;
+- process_tree for registered services, returning executable/cwd plus argv shape and explicitly never reading process environment;
+- network probe modes dns/tcp/tls/http for public or loopback targets, with pinned resolved IP, no auth headers, no redirect following, bounded bodies and denial of private/link-local/reserved connect targets;
+- mcp_manifest from a registered runtime bridge file, returning runtime version, bridge hash, tool catalogue and catalogue digest for client/server schema-cache diagnostics;
+- daemon_reload when at least one registered user service authorizes host control;
+- delete_registered_file with alias-only addressing and optional expected SHA-256.
+
+Still to-be:
+- generic release materialization/deploy/activate/edge-route receipts;
+- async deterministic jobs and typed batch actions;
+- guarded workspace reconcile tied to a capture receipt;
+- typed Android ADB/install/logcat primitives.

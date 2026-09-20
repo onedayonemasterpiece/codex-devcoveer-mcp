@@ -173,6 +173,34 @@ HOST_CHECK_SCHEMAS = [
     }, ["endpoint"]),
     _check_schema("runtime", {"runtime": {"type": "string", "minLength": 1, "maxLength": 64}}, ["runtime"]),
     _check_schema("runtime_file", {"file": {"type": "string", "minLength": 1, "maxLength": 64}}, ["file"]),
+    _check_schema("root_file_stat", {
+        "root": {"type":"string","minLength":1,"maxLength":64},
+        "path": _PATH_SCHEMA,
+    }, ["root","path"]),
+    _check_schema("root_file_sha256", {
+        "root": {"type":"string","minLength":1,"maxLength":64},
+        "path": _PATH_SCHEMA,
+    }, ["root","path"]),
+    _check_schema("root_read_text", {
+        "root": {"type":"string","minLength":1,"maxLength":64},
+        "path": _PATH_SCHEMA,
+        "start_line": {"type":"integer","minimum":1,"maximum":1000000},
+        "end_line": {"type":"integer","minimum":1,"maximum":1000000},
+    }, ["root","path"]),
+    _check_schema("process_tree", {
+        "service": {"type":"string","minLength":1,"maxLength":64},
+        "limit": {"type":"integer","minimum":1,"maximum":128},
+    }, ["service"]),
+    _check_schema("network", {
+        "mode": {"type":"string","enum":["dns","tcp","tls","http"]},
+        "host": {"type":"string","minLength":1,"maxLength":253},
+        "port": {"type":"integer","minimum":0,"maximum":65535},
+        "url": {"type":"string","minLength":1,"maxLength":4096},
+        "method": {"type":"string","enum":["GET","HEAD"]},
+    }, ["mode"]),
+    _check_schema("mcp_manifest", {
+        "file": {"type":"string","minLength":1,"maxLength":64},
+    }),
     _check_schema("config_presence", {
         "source": {"type": "string", "minLength": 1, "maxLength": 64},
         "keys": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": True,

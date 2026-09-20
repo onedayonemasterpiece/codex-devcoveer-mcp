@@ -17,6 +17,9 @@ from direct_probe_project import (
     _read_text, _remote_head, _search, _tree, _worktree_list,
 )
 from direct_ops2 import project_capabilities, workspace_compare
+from direct_ops2_host import (
+    mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
+)
 from direct_probe_host import (
     _config_presence, _health, _host_section, _inventory, _journal_unit, _listeners, _logs,
     _network_listeners, _resources, _runtime, _runtime_file, _service_list, _system_info,
@@ -124,6 +127,12 @@ async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dic
     if kind == "health": return await _health(binding, check), "registered-loopback-http"
     if kind == "runtime": return await _runtime(binding, check), "trusted-runtime"
     if kind == "runtime_file": return await _runtime_file(binding, check), "installed-file"
+    if kind == "root_file_stat": return root_file_stat(binding, check), "registered-root"
+    if kind == "root_file_sha256": return root_file_sha256(binding, check), "registered-root"
+    if kind == "root_read_text": return root_read_text(binding, check), "registered-root"
+    if kind == "process_tree": return await process_tree(binding, check), "systemd+/proc"
+    if kind == "network": return await network_probe(check), "dns+socket+tls/http"
+    if kind == "mcp_manifest": return mcp_manifest(binding, check), "installed-runtime-catalog"
     if kind == "config_presence": return await _config_presence(binding, check), "registered-config-presence"
     raise ProbeError("invalid_input", f"unknown host probe kind {kind!r}")
 
