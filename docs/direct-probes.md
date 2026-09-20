@@ -1,14 +1,27 @@
 # Deterministic direct probes
 
-`project_probe` and `host_probe` are a bounded read-only diagnostic path inside the existing DevCoveer MCP. They return observed facts directly; they never start OpenCode/Codex, create task-registry records, decide GO/NO-GO, or provide a shell-like execution surface.
+`project_probe` and `host_probe` are a bounded read-only diagnostic path inside the existing DevCoveer MCP. They return observed facts directly; they never start OpenCode/Codex, create task-registry records, decide GO/NO-GO, or provide a shell-like execution surface. Mutating deterministic work is exposed separately through typed `project_action` and `host_action` tools so observability remains read-only.
 
-Use a direct probe when the missing input is a deterministic fact: Git state/objects/diff, exact source text or file metadata, fresh bound GitHub branch/CI state, registered service/listener/log/resource/health/runtime metadata. Use the existing `start_task` / `continue_task` path when research, diagnosis requiring exploration, source modification, testing, deployment, or other execution is actually required. Probes are not a mandatory preflight ritual.
+Use a direct probe when the missing input is a deterministic fact: Git state/objects/diff, exact source text or file metadata, fresh bound GitHub branch/CI state, registered service/listener/log/resource/health/runtime metadata. Use `project_action` for deterministic project execution such as exact fast-forward sync, bounded test/build scripts, registered operational profiles, and test/commit/push of a managed source handoff. Use `host_action` for registered host operations such as a user-service restart. Use `start_task` / `continue_task` only when the work actually requires reasoning, exploratory diagnosis, or an unanticipated operation that the typed direct surface does not cover.
 
 ## Contract and limits
 
-Both tools accept `project` plus 1–8 independently evaluated `checks`. The JSON schemas enumerate every operation and parameter; callers cannot supply commands, scripts, argv, cwd, environment overrides, arbitrary GitHub URLs/API paths, HTTP URLs, ports, systemd units, log files, or host roots. The response uses `execution=direct`, observation time, resolved target, duration and per-check status/source/data/error/complete/truncated/redacted information. One failed check does not discard successful siblings. A batch is not globally atomic; worktree reads report detected changes where applicable.
+`project_probe` and `host_probe` accept `project` plus independently evaluated `checks`. The JSON schemas enumerate every operation and parameter; callers cannot supply commands, scripts, argv, cwd, environment overrides, arbitrary GitHub URLs/API paths, HTTP URLs, ports, systemd units, log files, or host roots. The response uses `execution=direct`, observation time, resolved target, duration and per-check status/source/data/error/complete/truncated/redacted information. One failed check does not discard successful siblings. A batch is not globally atomic; worktree reads report detected changes where applicable.
 
 A probe batch has a 60-second safety ceiling and a 64 KiB response ceiling. Checks run independently/concurrently, while each operation has its own bounded timeout: cheap local facts remain short, and GitHub/disk/resource checks may use up to roughly 50 seconds. Text, logs, Git output, traversals, line pages and process output have smaller operation-specific caps. Subprocesses are limited to four concurrent executions and are terminated as a process group on timeout or cancellation. There are no probe task IDs or durable probe jobs.
+
+## Direct execution boundary
+
+`project_action` is intentionally more liberal than the probes without becoming an arbitrary host shell. Its caller-facing operations are typed:
+
+- `sync_ff` fetches one server-registered remote/branch and fast-forwards only when the fetched SHA exactly matches the supplied expected SHA, the move is a true fast-forward, and tracked/staged state is clean. Untracked files are preserved.
+- `run_tool` supports fixed project-local tool classes such as pytest and repository bash/Python/Node/npm scripts. The executable is selected by server code, cwd is confined to the resolved project or managed handoff, and callers cannot provide environment variables or `bash -c`.
+- `run_profile` executes an exact argv/cwd/env profile from trusted server configuration. It is used when an operation needs a stable environment flag or command shape, for example canonical runtime installation.
+- `handoff_commit_push` works only on a managed `handoff:<id>`, requires clean unstaged/untracked state plus `git diff --cached --check`, and pushes only a non-force `chatgpt/*` branch to a server-registered remote.
+
+`host_action` does not accept arbitrary commands. It can execute trusted host profiles and can restart only a server-registered user service. Self-restart of the MCP tunnel is scheduled through a short deferred systemd unit so the current MCP call can return before the tunnel is replaced.
+
+This means ordinary tests, builds, staged-patch verification and known rollout commands do not need an OpenCode task. OpenCode remains the escape hatch for non-deterministic investigation rather than a remote shell for routine commands.
 
 ## Security boundary
 
@@ -30,4 +43,6 @@ Health aliases are diagnostic observations only. A non-2xx application result is
 
 ## Deployment
 
-`scripts/install-direct-probes.py` is fail-closed against exact observed production lineage. Dry-run transforms the installed bridge in memory and compiles the candidate together with every direct-probe runtime helper. `--apply` atomically installs only the bridge integration, the bounded direct-probe runtime modules and the trusted config, keeping timestamped rollback copies for pre-existing touched files. The installer never restarts a service. Restart/reload must follow the existing DevCoveer maintenance procedure and must not interrupt active tasks.
+`scripts/install-current-canonical-runtime.sh` is the canonical rollout path. It archives a validated main commit, builds the clean-host runtime, runs candidate MCP acceptance, installs the canonical runtime, and runs wrapper acceptance. For direct self-rollout it can set `DEVCOVEER_SKIP_TUNNEL_RESTART=1`, return deployment evidence, and let `host_action` schedule the registered MCP tunnel restart after the call has returned. The clean-host builder includes probes, direct actions, source handoff and the routing policy, so a recovered server retains the same operating contract.
+
+`scripts/install-direct-probes.py` remains a fail-closed legacy probe-only incremental installer; it is not the canonical way to install the complete direct execution surface.
