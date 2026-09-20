@@ -131,6 +131,6 @@ def test_clean_host_builder_street_story_deployment_contract() -> None:
     assert 'TARGET_REPOSITORY = "onedayonemasterpiece/street-story"' in operator
     assert 'TARGET_BRANCH = "work/street-story-mvp-20260908"' in operator
     assert 'TARGET_HOSTNAME = "street-story.kenigevents.ru"' in operator
-    assert "TARGET_PORT = 8080" in operator
+    assert "TARGET_PORT = 8188" in operator
     assert 'TARGET_SERVICE = "street-story.service"' in operator
-    assert "managed Street Story handoff tree does not match current remote HEAD" in operator
+    assert "requested SHA is not the current Street Story PR branch HEAD" in operator
