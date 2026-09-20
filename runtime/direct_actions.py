@@ -29,6 +29,7 @@ from direct_ops2_host import daemon_reload, delete_registered_file
 from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
 from direct_ops2_android import adb_action
 from direct_jobs import cancel_job, cleanup_job, job_status, start_job
+from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -109,6 +110,10 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"owned_service_action"},"unit":{"type":"string","minLength":1,"maxLength":200,"pattern":r"^[A-Za-z0-9_.@:-]+\.service$"},"operation":{"type":"string","enum":["status","start","stop","restart","reload","enable","disable"]}},"required":["kind","unit","operation"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"adb"},"operation":{"type":"string","enum":["install","uninstall","force_stop","clear_data","start_activity","instrument"]},"serial":{"type":"string","minLength":1,"maxLength":128},"worktree":{"type":"string","minLength":1,"maxLength":1000},"apk":{"type":"string","minLength":1,"maxLength":500},"package":{"type":"string","minLength":2,"maxLength":255},"component":{"type":"string","minLength":3,"maxLength":512},"runner":{"type":"string","minLength":3,"maxLength":512},"extras":{"type":"object","maxProperties":32,"additionalProperties":{"oneOf":[{"type":"string","maxLength":1000},{"type":"integer"},{"type":"boolean"}]}},"confirm_clear_data":{"type":"boolean"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":1800}},"required":["kind","operation"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_pr_create"},"remote":{"type":"string","minLength":1,"maxLength":64},"head":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"base":{"type":"string","minLength":1,"maxLength":200},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000}},"required":["kind","head","expected_head_sha","title"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_pr_update"},"remote":{"type":"string","minLength":1,"maxLength":64},"pr":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000}},"required":["kind","pr","expected_head_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_pr_merge"},"remote":{"type":"string","minLength":1,"maxLength":64},"pr":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"expected_base":{"type":"string","minLength":1,"maxLength":200},"method":{"type":"string","enum":["merge","squash","rebase"]}},"required":["kind","pr","expected_head_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_branch_delete"},"remote":{"type":"string","minLength":1,"maxLength":64},"branch":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"expected_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"}},"required":["kind","branch","expected_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_start"},"tool":{"type":"string","enum":["pytest","bash_script","python_script","node_script","npm_script","pnpm_script","yarn_script","gradle_task","make_target","python_module"]},"path":{"type":"string","minLength":1,"maxLength":500},"script":{"type":"string","minLength":1,"maxLength":200},"cwd":{"type":"string","maxLength":500},"args":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":500}},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600}},"required":["kind","tool"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_status"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_cancel"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
@@ -574,6 +579,14 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
     kind = action["kind"]
     if kind == "batch":
         return await _run_batch(project_root, project_id, action, config_path=config_path)
+    if kind == "github_pr_create":
+        return await pr_create(root, binding, action)
+    if kind == "github_pr_update":
+        return await pr_update(root, binding, action)
+    if kind == "github_pr_merge":
+        return await pr_merge(root, binding, action)
+    if kind == "github_branch_delete":
+        return await delete_remote_branch(root, binding, action)
     if kind == "job_start":
         return await start_job(root, action)
     if kind == "job_status":

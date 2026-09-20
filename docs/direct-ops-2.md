@@ -95,3 +95,15 @@ Implemented:
 - project batch executes up to 20 already-typed project actions sequentially, fail-fast, with no nested batch.
 
 Jobs do not accept an arbitrary executable, shell string or environment. Batch does not enlarge the set of allowed effects; it only reduces orchestration round trips.
+
+## GitHub write lifecycle
+
+A separate GitHub connector is no longer required for routine repository ownership operations.
+
+Implemented:
+- github_pr_create: create or idempotently reuse an open PR from chatgpt/* after verifying the exact remote head SHA;
+- github_pr_update: edit title/body only for an open chatgpt/* PR whose head still equals expected_head_sha;
+- github_pr_merge: merge/squash/rebase only an open chatgpt/* PR with exact expected head and base;
+- github_branch_delete: delete only chatgpt/* remote branches after exact SHA verification.
+
+These operations use the actual GitHub remote of the resolved project (or a stricter configured binding). No arbitrary GitHub API path is exposed.

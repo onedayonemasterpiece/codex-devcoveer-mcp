@@ -81,7 +81,7 @@ async def project_capabilities(root: Path, binding: dict[str, Any]) -> dict[str,
         "direct_project_actions": [
             "sync_ff", "run_tool", "run_profile", "write_text", "mkdir", "move_path",
             "delete_file", "chmod_executable", "git_create_branch", "git_stage",
-            "git_commit_push", "capture_handoff", "worktree_capture_handoff", "worktree_reconcile", "owned_service_action", "adb", "job_start", "job_status", "job_cancel", "job_cleanup", "batch", "handoff_commit_push",
+            "git_commit_push", "capture_handoff", "worktree_capture_handoff", "worktree_reconcile", "owned_service_action", "adb", "github_pr_create", "github_pr_update", "github_pr_merge", "github_branch_delete", "job_start", "job_status", "job_cancel", "job_cleanup", "batch", "handoff_commit_push",
         ],
         "direct_host_actions": [
             "restart_service", "service_action", "run_profile", "write_registered_file",
