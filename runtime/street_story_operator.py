@@ -396,7 +396,6 @@ class StreetStoryOperator:
                 )
                 self._call(["tar", "-xf", str(archive), "-C", str(source)], timeout=120)
                 archive.unlink(missing_ok=True)
-                manifest.write_text if False else None
                 (stage / ".street-story-release.json").write_text(
                     _canonical_json(manifest_value) + "\n", encoding="utf-8"
                 )
@@ -591,11 +590,17 @@ class StreetStoryOperator:
             env=admin_env,
             timeout=60,
         )
-        self._write_private_env(token_file, {"VIBEPUBLISH_BEARER_TOKEN": service_token})
-        # The service needs the raw token, not KEY=value, so normalize it to a
-        # one-line 0600 file after the atomic private write helper.
-        token_file.write_text(service_token + "\n", encoding="utf-8")
-        os.chmod(token_file, 0o600)
+        fd, temporary = tempfile.mkstemp(prefix=".vibepublish-token-", dir=self.app_state_root)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(service_token + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, token_file)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary)
         principal_file.write_text(principal + "\n", encoding="utf-8")
         os.chmod(principal_file, 0o600)
         return token_file, principal_file
