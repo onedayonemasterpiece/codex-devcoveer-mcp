@@ -34,7 +34,7 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.23.0-direct-ops2"', "version")
+                          'BRIDGE_VERSION = "3.24.0-direct-ops2"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -445,6 +445,23 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
 
 '''
     source = replace_once(source, handler_anchor, handlers + handler_anchor, "probe dispatch")
+
+    call_refresh_anchor = """    async def call_tool(_ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+        try:
+"""
+    call_refresh_replacement = """    async def call_tool(_ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+        session_key = id(_ctx.session)
+        if session_key not in legacy_tool_refresh_sessions:
+            legacy_tool_refresh_sessions.add(session_key)
+            try:
+                await _ctx.session.send_tool_list_changed()
+            except Exception:
+                log.debug("call-time tools/list_changed notification failed", exc_info=True)
+        try:
+"""
+    source = replace_once(
+        source, call_refresh_anchor, call_refresh_replacement, "call-time tool refresh"
+    )
 
     # tool-list refresh capability transform
     refresh_anchor = """    task_lifecycle_lock = anyio.Lock()
