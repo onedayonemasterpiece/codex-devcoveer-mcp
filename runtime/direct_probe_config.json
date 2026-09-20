@@ -366,6 +366,83 @@
           ]
         }
       }
+    },
+    "wonderful-lections": {
+      "github_repo": "onedayonemasterpiece/wonderful-lections",
+      "remotes": {
+        "origin": "onedayonemasterpiece/wonderful-lections"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {
+        "runtime": {
+          "unit": "wonderful-lections.service",
+          "scope": "user",
+          "ports": [
+            4310
+          ],
+          "executable": "/usr/local/bin/node",
+          "working_directory": "/home/dev/.local/opt/wonderful-lections-runtime-source",
+          "transport": "loopback_http",
+          "endpoints": [
+            "http://127.0.0.1:4310"
+          ]
+        }
+      },
+      "logs": {
+        "runtime": {
+          "type": "journal",
+          "service": "runtime"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/wonderful-lections",
+        "runtime_source": "/home/dev/.local/opt/wonderful-lections-runtime-source"
+      },
+      "health": {
+        "runtime": {
+          "url": "http://127.0.0.1:4310/health",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 3,
+          "body_bytes": 4096
+        }
+      },
+      "runtimes": {
+        "node": {
+          "type": "cli",
+          "argv": [
+            "/usr/local/bin/node",
+            "--version"
+          ]
+        }
+      },
+      "runtime_files": {
+        "server_source": "/home/dev/.local/opt/wonderful-lections-runtime-source/src/runtime/server.mjs",
+        "review_css": "/home/dev/.local/opt/wonderful-lections-runtime-source/site/dist/review/review.css",
+        "review_js": "/home/dev/.local/opt/wonderful-lections-runtime-source/site/dist/review/review.js",
+        "speaker_notes_js": "/home/dev/.local/opt/wonderful-lections-runtime-source/site/dist/review/speaker-notes.js"
+      },
+      "config_presence": {},
+      "host_actions": {
+        "deploy_review_theses_20260920": {
+          "argv": [
+            "/usr/bin/bash",
+            "/home/dev/projects/codex-devcoveer-mcp/scripts/deploy-wonderful-lections-release.sh"
+          ],
+          "cwd": "/home/dev/.local/opt/wonderful-lections-runtime-source",
+          "timeout_seconds": 900,
+          "output_bytes": 262144,
+          "env": {
+            "WONDERFUL_EXPECTED_OLD_SHA": "26c3ad4aee34aed1198588da9d004f5871b66974",
+            "WONDERFUL_RELEASE_SHA": "1adeeca3643483da3c7b408b7eafbea2aff51023",
+            "WONDERFUL_RELEASE_BRANCH": "work/review-theses-product-fix-20260920"
+          }
+        }
+      }
     }
   }
 }
