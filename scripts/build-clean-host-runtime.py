@@ -219,12 +219,13 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     validators = ('    "project_probe": Draft202012Validator(PROJECT_PROBE_INPUT_SCHEMA),\n'
                   '    "host_probe": Draft202012Validator(HOST_PROBE_INPUT_SCHEMA),\n'
                   '    "stage_source_handoff": Draft202012Validator(STAGE_SOURCE_HANDOFF_INPUT_SCHEMA),\n'
-                  '    "cleanup_source_handoff": Draft202012Validator(CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA),\n                  '    "street_story_materialize_release": Draft202012Validator(STREET_STORY_MATERIALIZE_RELEASE_INPUT_SCHEMA),\n'
+                  '    "cleanup_source_handoff": Draft202012Validator(CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA),\n'
+                  '    "street_story_materialize_release": Draft202012Validator(STREET_STORY_MATERIALIZE_RELEASE_INPUT_SCHEMA),\n'
                   '    "street_story_deploy_user_service": Draft202012Validator(STREET_STORY_DEPLOY_USER_SERVICE_INPUT_SCHEMA),\n'
                   '    "street_story_publish_edge_route": Draft202012Validator(STREET_STORY_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA),\n'
                   '    "street_story_service": Draft202012Validator(STREET_STORY_SERVICE_INPUT_SCHEMA),\n'
                   '    "street_story_deployment_receipt": Draft202012Validator(STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA),\n'
-')
+)
     source = replace_once(source, validator_anchor, validators + validator_anchor,
                           "validator catalog")
     old_default = '''    if model is None:
