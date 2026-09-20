@@ -69,6 +69,16 @@ RECORD_TASK_REVIEW_INPUT_SCHEMA = {
             return _tool_result(result, error=result.get("status") != "ok")
 
 '''+anchor, 'evidence dispatch')
+    # The adaptive OpenCode readback is source-controlled as one coherent
+    # fragment because routing fallback, cancellation lifecycle, live progress,
+    # and evidence semantics must evolve together.  Keeping the fragment merely
+    # testable but not materialized into the canonical bridge would leave the
+    # installed runtime on the historical readback implementation.
+    read_start = source.index('async def _read_opencode_task(')
+    read_end = source.index('\n\n_COUNCIL_BACKGROUND: dict[str, asyncio.Task[Any]] = {}', read_start)
+    read_fragment = (ROOT/'runtime/bridge_fragments/read_opencode_task_adaptive.py').read_text()
+    source = source[:read_start] + read_fragment.rstrip() + source[read_end:]
+
     replace('\n_COUNCIL_BACKGROUND: dict[str, asyncio.Task[Any]] = {}', '\n'+(ROOT/'runtime/bridge_fragments/session_evidence.py').read_text()+'\n_COUNCIL_BACKGROUND: dict[str, asyncio.Task[Any]] = {}', 'evidence lifecycle')
     replace('"error": inspected.get("error"),\n        },', '"error": inspected.get("error"),\n            "providerErrorCategory": inspected.get("providerErrorCategory"),\n            "providerState": inspected.get("providerState"),\n        },', 'runtime diagnostics')
     replace('"start_task", "continue_task", "cancel_task"}', '"start_task", "continue_task", "cancel_task", "record_task_review"}', 'review lifecycle serialization')
