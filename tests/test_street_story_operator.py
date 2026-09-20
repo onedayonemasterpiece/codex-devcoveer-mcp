@@ -32,7 +32,6 @@ def _operator(tmp_path: Path) -> StreetStoryOperator:
         vibe_db=tmp_path / "vibe.sqlite3",
         vibe_owner_token_file=tmp_path / "owner-token",
         host_env=tmp_path / "host.env",
-        handoff_root=tmp_path / "handoffs",
     )
 
 
