@@ -85,6 +85,9 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'name="stage_source_handoff"' in bridge
         assert 'name="cleanup_source_handoff"' in bridge
         assert 'raw_hint.startswith("handoff:")' in bridge
+        assert "_maybe_auto_groq_fallback" in bridge
+        assert 'lifecycle = TASK_REGISTRY.get(record["taskId"]) or record' in bridge
+        assert 'commit_lifecycle = TASK_REGISTRY.get(record["taskId"]) or lifecycle' in bridge
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
         assert 'headers["x-opencode-directory"]' in backend
         assert '"User-Agent": "opencode/" + (self._server_version or "unknown")' in backend
