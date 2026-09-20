@@ -18,6 +18,11 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 export HOME=/home/dev XDG_RUNTIME_DIR="/run/user/${DEV_UID}"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${DEV_UID}/bus"
 export PATH="/home/dev/.opencode/bin:/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin"
+SKIP_TUNNEL_RESTART="${DEVCOVEER_SKIP_TUNNEL_RESTART:-0}"
+[ "$SKIP_TUNNEL_RESTART" = "0" ] || [ "$SKIP_TUNNEL_RESTART" = "1" ] || {
+  echo "ERROR: DEVCOVEER_SKIP_TUNNEL_RESTART must be 0 or 1" >&2
+  exit 1
+}
 
 die(){ echo "ERROR: $*" >&2; exit 1; }
 sha(){ sha256sum "$1" | awk '{print $1}'; }
@@ -43,7 +48,7 @@ PYTHONPATH="$CAND" "$BRIDGE_PY" - "$CAND/codex-chatgpt-bridge.py" <<'PY'
 import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-required={"project_probe","host_probe","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
+required={"project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
 async def main():
     async with stdio_client(StdioServerParameters(command=sys.executable,args=[sys.argv[1]])) as (r,w):
         async with ClientSession(r,w) as s:
@@ -73,7 +78,12 @@ restore_previous(){
     mv "$CAN_BACKUP" "$CAN" 2>/dev/null || true
   fi
 }
-trap 'rc=$?; if [ "$rc" -ne 0 ]; then restore_previous; systemctl --user restart codex-devserver-tunnel.service || true; fi; exit "$rc"' EXIT
+restart_after_failure(){
+  if [ "$SKIP_TUNNEL_RESTART" != "1" ]; then
+    systemctl --user restart codex-devserver-tunnel.service || true
+  fi
+}
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then restore_previous; restart_after_failure; fi; exit "$rc"' EXIT
 
 if [ -L "$WRAP" ]; then
   target="$(readlink -f "$WRAP")"
@@ -103,7 +113,7 @@ echo "=== canonical wrapper acceptance ==="
 import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-required={"project_probe","host_probe","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
+required={"project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
 async def main():
     async with stdio_client(StdioServerParameters(command=sys.argv[1],args=[])) as (r,w):
         async with ClientSession(r,w) as s:
@@ -113,6 +123,22 @@ async def main():
             if missing: raise SystemExit("wrapper missing tools: "+",".join(missing))
 asyncio.run(main())
 PY
+
+echo "bridge=$BRIDGE_SHA"
+echo "backend=$BACKEND_SHA"
+echo "wrapper_canonical=PASS"
+if [ "$SKIP_TUNNEL_RESTART" = "1" ]; then
+  RESTART_UNIT="devcoveer-canonical-restart-${STAMP//[:]/-}"
+  systemd-run --user --quiet --collect \
+    --unit="$RESTART_UNIT" --on-active=2s \
+    /usr/bin/systemctl --user restart codex-devserver-tunnel.service \
+    || die "could not schedule deferred tunnel restart"
+  trap - EXIT
+  echo "tunnel_restart=DEFERRED"
+  echo "tunnel_restart_unit=$RESTART_UNIT"
+  echo "deployment_evidence=$TMP"
+  exit 0
+fi
 
 systemctl --user restart codex-devserver-tunnel.service
 ready=0
@@ -125,8 +151,5 @@ for _ in $(seq 1 60); do
 done
 [ "$ready" -eq 1 ] || die "tunnel did not become ready"
 trap - EXIT
-echo "bridge=$BRIDGE_SHA"
-echo "backend=$BACKEND_SHA"
-echo "wrapper_canonical=PASS"
 echo "tunnel_ready=PASS"
 echo "deployment_evidence=$TMP"

@@ -82,7 +82,37 @@
         "direct_probe_host_services": "/home/dev/.local/libexec/openai-codex-mcp/direct_probe_host_services.py",
         "direct_probe_host_runtime": "/home/dev/.local/libexec/openai-codex-mcp/direct_probe_host_runtime.py"
       },
-      "config_presence": {}
+      "config_presence": {},
+      "project_actions": {
+        "tests": {
+          "argv": [
+            "/usr/bin/python3",
+            "-m",
+            "pytest",
+            "-q"
+          ],
+          "cwd": ".",
+          "timeout_seconds": 1800,
+          "output_bytes": 262144,
+          "allow_handoff": true,
+          "env": {
+            "PYTHONDONTWRITEBYTECODE": "1"
+          }
+        },
+        "canonical_install": {
+          "argv": [
+            "/usr/bin/bash",
+            "scripts/install-current-canonical-runtime.sh"
+          ],
+          "cwd": ".",
+          "timeout_seconds": 900,
+          "output_bytes": 262144,
+          "allow_handoff": false,
+          "env": {
+            "DEVCOVEER_SKIP_TUNNEL_RESTART": "1"
+          }
+        }
+      }
     },
     "my-browser-bridge": {
       "github_repo": "onedayonemasterpiece/my-browser-bridge",

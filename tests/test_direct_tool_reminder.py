@@ -39,16 +39,19 @@ def test_transform_adds_pre_call_and_post_call_reminders():
     mod = load_installer()
     transformed = mod.transform_bridge(synthetic_bridge(mod))
     assert "deterministic Git/host/runtime/model/task-state" in transformed
+    assert "project_action" in transformed and "host_action" in transformed
     assert "_direct_tool_reminder" in transformed
     assert '"directToolsHint"' in transformed
     assert 'payload["content"] += "\\n" + direct_tools_hint' in transformed
     assert "project_probe for Git/read/search/diff/remote/CI facts" in transformed
     assert "host_probe for services/logs/listeners/resources/runtime" in transformed
     assert "my-browser-bridge directly" in transformed
-    assert "project Playwright test runners" in transformed
+    assert "registered project test/build/deploy profiles" in transformed
+    assert "registered project Playwright test/build/webServer profile" in transformed
     assert "do not delegate repository code or documentation authoring" in transformed
     assert "stage_source_handoff" in transformed
-    assert "rather than rewrite source/docs" in transformed
+    assert "registered tests and direct commit/push" in transformed
+    assert "reasoning beyond typed operations" in transformed
 
 
 def test_transform_is_idempotent_after_marker_is_present():
@@ -79,6 +82,7 @@ def test_helper_policy_has_strong_and_soft_signals():
     assert '"git status"' in helper
     assert '"systemctl status"' in helper
     assert '"project_probe"' in helper and '"host_probe"' in helper
+    assert '"project_action"' in helper and '"host_action"' in helper
     assert '"bash"' in helper and '"shell"' in helper
     assert "soft_hits >= 2" in helper
     assert 'access == "read" and soft_hits >= 1' in helper
@@ -88,4 +92,5 @@ def test_helper_policy_has_strong_and_soft_signals():
     assert '"playwright"' in helper and '"browser ui"' in helper
     assert "my-browser-bridge MCP directly" in helper
     assert "stage_source_handoff" in helper
-    assert "explicit user-requested agent authoring are exceptions" in helper
+    assert "source-handoff commit/push" in helper
+    assert "genuinely non-deterministic investigation" in helper
