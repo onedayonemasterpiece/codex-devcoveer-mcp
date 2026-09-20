@@ -577,7 +577,17 @@ async def _run_direct_ops_compat(root: Path, project_id: str, action: dict[str, 
     if not isinstance(payload, dict):
         raise ProbeError("invalid_input", "Direct Ops compatibility payload must be a JSON object", status="denied")
     from direct_ops_gateway import run_direct_ops_v2
-    return await run_direct_ops_v2(str(root), project_id, plane, operation, payload)
+    result = await run_direct_ops_v2(str(root), project_id, plane, operation, payload)
+    status = "ok"
+    if plane.endswith("_action") and isinstance(result, dict):
+        status = str(result.get("status") or "ok")
+    return {
+        "status": status,
+        "action": "direct_ops_v2_compat",
+        "plane": plane,
+        "operation": operation,
+        "result": result,
+    }
 
 
 async def _run_batch(project_root: str, project_id: str, action: dict[str, Any], *,

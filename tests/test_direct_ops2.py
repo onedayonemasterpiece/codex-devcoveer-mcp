@@ -161,3 +161,10 @@ def test_batch_executes_in_order_and_stops_on_failure(tmp_path: Path):
     assert failed["status"]=="failed" and failed["failed_index"]==0
     assert (repo/"a.txt").read_text()==before
     assert not (repo/"out/should-not-exist.txt").exists()
+
+
+def test_capabilities_lists_complete_host_action_surface(tmp_path: Path):
+    repo=init_repo(tmp_path/"caprepo")
+    data=run(ops.project_capabilities(repo,{}))
+    assert {"restart_service","service_action","run_profile","write_registered_file",
+            "delete_registered_file","daemon_reload"} <= set(data["direct_host_actions"])

@@ -147,7 +147,8 @@ a reserved compatibility carrier:
 - args[2:] = concatenated JSON payload chunks
 
 The reserved path is intercepted before filesystem lookup and never executes Python
-or shell. It calls the same direct_ops_v2 server gateway, which re-validates the
+or shell. The compatibility response wraps probe batches in a top-level status=ok so
+legacy project_action clients do not misclassify successful probe results as tool errors. It calls the same direct_ops_v2 server gateway, which re-validates the
 stable envelope and then the current strict concrete operation schema. Nested
 run_tool through the carrier is denied. This fallback is limited to the old client's
 bounded args capacity; fresh clients should use the normal direct_ops_v2 tool.
