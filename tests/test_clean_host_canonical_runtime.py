@@ -129,13 +129,12 @@ def test_direct_action_profiles_are_registered_for_mcp_rollout() -> None:
     assert actions["canonical_install"]["env"]["DEVCOVEER_SKIP_TUNNEL_RESTART"] == "1"
 
 
-def test_direct_rollout_can_defer_self_restart() -> None:
+def test_direct_rollout_defers_restart_to_host_action() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
     assert 'DEVCOVEER_SKIP_TUNNEL_RESTART' in source
-    assert 'systemd-run --user --quiet --collect' in source
-    assert '--on-active=2s' in source
     assert 'tunnel_restart=DEFERRED' in source
-    assert 'tunnel_restart_unit=' in source
+    assert 'systemd-run --user --quiet --collect' not in source
+    assert 'tunnel_restart_unit=' not in source
     assert '"project_action","host_action"' in source
 
 
