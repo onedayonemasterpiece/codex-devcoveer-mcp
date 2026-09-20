@@ -16,6 +16,12 @@ from direct_probe_project import (
     _diff, _file_list, _file_sha, _file_stat, _git_blob, _git_log, _git_state, _github_status,
     _read_text, _remote_head, _search, _tree, _worktree_list,
 )
+from direct_ops2 import project_capabilities, workspace_compare
+from direct_ops2_worktrees import worktree_compare
+from direct_ops2_android import adb_devices, adb_package_logcat, adb_package_state
+from direct_ops2_host import (
+    mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
+)
 from direct_probe_host import (
     _config_presence, _health, _host_section, _inventory, _journal_unit, _listeners, _logs,
     _network_listeners, _resources, _runtime, _runtime_file, _service_list, _system_info,
@@ -86,6 +92,9 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
     if kind == "git_log": return await _git_log(root, check), "git-local-object"
     if kind == "tree": return await _tree(root, check), "git-local-object"
     if kind == "worktree_list": return await _worktree_list(root), "git-local"
+    if kind == "worktree_compare": return await worktree_compare(root, check), "git-worktree/object/worktree"
+    if kind == "capabilities": return await project_capabilities(root, binding), "git-local+trusted-server-config"
+    if kind == "workspace_compare": return await workspace_compare(root, check["target_ref"], include_untracked=bool(check.get("include_untracked", True)), limit=int(check.get("limit", 500))), "git-local-object/worktree"
     if kind == "diff": return await _diff(root, check), "git-local-object/worktree"
     if kind == "read_text": return await _read_text(root, binding, check), check.get("source", "worktree")
     if kind == "search": return await _search(root, check), "worktree-files"
@@ -121,6 +130,15 @@ async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dic
     if kind == "health": return await _health(binding, check), "registered-loopback-http"
     if kind == "runtime": return await _runtime(binding, check), "trusted-runtime"
     if kind == "runtime_file": return await _runtime_file(binding, check), "installed-file"
+    if kind == "root_file_stat": return root_file_stat(binding, check), "registered-root"
+    if kind == "root_file_sha256": return root_file_sha256(binding, check), "registered-root"
+    if kind == "root_read_text": return root_read_text(binding, check), "registered-root"
+    if kind == "process_tree": return await process_tree(binding, check), "systemd+/proc"
+    if kind == "network": return await network_probe(check), "dns+socket+tls/http"
+    if kind == "mcp_manifest": return mcp_manifest(binding, check), "installed-runtime-catalog"
+    if kind == "adb_devices": return await adb_devices(check), "adb"
+    if kind == "adb_package_state": return await adb_package_state(check), "adb"
+    if kind == "adb_package_logcat": return await adb_package_logcat(check), "adb"
     if kind == "config_presence": return await _config_presence(binding, check), "registered-config-presence"
     raise ProbeError("invalid_input", f"unknown host probe kind {kind!r}")
 

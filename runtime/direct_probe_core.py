@@ -104,6 +104,18 @@ PROJECT_CHECK_SCHEMAS = [
     _check_schema("git_log", {"ref": _REF_SCHEMA, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}, ["ref"]),
     _check_schema("tree", {"ref": _REF_SCHEMA, "path": {"type": "string", "maxLength": 500}, "limit": _LIMIT_SCHEMA}, ["ref"]),
     _check_schema("worktree_list"),
+    _check_schema("worktree_compare", {
+        "worktree": {"type":"string","minLength":1,"maxLength":1000},
+        "target_ref": _REF_SCHEMA,
+        "include_untracked": {"type":"boolean","default":True},
+        "limit": {"type":"integer","minimum":1,"maximum":1000},
+    }, ["worktree","target_ref"]),
+    _check_schema("capabilities"),
+    _check_schema("workspace_compare", {
+        "target_ref": _REF_SCHEMA,
+        "include_untracked": {"type": "boolean", "default": True},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+    }, ["target_ref"]),
     _check_schema("diff", {
         "base": {"type": "string", "minLength": 1, "maxLength": 200},
         "target": {"type": "string", "minLength": 1, "maxLength": 200},
@@ -167,6 +179,44 @@ HOST_CHECK_SCHEMAS = [
     }, ["endpoint"]),
     _check_schema("runtime", {"runtime": {"type": "string", "minLength": 1, "maxLength": 64}}, ["runtime"]),
     _check_schema("runtime_file", {"file": {"type": "string", "minLength": 1, "maxLength": 64}}, ["file"]),
+    _check_schema("root_file_stat", {
+        "root": {"type":"string","minLength":1,"maxLength":64},
+        "path": _PATH_SCHEMA,
+    }, ["root","path"]),
+    _check_schema("root_file_sha256", {
+        "root": {"type":"string","minLength":1,"maxLength":64},
+        "path": _PATH_SCHEMA,
+    }, ["root","path"]),
+    _check_schema("root_read_text", {
+        "root": {"type":"string","minLength":1,"maxLength":64},
+        "path": _PATH_SCHEMA,
+        "start_line": {"type":"integer","minimum":1,"maximum":1000000},
+        "end_line": {"type":"integer","minimum":1,"maximum":1000000},
+    }, ["root","path"]),
+    _check_schema("process_tree", {
+        "service": {"type":"string","minLength":1,"maxLength":64},
+        "limit": {"type":"integer","minimum":1,"maximum":128},
+    }, ["service"]),
+    _check_schema("network", {
+        "mode": {"type":"string","enum":["dns","tcp","tls","http"]},
+        "host": {"type":"string","minLength":1,"maxLength":253},
+        "port": {"type":"integer","minimum":0,"maximum":65535},
+        "url": {"type":"string","minLength":1,"maxLength":4096},
+        "method": {"type":"string","enum":["GET","HEAD"]},
+    }, ["mode"]),
+    _check_schema("mcp_manifest", {
+        "file": {"type":"string","minLength":1,"maxLength":64},
+    }),
+    _check_schema("adb_devices"),
+    _check_schema("adb_package_state", {
+        "serial": {"type":"string","minLength":1,"maxLength":128},
+        "package": {"type":"string","minLength":2,"maxLength":255},
+    }, ["package"]),
+    _check_schema("adb_package_logcat", {
+        "serial": {"type":"string","minLength":1,"maxLength":128},
+        "package": {"type":"string","minLength":2,"maxLength":255},
+        "lines": {"type":"integer","minimum":1,"maximum":1000},
+    }, ["package"]),
     _check_schema("config_presence", {
         "source": {"type": "string", "minLength": 1, "maxLength": 64},
         "keys": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": True,

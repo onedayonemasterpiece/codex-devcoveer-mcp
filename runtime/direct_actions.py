@@ -20,6 +20,16 @@ from direct_probe_core import (
     _validate_branch,
 )
 from direct_probe_host_services import _host_section, _systemd_env
+from direct_ops2 import (
+    capture_handoff, chmod_executable, delete_file, git_commit_push, git_create_branch,
+    git_stage, mkdir, move_path, resolve_github_remote, runner_argv, service_action,
+    write_registered_file, write_text,
+)
+from direct_ops2_host import daemon_reload, delete_registered_file
+from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
+from direct_ops2_android import adb_action
+from direct_jobs import cancel_job, cleanup_job, job_status, start_job
+from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -50,7 +60,8 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
             "properties": {
                 "kind": {"const": "run_tool"},
                 "tool": {"type": "string", "enum": [
-                    "pytest", "bash_script", "python_script", "node_script", "npm_script"
+                    "pytest", "bash_script", "python_script", "node_script", "npm_script",
+                    "pnpm_script", "yarn_script", "gradle_task", "make_target", "python_module"
                 ]},
                 "path": {"type": "string", "minLength": 1, "maxLength": 500},
                 "script": {"type": "string", "minLength": 1, "maxLength": 80,
@@ -86,8 +97,40 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
             "required": ["kind", "remote", "branch", "commit_message"],
             "additionalProperties": False,
         },
+        {"type":"object","properties":{"kind":{"const":"write_text"},"path":{"type":"string","minLength":1,"maxLength":500},"content":{"type":"string","maxLength":2097152},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"},"must_not_exist":{"type":"boolean"}},"required":["kind","path","content"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"mkdir"},"path":{"type":"string","minLength":1,"maxLength":500},"parents":{"type":"boolean"}},"required":["kind","path"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"move_path"},"source":{"type":"string","minLength":1,"maxLength":500},"target":{"type":"string","minLength":1,"maxLength":500},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","source","target"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"delete_file"},"path":{"type":"string","minLength":1,"maxLength":500},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","path"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"chmod_executable"},"path":{"type":"string","minLength":1,"maxLength":500},"executable":{"type":"boolean"},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","path","executable"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"git_create_branch"},"branch":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"start_ref":{"type":"string","minLength":1,"maxLength":200}},"required":["kind","branch"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"git_stage"},"paths":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","paths"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"git_commit_push"},"remote":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"commit_message":{"type":"string","minLength":1,"maxLength":200}},"required":["kind","commit_message"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"capture_handoff"},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","base_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"worktree_capture_handoff"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","worktree","base_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"owned_service_action"},"unit":{"type":"string","minLength":1,"maxLength":200,"pattern":r"^[A-Za-z0-9_.@:-]+\.service$"},"operation":{"type":"string","enum":["status","start","stop","restart","reload","enable","disable"]}},"required":["kind","unit","operation"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"adb"},"operation":{"type":"string","enum":["install","uninstall","force_stop","clear_data","start_activity","instrument"]},"serial":{"type":"string","minLength":1,"maxLength":128},"worktree":{"type":"string","minLength":1,"maxLength":1000},"apk":{"type":"string","minLength":1,"maxLength":500},"package":{"type":"string","minLength":2,"maxLength":255},"component":{"type":"string","minLength":3,"maxLength":512},"runner":{"type":"string","minLength":3,"maxLength":512},"extras":{"type":"object","maxProperties":32,"additionalProperties":{"oneOf":[{"type":"string","maxLength":1000},{"type":"integer"},{"type":"boolean"}]}},"confirm_clear_data":{"type":"boolean"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":1800}},"required":["kind","operation"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_pr_create"},"remote":{"type":"string","minLength":1,"maxLength":64},"head":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"base":{"type":"string","minLength":1,"maxLength":200},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000}},"required":["kind","head","expected_head_sha","title"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_pr_update"},"remote":{"type":"string","minLength":1,"maxLength":64},"pr":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000}},"required":["kind","pr","expected_head_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_pr_merge"},"remote":{"type":"string","minLength":1,"maxLength":64},"pr":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"expected_base":{"type":"string","minLength":1,"maxLength":200},"method":{"type":"string","enum":["merge","squash","rebase"]}},"required":["kind","pr","expected_head_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_branch_delete"},"remote":{"type":"string","minLength":1,"maxLength":64},"branch":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"expected_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"}},"required":["kind","branch","expected_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_start"},"tool":{"type":"string","enum":["pytest","bash_script","python_script","node_script","npm_script","pnpm_script","yarn_script","gradle_task","make_target","python_module"]},"path":{"type":"string","minLength":1,"maxLength":500},"script":{"type":"string","minLength":1,"maxLength":200},"cwd":{"type":"string","maxLength":500},"args":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":500}},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600}},"required":["kind","tool"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_status"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_cancel"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_cleanup"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
     ]
 }
+
+_BATCH_STEP_SCHEMA = {"oneOf": list(_PROJECT_ACTION_SCHEMA["oneOf"])}
+_PROJECT_ACTION_SCHEMA["oneOf"].append({
+    "type":"object",
+    "properties":{
+        "kind":{"const":"batch"},
+        "steps":{"type":"array","minItems":1,"maxItems":20,"items":_BATCH_STEP_SCHEMA},
+    },
+    "required":["kind","steps"],
+    "additionalProperties":False,
+})
 
 PROJECT_ACTION_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -125,6 +168,10 @@ HOST_ACTION_INPUT_SCHEMA: dict[str, Any] = {
                     "required": ["kind", "profile"],
                     "additionalProperties": False,
                 },
+                {"type":"object","properties":{"kind":{"const":"service_action"},"service":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"operation":{"type":"string","enum":["start","stop","restart","reload","enable","disable"]}},"required":["kind","service","operation"],"additionalProperties":False},
+                {"type":"object","properties":{"kind":{"const":"write_registered_file"},"file":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"content":{"type":"string","maxLength":2097152},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","file","content"],"additionalProperties":False},
+                {"type":"object","properties":{"kind":{"const":"delete_registered_file"},"file":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","file"],"additionalProperties":False},
+                {"type":"object","properties":{"kind":{"const":"daemon_reload"}},"required":["kind"],"additionalProperties":False},
             ]
         },
     },
@@ -202,10 +249,13 @@ async def _sync_ff(root: Path, binding: dict[str, Any], action: dict[str, Any], 
     if HEX40_RE.fullmatch(expected) is None:
         raise ProbeError("invalid_input", "expected_sha must be exact 40-hex")
 
-    registered_repo = _registered_remote(binding, remote)
-    remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
-    if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
-        raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    if binding.get("remotes"):
+        registered_repo = _registered_remote(binding, remote)
+        remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
+        if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
+            raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    else:
+        registered_repo, _remote_url = await resolve_github_remote(root, binding, remote)
 
     current_branch = await _git(root, "symbolic-ref", "--quiet", "--short", "HEAD", timeout=10)
     if current_branch.exit_code != 0 or current_branch.stdout.decode().strip() != branch:
@@ -321,7 +371,10 @@ async def _run_tool(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         if args:
             argv.extend(["--", *args])
     else:
-        raise ProbeError("invalid_input", f"unknown direct project tool {tool!r}")
+        extended = runner_argv(root, action, cwd)
+        if extended is None:
+            raise ProbeError("invalid_input", f"unknown direct project tool {tool!r}")
+        argv = extended
 
     result = await _run_process(
         argv, cwd=cwd, env=_action_env({}), timeout=timeout, output_limit=MAX_ACTION_OUTPUT,
@@ -436,10 +489,13 @@ async def _handoff_commit_push(root: Path, binding: dict[str, Any], action: dict
     message = action["commit_message"].strip()
     if not message or any(ord(ch) < 32 and ch not in "\t" for ch in message):
         raise ProbeError("invalid_input", "commit message contains control characters")
-    registered_repo = _registered_remote(binding, remote)
-    remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
-    if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
-        raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    if binding.get("remotes"):
+        registered_repo = _registered_remote(binding, remote)
+        remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
+        if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
+            raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    else:
+        registered_repo, _remote_url = await resolve_github_remote(root, binding, remote)
 
     base = str(meta.get("baseSha") or "")
     if HEX40_RE.fullmatch(base) is None:
@@ -499,12 +555,46 @@ async def _handoff_commit_push(root: Path, binding: dict[str, Any], action: dict
             "commit_sha": commit_sha, "reused_commit": False}
 
 
+async def _run_batch(project_root: str, project_id: str, action: dict[str, Any], *,
+                     config_path: Path | None) -> dict[str, Any]:
+    results=[]
+    for index,step in enumerate(action["steps"]):
+        try:
+            result=await run_project_action(project_root,project_id,step,config_path=config_path)
+        except ProbeError as exc:
+            message,redacted=_redact_text(str(exc))
+            return {"status":"failed","action":"batch","failed_index":index,"results":results,
+                    "error":{"category":exc.category,"message":message[:2000]},"redacted":redacted}
+        results.append(result)
+        if isinstance(result,dict) and result.get("status") in {"failed","error","denied","timeout"}:
+            return {"status":"failed","action":"batch","failed_index":index,"results":results}
+    return {"status":"ok","action":"batch","results":results}
+
+
 async def run_project_action(project_root: str, project_id: str, action: dict[str, Any], *,
                              config_path: Path | None = None) -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
     binding_id, handoff, meta = _handoff_binding(root, project_id)
     binding = _binding(_load_config(config_path or DEFAULT_CONFIG_PATH), binding_id)
     kind = action["kind"]
+    if kind == "batch":
+        return await _run_batch(project_root, project_id, action, config_path=config_path)
+    if kind == "github_pr_create":
+        return await pr_create(root, binding, action)
+    if kind == "github_pr_update":
+        return await pr_update(root, binding, action)
+    if kind == "github_pr_merge":
+        return await pr_merge(root, binding, action)
+    if kind == "github_branch_delete":
+        return await delete_remote_branch(root, binding, action)
+    if kind == "job_start":
+        return await start_job(root, action)
+    if kind == "job_status":
+        return await job_status(root, action["job_id"])
+    if kind == "job_cancel":
+        return await cancel_job(root, action["job_id"])
+    if kind == "job_cleanup":
+        return cleanup_job(root, action["job_id"])
     if kind == "sync_ff":
         return await _sync_ff(root, binding, action, handoff=handoff)
     if kind == "run_tool":
@@ -513,6 +603,29 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
         return await _run_profile(root, binding, action["profile"], section="project_actions", handoff=handoff)
     if kind == "handoff_commit_push":
         return await _handoff_commit_push(root, binding, action, meta)
+    if kind == "write_text": return write_text(root, action)
+    if kind == "mkdir": return mkdir(root, action)
+    if kind == "move_path": return move_path(root, action)
+    if kind == "delete_file": return delete_file(root, action)
+    if kind == "chmod_executable": return chmod_executable(root, action)
+    if kind == "git_create_branch": return await git_create_branch(root, action)
+    if kind == "git_stage": return await git_stage(root, action)
+    if kind == "git_commit_push": return await git_commit_push(root, binding, action)
+    if kind == "capture_handoff":
+        if handoff: raise ProbeError("handoff_denied", "capture_handoff requires a canonical project", status="denied")
+        return await capture_handoff(root, binding_id, action)
+    if kind == "worktree_capture_handoff":
+        if handoff: raise ProbeError("handoff_denied", "worktree capture requires a canonical project", status="denied")
+        return await capture_worktree_handoff(root, binding_id, action)
+    if kind == "worktree_reconcile":
+        if handoff: raise ProbeError("handoff_denied", "worktree reconcile requires a canonical project", status="denied")
+        return await reconcile_worktree(root, binding_id, action)
+    if kind == "owned_service_action":
+        if handoff: raise ProbeError("handoff_denied", "owned service action requires a canonical project", status="denied")
+        return await owned_service_action(root, action)
+    if kind == "adb":
+        if handoff: raise ProbeError("handoff_denied", "adb action requires a canonical project", status="denied")
+        return await adb_action(root, action)
     raise ProbeError("invalid_input", f"unknown project action kind {kind!r}")
 
 
@@ -552,4 +665,8 @@ async def run_host_action(project_root: str, project_id: str, action: dict[str, 
         return await _restart_service(binding, action["service"])
     if kind == "run_profile":
         return await _run_profile(root, binding, action["profile"], section="host_actions", handoff=False)
+    if kind == "service_action": return await service_action(binding, action["service"], action["operation"])
+    if kind == "write_registered_file": return write_registered_file(binding, action)
+    if kind == "delete_registered_file": return delete_registered_file(binding, action)
+    if kind == "daemon_reload": return await daemon_reload(binding)
     raise ProbeError("invalid_input", f"unknown host action kind {kind!r}")
