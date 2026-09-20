@@ -45,6 +45,9 @@ def test_clean_host_installer_accepts_probes_before_tunnel_switch() -> None:
     required_tools = (
         "project_probe", "host_probe", "list_models", "start_task", "read_task",
         "stage_source_handoff", "cleanup_source_handoff",
+        "street_story_materialize_release", "street_story_deploy_user_service",
+        "street_story_publish_edge_route", "street_story_service",
+        "street_story_deployment_receipt",
     )
     for name in required_tools:
         assert name in source
@@ -81,9 +84,14 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.12.0-routing-evidence"' in bridge
+        assert 'BRIDGE_VERSION = "3.13.0-street-story-deploy"' in bridge
         assert 'name="stage_source_handoff"' in bridge
         assert 'name="cleanup_source_handoff"' in bridge
+        assert 'name="street_story_materialize_release"' in bridge
+        assert 'name="street_story_deploy_user_service"' in bridge
+        assert 'name="street_story_publish_edge_route"' in bridge
+        assert 'name="street_story_service"' in bridge
+        assert 'name="street_story_deployment_receipt"' in bridge
         assert 'raw_hint.startswith("handoff:")' in bridge
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
         assert 'headers["x-opencode-directory"]' in backend
@@ -95,7 +103,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         for name in (
             "direct_probes.py", "direct_probe_disk_forensics.py",
             "direct_probe_config.json", "opencode_backend.py",
-            "source_handoff.py",
+            "source_handoff.py", "street_story_operator.py",
         ):
             assert (out / name).is_file()
 
@@ -106,3 +114,23 @@ def test_clean_host_builder_source_handoff_transport_contract() -> None:
     assert "cleanup_source_handoff" in source
     assert 'ROOT / "runtime" / "source_handoff.py"' in source
     assert "git diff --cached --binary" in source
+
+
+def test_clean_host_builder_street_story_deployment_contract() -> None:
+    source = BUILDER.read_text(encoding="utf-8")
+    for name in (
+        "street_story_materialize_release",
+        "street_story_deploy_user_service",
+        "street_story_publish_edge_route",
+        "street_story_service",
+        "street_story_deployment_receipt",
+    ):
+        assert name in source
+    assert 'ROOT / "runtime" / "street_story_operator.py"' in source
+    operator = (ROOT / "runtime" / "street_story_operator.py").read_text(encoding="utf-8")
+    assert 'TARGET_REPOSITORY = "onedayonemasterpiece/street-story"' in operator
+    assert 'TARGET_BRANCH = "work/street-story-mvp-20260908"' in operator
+    assert 'TARGET_HOSTNAME = "street-story.kenigevents.ru"' in operator
+    assert "TARGET_PORT = 8188" in operator
+    assert 'TARGET_SERVICE = "street-story.service"' in operator
+    assert "requested SHA is not the current Street Story PR branch HEAD" in operator
