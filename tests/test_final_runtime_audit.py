@@ -146,14 +146,19 @@ def test_source_routing_metadata_matches_ordered_runtime_fallback():
     assert '"automaticFallbackScope": "groq_key_pool"' not in source
 
 
-def _cancellation_fragment_env(record, inspected):
+def _cancellation_fragment_env(record, inspected, *, registry_record=None):
     class FakeOpenCodeError(Exception):
         category = "unavailable"
 
+    durable = record if registry_record is None else registry_record
+
     class FakeRegistry:
+        def get(self, _task_id):
+            return durable
+
         def update(self, _task_id, **changes):
-            record.update(changes)
-            return record
+            durable.update(changes)
+            return durable
 
     class FakeEvidenceStore:
         def has_evidence(self, _task_id, _turn_id):
@@ -270,3 +275,65 @@ def test_cancelling_groq_task_never_auto_falls_back():
     })
     result = run(env["_maybe_auto_groq_fallback"](record, inspected, status="running"))
     assert result is None
+
+def test_stale_running_record_observes_fresh_cancelling_idle_state():
+    stale = {
+        "taskId": "dvt_" + "d" * 32,
+        "backend": "opencode",
+        "backendSessionId": "ses_test",
+        "cwd": "/repo",
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b",
+        "selection": "groq/openai/gpt-oss-120b",
+        "access": "write",
+        "status": "running",
+        "createdAt": 1,
+    }
+    durable = {**stale, "status": "cancelling"}
+    inspected = {
+        "status": "running",
+        "sessionStatus": "idle",
+        "providerState": {"type": "idle"},
+        "finalResponse": None,
+        "error": None,
+        "messageId": "msg_cancelled_race",
+        "messages": [],
+    }
+    env = _cancellation_fragment_env(stale, inspected, registry_record=durable)
+    result = run(env["_read_opencode_task"](stale))
+    assert result["status"] == "interrupted"
+    assert result["executionStatus"] == "interrupted"
+    assert durable["status"] == "interrupted"
+    assert stale["status"] == "running"
+
+
+def test_stale_watcher_cannot_overwrite_fresh_cancelling_busy_state():
+    stale = {
+        "taskId": "dvt_" + "e" * 32,
+        "backend": "opencode",
+        "backendSessionId": "ses_test",
+        "cwd": "/repo",
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b",
+        "selection": "groq/openai/gpt-oss-120b",
+        "access": "write",
+        "status": "running",
+        "createdAt": 1,
+    }
+    durable = {**stale, "status": "cancelling"}
+    inspected = {
+        "status": "running",
+        "sessionStatus": "busy",
+        "providerState": {"type": "busy"},
+        "finalResponse": None,
+        "error": None,
+        "messageId": "msg_busy_race",
+        "messages": [],
+    }
+    env = _cancellation_fragment_env(stale, inspected, registry_record=durable)
+    result = run(env["_read_opencode_task"](stale))
+    assert result["status"] == "running"
+    assert result["task"]["status"] == "cancelling"
+    assert durable["status"] == "cancelling"
+    assert stale["status"] == "running"
+
