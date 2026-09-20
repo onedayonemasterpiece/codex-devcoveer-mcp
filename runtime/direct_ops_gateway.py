@@ -70,7 +70,14 @@ async def run_direct_ops_v2(
     operation: str,
     payload: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    body = dict(payload or {})
+    raw_payload = {} if payload is None else payload
+    _validate(DIRECT_OPS_V2_INPUT_SCHEMA, {
+        "project": project_id,
+        "plane": plane,
+        "operation": operation,
+        "payload": raw_payload,
+    })
+    body = dict(raw_payload)
     if any(key in body for key in ("kind", "id", "project")):
         raise ProbeError(
             "invalid_input",
