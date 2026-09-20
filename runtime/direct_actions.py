@@ -580,7 +580,9 @@ async def _run_direct_ops_compat(root: Path, project_id: str, action: dict[str, 
     result = await run_direct_ops_v2(str(root), project_id, plane, operation, payload)
     status = "ok"
     if plane.endswith("_action") and isinstance(result, dict):
-        status = str(result.get("status") or "ok")
+        inner_status = str(result.get("status") or "ok")
+        if inner_status in {"failed", "error", "denied", "timeout"}:
+            status = inner_status
     return {
         "status": status,
         "action": "direct_ops_v2_compat",

@@ -104,3 +104,26 @@ def test_cached_run_tool_compat_rejects_bad_json(tmp_path:Path):
     with pytest.raises(actions.ProbeError) as exc:
         run(actions.run_project_action(str(tmp_path),"p",action,config_path=cfg))
     assert exc.value.category=="invalid_input"
+
+def test_cached_run_tool_compat_normalizes_successful_lifecycle_statuses(monkeypatch,tmp_path:Path):
+    cfg=tmp_path/"config.json"
+    cfg.write_text(json.dumps({"version":1,"projects":{"p":{}}}),encoding="utf-8")
+
+    async def fake(root,project,plane,operation,payload):
+        return {"status":payload["status"],"job_id":"job_"+"a"*24}
+
+    monkeypatch.setattr(gateway,"run_direct_ops_v2",fake)
+    for inner in ("running","succeeded","cancelled","terminal","scheduled"):
+        out=run(actions.run_project_action(str(tmp_path),"p",{
+            "kind":"run_tool","tool":"python_script","path":"@direct_ops_v2",
+            "args":["project_action","job_status",json.dumps({"status":inner})],
+        },config_path=cfg))
+        assert out["status"]=="ok"
+        assert out["result"]["status"]==inner
+
+    out=run(actions.run_project_action(str(tmp_path),"p",{
+        "kind":"run_tool","tool":"python_script","path":"@direct_ops_v2",
+        "args":["project_action","job_status",json.dumps({"status":"failed"})],
+    },config_path=cfg))
+    assert out["status"]=="failed"
+    assert out["result"]["status"]=="failed"
