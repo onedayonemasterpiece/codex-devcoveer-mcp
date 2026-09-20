@@ -531,7 +531,7 @@ class StreetStoryOperator:
             "/v1/publications",
             body={
                 "to": ["lovekenig_tg"],
-                "content": {"text": "Street Story deployment preflight. Preview only; do not dispatch."},
+                "content": {"text": f"Street Story deployment preflight for {sha[:12]}. Preview only; do not dispatch."},
                 "mode": "preview",
             },
             request_key=f"street-story-deploy-preview-{sha[:24]}",
