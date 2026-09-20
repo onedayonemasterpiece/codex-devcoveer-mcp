@@ -53,3 +53,18 @@ Still to-be:
 - async deterministic jobs and typed batch actions;
 - guarded workspace reconcile tied to a capture receipt;
 - typed Android ADB/install/logcat primitives.
+
+## Project-owned runtime worktrees and guarded reconciliation
+
+A recovered production runtime often is already a detached Git worktree of the same repository. Direct Ops therefore does not need a product-specific deployment executor for that common case.
+
+Implemented:
+- worktree_compare reads target/HEAD/index/worktree/untracked state for any path that Git itself reports as a worktree of the resolved project.
+- worktree_capture_handoff captures an external runtime worktree into the normal isolated handoff and writes a private capture receipt containing source worktree, HEAD, base and exact overlay digest.
+- worktree_reconcile is the only direct destructive convergence primitive. It requires an external detached worktree, a full capture receipt, the original handoff, unchanged HEAD and an exact unchanged overlay digest. It creates a local release commit from the tested handoff index and resets only that external runtime worktree. It never cleans untracked leftovers and never touches the canonical development checkout.
+- owned_service_action can status/start/stop/restart/reload/enable/disable a user service without a static project registry entry only after systemd WorkingDirectory is verified as one of the Git worktrees of the resolved project.
+
+This makes the recovery rollout path:
+worktree_compare -> worktree_capture_handoff -> tests/build on handoff -> worktree_reconcile -> owned_service_action restart -> health/network probes.
+
+No OpenCode task is required for any step when the desired source/recovery merge is already known.

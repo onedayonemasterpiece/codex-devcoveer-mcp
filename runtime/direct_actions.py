@@ -26,6 +26,7 @@ from direct_ops2 import (
     write_registered_file, write_text,
 )
 from direct_ops2_host import daemon_reload, delete_registered_file
+from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -102,6 +103,9 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"git_stage"},"paths":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","paths"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"git_commit_push"},"remote":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"commit_message":{"type":"string","minLength":1,"maxLength":200}},"required":["kind","commit_message"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"capture_handoff"},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","base_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"worktree_capture_handoff"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","worktree","base_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"owned_service_action"},"unit":{"type":"string","minLength":1,"maxLength":200,"pattern":r"^[A-Za-z0-9_.@:-]+\.service$"},"operation":{"type":"string","enum":["status","start","stop","restart","reload","enable","disable"]}},"required":["kind","unit","operation"],"additionalProperties":False},
     ]
 }
 
@@ -553,6 +557,15 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
     if kind == "capture_handoff":
         if handoff: raise ProbeError("handoff_denied", "capture_handoff requires a canonical project", status="denied")
         return await capture_handoff(root, binding_id, action)
+    if kind == "worktree_capture_handoff":
+        if handoff: raise ProbeError("handoff_denied", "worktree capture requires a canonical project", status="denied")
+        return await capture_worktree_handoff(root, binding_id, action)
+    if kind == "worktree_reconcile":
+        if handoff: raise ProbeError("handoff_denied", "worktree reconcile requires a canonical project", status="denied")
+        return await reconcile_worktree(root, binding_id, action)
+    if kind == "owned_service_action":
+        if handoff: raise ProbeError("handoff_denied", "owned service action requires a canonical project", status="denied")
+        return await owned_service_action(root, action)
     raise ProbeError("invalid_input", f"unknown project action kind {kind!r}")
 
 
