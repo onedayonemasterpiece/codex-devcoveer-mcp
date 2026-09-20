@@ -1,3 +1,4 @@
+# Verification-only PR for Street Story runtime acceptance.
 name: Codex DevCoveer MCP Tests
 
 on:
