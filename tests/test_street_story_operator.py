@@ -140,6 +140,10 @@ def test_vibe_preview_preflight_requires_supported_capability(
         assert token == "t" * 40
         calls.append((method, path))
         if path == "/v1/publications":
+            assert kwargs["body"]["content"]["text"] == (
+                "Street Story deployment preflight for aaaaaaaaaaaa. Preview only; do not dispatch."
+            )
+            assert kwargs["request_key"] == "street-story-deploy-preview-" + "a" * 24
             return {"operation_id": "op_preview"}
         if path == "/v1/operations/op_preview":
             return {
