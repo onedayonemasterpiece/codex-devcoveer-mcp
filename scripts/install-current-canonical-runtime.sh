@@ -72,7 +72,7 @@ async def main():
                 row.get("properties",{}).get("kind",{}).get("const")
                 for row in by["project_action"].input_schema["properties"]["action"]["oneOf"]
             }
-            for required_kind in {"write_text","worktree_reconcile","adb","job_start","batch","github_pr_merge"}:
+            for required_kind in {"write_text","worktree_reconcile","job_start","batch","github_pr_merge"}:
                 if required_kind not in action_kinds:
                     raise SystemExit("project_action schema missing "+required_kind)
             gateway=by["direct_ops_v2"].input_schema
