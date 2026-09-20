@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import stat
 from pathlib import Path
 
@@ -90,6 +91,62 @@ def test_python312_prefers_healthy_bridge_runtime(
     )
 
     assert operator._python312() == str(bridge)
+
+
+def test_vibe_principal_name_avoids_existing_ids(tmp_path: Path) -> None:
+    operator = _operator(tmp_path)
+    with sqlite3.connect(operator.vibe_db) as db:
+        db.execute("CREATE TABLE principals(id TEXT PRIMARY KEY)")
+        db.executemany(
+            "INSERT INTO principals(id) VALUES(?)",
+            [("street-story-runtime-abc",), ("street-story-runtime-abc-2",)],
+        )
+
+    assert operator._choose_vibe_principal("street-story-runtime-abc") == "street-story-runtime-abc-3"
+
+
+def test_vibe_preview_preflight_requires_supported_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operator = _operator(tmp_path)
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(token: str, method: str, path: str, **kwargs):
+        assert token == "t" * 40
+        calls.append((method, path))
+        if path == "/v1/publications":
+            return {"operation_id": "op_preview"}
+        if path == "/v1/operations/op_preview":
+            return {
+                "receipts": [
+                    {"operation_id": "op_preview", "operation_complete": True, "state": "verified"}
+                ]
+            }
+        if path == "/v1/bootstrap":
+            return {
+                "capabilities": [
+                    {
+                        "destination": "lovekenig_tg",
+                        "operation": "publish",
+                        "surface": "post",
+                        "status": "supported",
+                        "reason": "preview verified",
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(operator, "_vibe_request", fake_request)
+
+    result = operator._vibe_preview_preflight("t" * 40, "a" * 40)
+
+    assert result["alias"] == "lovekenig_tg"
+    assert result["status"] == "supported"
+    assert calls == [
+        ("POST", "/v1/publications"),
+        ("GET", "/v1/operations/op_preview"),
+        ("GET", "/v1/bootstrap"),
+    ]
 
 
 def test_edge_target_rejects_arbitrary_hostname_before_host_access(tmp_path: Path) -> None:

@@ -478,6 +478,106 @@ class StreetStoryOperator:
         self._write_private_env(path, values)
         return path
 
+    def _choose_vibe_principal(self, base: str) -> str:
+        db = sqlite3.connect(f"file:{self.vibe_db}?mode=ro", uri=True)
+        try:
+            used = {
+                str(row[0])
+                for row in db.execute(
+                    "SELECT id FROM principals WHERE id=? OR id GLOB ?",
+                    (base, base + "-*"),
+                )
+            }
+        finally:
+            db.close()
+        if base not in used:
+            return base
+        for ordinal in range(2, 100):
+            candidate = f"{base}-{ordinal}"
+            if candidate not in used:
+                return candidate
+        raise OperatorError("no free Street Story VibePublish principal name")
+
+    def _vibe_request(
+        self,
+        token: str,
+        method: str,
+        path: str,
+        *,
+        body: dict[str, Any] | None = None,
+        request_key: str | None = None,
+        timeout: float = 20,
+    ) -> dict[str, Any]:
+        payload = None if body is None else json.dumps(body, separators=(",", ":")).encode()
+        headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+        if request_key:
+            headers["Idempotency-Key"] = request_key
+        request = urllib.request.Request(VIBE_BASE_URL + path, data=payload, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                value = json.load(response)
+        except Exception as exc:
+            raise OperatorError(f"VibePublish preflight request failed for {path}") from exc
+        if not isinstance(value, dict):
+            raise OperatorError(f"VibePublish returned invalid JSON for {path}")
+        return value
+
+    def _vibe_preview_preflight(self, token: str, sha: str) -> dict[str, str]:
+        operation = self._vibe_request(
+            token,
+            "POST",
+            "/v1/publications",
+            body={
+                "to": ["lovekenig_tg"],
+                "content": {"text": "Street Story deployment preflight. Preview only; do not dispatch."},
+                "mode": "preview",
+            },
+            request_key=f"street-story-deploy-preview-{sha[:24]}",
+        )
+        operation_id = str(operation.get("operation_id") or "")
+        if not operation_id:
+            raise OperatorError("VibePublish preview returned no operation_id")
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            status = self._vibe_request(token, "GET", f"/v1/operations/{operation_id}")
+            receipts = status.get("receipts")
+            current = None
+            if isinstance(receipts, list):
+                current = next(
+                    (
+                        item
+                        for item in receipts
+                        if isinstance(item, dict) and item.get("operation_id") == operation_id
+                    ),
+                    None,
+                )
+            if current and current.get("operation_complete") is True:
+                state = str(current.get("state") or "")
+                if state not in {"needs_approval", "verified"}:
+                    raise OperatorError(f"VibePublish preview ended in unexpected state {state or 'unknown'}")
+                break
+            time.sleep(1)
+        else:
+            raise OperatorError("VibePublish preview preflight timed out")
+        bootstrap = self._vibe_request(token, "GET", "/v1/bootstrap")
+        caps = [
+            row
+            for row in bootstrap.get("capabilities", [])
+            if isinstance(row, dict)
+            and row.get("destination") == "lovekenig_tg"
+            and row.get("operation") == "publish"
+            and row.get("surface") == "post"
+        ]
+        if len(caps) != 1 or caps[0].get("status") != "supported":
+            raise OperatorError("VibePublish Telegram preview did not establish supported capability")
+        return {
+            "alias": "lovekenig_tg",
+            "status": "supported",
+            "reason": str(caps[0].get("reason") or "")[:300],
+        }
+
     def _vibe_principal(self, sha: str) -> tuple[Path, Path]:
         token_file = self.app_state_root / "vibepublish-token"
         principal_file = self.app_state_root / "vibepublish-principal"
@@ -495,7 +595,7 @@ class StreetStoryOperator:
         for required in (self.vibe_py, self.vibe_db, self.vibe_owner_token_file):
             if not required.exists():
                 raise OperatorError("current VibePublish management runtime is unavailable")
-        principal = f"street-story-runtime-{sha[:12]}"
+        principal = self._choose_vibe_principal(f"street-story-runtime-{sha[:12]}")
         owner_token = self.vibe_owner_token_file.read_text(encoding="utf-8").strip()
         if len(owner_token) < 20:
             raise OperatorError("VibePublish owner token is invalid")
@@ -714,6 +814,7 @@ class StreetStoryOperator:
             vibe_token = vibe_token_file.read_text(encoding="utf-8").strip()
             if len(vibe_token) < 20:
                 raise OperatorError("Street Story Vibe token is invalid")
+            vibe_preflight = self._vibe_preview_preflight(vibe_token, sha)
             data_dir = self.app_state_root / "data"
             data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(data_dir, 0o700)
@@ -795,6 +896,7 @@ class StreetStoryOperator:
                 "service": status,
                 "local_health": local,
                 "destinations": destinations,
+                "vibepublish_preflight": vibe_preflight,
                 "safe_alias_configured": False,
                 "github_live_token_synced": True,
                 "secrets_disclosed": False,
