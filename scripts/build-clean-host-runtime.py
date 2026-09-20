@@ -361,7 +361,35 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     spec = importlib.util.spec_from_file_location("restore_contract", ROOT / "scripts" / "restore-integration-contract.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.transform(source, replace_once)
+    source = module.transform(source, replace_once)
+
+    policy_spec = importlib.util.spec_from_file_location(
+        "default_opencode_policy", ROOT / "scripts" / "install-default-opencode-policy.py"
+    )
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_spec.loader.exec_module(policy)
+    source = replace_once(
+        source, policy.OLD_START_TOOL, policy.NEW_START_TOOL, "start_task operating policy"
+    )
+
+    reminder_spec = importlib.util.spec_from_file_location(
+        "direct_tool_reminder", ROOT / "scripts" / "install-direct-tool-reminder.py"
+    )
+    reminder = importlib.util.module_from_spec(reminder_spec)
+    reminder_spec.loader.exec_module(reminder)
+    source = replace_once(
+        source,
+        reminder.TOOL_RESULT_ANCHOR,
+        reminder.HELPER_BLOCK + reminder.TOOL_RESULT_ANCHOR,
+        "direct/browser reminder helper",
+    )
+    source = replace_once(
+        source,
+        reminder.START_RETURN_OLD,
+        reminder.START_RETURN_NEW,
+        "direct/browser reminder response",
+    )
+    return source
 
 def transform_backend(source: str) -> str:
     source = replace_once(source, '''        self.base_url = base_url

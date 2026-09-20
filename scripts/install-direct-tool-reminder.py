@@ -29,6 +29,9 @@ DESCRIPTION_V1 = (
 DESCRIPTION_NEW = (
     '            "creation, and updates. Before start_task for deterministic Git/host/runtime/model/task-state "\n'
     '            "checks, use direct tools first: project_probe, host_probe, list_models, and list_tasks/read_task. "\n'
+    '            "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, "\n'
+    '            "use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "\n'
+    '            "Keep OpenCode/GitHub Actions for project Playwright test runners, builds, or webServer harnesses. "\n'
     '            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to "\n'
     '            "OpenCode: ChatGPT should author the exact code/docs change itself and use stage_source_handoff "\n'
     '            "when direct repository writing is unavailable. The handoff agent should verify, test, commit, "\n'
@@ -92,6 +95,17 @@ _DIRECT_TOOL_REMINDER_TEXT = (
     "host_probe for services/logs/listeners/resources/runtime; list_models for live model health; "
     "list_tasks/read_task for task state. Prefer those for deterministic checks before starting another task."
 )
+_BROWSER_TOOL_REMINDER_STRONG = (
+    "playwright", "browser ui", "browser interaction", "dom", "console", "network",
+    "screenshot", "navigate", "click", "fill", "upload", "download",
+    "браузер", "скриншот", "консоль",
+)
+_BROWSER_TOOL_REMINDER_TEXT = (
+    "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation, "
+    "clicks, fills, uploads or downloads, use the available my-browser-bridge MCP directly instead of "
+    "starting OpenCode solely to drive Playwright. Keep OpenCode/GitHub Actions for project Playwright "
+    "test runners, builds, or webServer harnesses."
+)
 _SOURCE_AUTHORSHIP_REMINDER_TEXT = (
     "Repository code and documentation should normally be authored by ChatGPT itself, not delegated to weaker "
     "OpenCode models. If ChatGPT cannot write the repository directly, author the exact code/docs patch here and "
@@ -109,6 +123,8 @@ def _direct_tool_reminder(prompt: str, access: str) -> str | None:
         soft_hits = sum(1 for marker in _DIRECT_TOOL_REMINDER_SOFT if marker in text)
         if soft_hits >= 2 or (access == "read" and soft_hits >= 1):
             hints.append(_DIRECT_TOOL_REMINDER_TEXT)
+    if any(marker in text for marker in _BROWSER_TOOL_REMINDER_STRONG):
+        hints.append(_BROWSER_TOOL_REMINDER_TEXT)
     if access == "write":
         hints.append(_SOURCE_AUTHORSHIP_REMINDER_TEXT)
     return " ".join(hints) if hints else None

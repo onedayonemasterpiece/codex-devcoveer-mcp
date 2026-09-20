@@ -84,6 +84,94 @@
       },
       "config_presence": {}
     },
+    "my-browser-bridge": {
+      "github_repo": "onedayonemasterpiece/my-browser-bridge",
+      "remotes": {
+        "origin": "onedayonemasterpiece/my-browser-bridge"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {
+        "browser": {
+          "unit": "my-browser-bridge.service",
+          "scope": "user",
+          "ports": [
+            7311
+          ],
+          "executable": "/usr/local/bin/node",
+          "working_directory": "/home/dev/projects/my-browser-bridge",
+          "transport": "loopback_http",
+          "endpoints": [
+            "http://127.0.0.1:7311"
+          ]
+        },
+        "mcp_tunnel": {
+          "unit": "my-browser-bridge-tunnel.service",
+          "scope": "user",
+          "ports": [
+            18081
+          ],
+          "transport": "reverse_tunnel_with_loopback_health",
+          "endpoints": [
+            "http://127.0.0.1:18081"
+          ]
+        }
+      },
+      "logs": {
+        "browser": {
+          "type": "journal",
+          "service": "browser"
+        },
+        "mcp_tunnel": {
+          "type": "journal",
+          "service": "mcp_tunnel"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/my-browser-bridge"
+      },
+      "health": {
+        "browser_health": {
+          "url": "http://127.0.0.1:7311/healthz",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 2,
+          "body_bytes": 4096
+        },
+        "browser_ready": {
+          "url": "http://127.0.0.1:7311/readyz",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 2,
+          "body_bytes": 4096
+        }
+      },
+      "runtimes": {
+        "node": {
+          "type": "cli",
+          "argv": [
+            "/usr/local/bin/node",
+            "--version"
+          ]
+        },
+        "playwright": {
+          "type": "cli",
+          "argv": [
+            "/home/dev/projects/my-browser-bridge/node_modules/.bin/playwright",
+            "--version"
+          ]
+        }
+      },
+      "runtime_files": {
+        "server_main": "/home/dev/projects/my-browser-bridge/dist/server/main.js"
+      },
+      "config_presence": {}
+    },
     "vibepublish": {
       "github_repo": "onedayonemasterpiece/vibepublish",
       "remotes": {
