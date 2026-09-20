@@ -118,12 +118,16 @@ async def pr_update(root:Path,binding:dict[str,Any],action:dict[str,Any]) -> dic
         raise ProbeError("pr_denied","only open chatgpt/* PRs may be updated",status="denied")
     if data.get("headRefOid")!=expected:
         raise ProbeError("remote_moved","PR head differs from expected SHA",status="denied")
-    args=["pr","edit",str(pr),"--repo",repo]
-    if "title" in action: args.extend(["--title",action["title"]])
-    if "body" in action: args.extend(["--body",action["body"]])
-    if len(args)==5:
+    fields=[]
+    if "title" in action: fields.extend(["-f","title="+action["title"]])
+    if "body" in action: fields.extend(["-f","body="+action["body"]])
+    if not fields:
         raise ProbeError("invalid_input","PR update requires title or body")
-    await _gh(binding,args,timeout=30)
+    await _gh(
+        binding,
+        ["api","--method","PATCH",f"repos/{repo}/pulls/{pr}",*fields],
+        timeout=30,
+    )
     after=await _view_pr(binding,repo,pr)
     return {"status":"ok","action":"github_pr_update","repository":repo,
             "number":pr,"url":after.get("url"),"head_sha":expected}

@@ -94,3 +94,27 @@ def test_explicit_remote_registry_blocks_unregistered_alias(tmp_path:Path,monkey
         run(gha._repo(tmp_path,{"remotes":{"origin":"o/r"}},"other"))
     assert exc.value.category=="remote_denied"
     assert called is False
+
+def test_pr_update_uses_rest_patch_not_graphql_edit(tmp_path:Path,monkeypatch):
+    async def remote(root,binding,alias): return ("o/r","u")
+    calls=[]
+    views=[
+        {"state":"OPEN","headRefName":"chatgpt/x","headRefOid":"f"*40,"baseRefName":"main","url":"u"},
+        {"state":"OPEN","headRefName":"chatgpt/x","headRefOid":"f"*40,"baseRefName":"main","url":"u"},
+    ]
+    async def fake_view(binding,repo,pr): return views.pop(0)
+    async def fake_gh(binding,args,**kwargs):
+        calls.append(args)
+        return "{}"
+    monkeypatch.setattr(gha,"resolve_github_remote",remote)
+    monkeypatch.setattr(gha,"_view_pr",fake_view)
+    monkeypatch.setattr(gha,"_gh",fake_gh)
+    out=run(gha.pr_update(tmp_path,{},{
+        "pr":9,"expected_head_sha":"f"*40,"title":"New title","body":"New body"
+    }))
+    assert out["status"]=="ok"
+    assert calls==[[
+        "api","--method","PATCH","repos/o/r/pulls/9",
+        "-f","title=New title","-f","body=New body",
+    ]]
+    assert all("pr" not in call[:2] or "edit" not in call for call in calls)
