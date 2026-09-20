@@ -437,8 +437,8 @@
           "timeout_seconds": 900,
           "output_bytes": 262144,
           "env": {
-            "WONDERFUL_EXPECTED_OLD_SHA": "2d215128a1991a3ad4aa321bfcd7df6c715f4f58",
-            "WONDERFUL_RELEASE_SHA": "e511ea32fec5b8635aeb50700fe0f64166493f50",
+            "WONDERFUL_EXPECTED_OLD_SHA": "e511ea32fec5b8635aeb50700fe0f64166493f50",
+            "WONDERFUL_RELEASE_SHA": "eb76b685a835ac58f338cc3fa8af6db0037595e6",
             "WONDERFUL_RELEASE_BRANCH": "work/review-theses-product-fix-20260920"
           }
         }
