@@ -469,7 +469,7 @@ class StreetStoryOperator:
         values.update(
             {
                 "GEMINI_API_KEY_REFS": json.dumps(refs, separators=(",", ":")),
-                "GEMINI_MODEL": "gemini-3.1-flash-lite",
+                "GEMINI_MODEL": "gemini-2.5-flash-lite",
                 "GEMINI_QUOTA_SUPABASE_URL": quota_url,
                 "GEMINI_QUOTA_SUPABASE_KEY": quota_key,
             }
