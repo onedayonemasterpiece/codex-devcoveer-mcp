@@ -128,8 +128,14 @@ echo "bridge=$BRIDGE_SHA"
 echo "backend=$BACKEND_SHA"
 echo "wrapper_canonical=PASS"
 if [ "$SKIP_TUNNEL_RESTART" = "1" ]; then
+  RESTART_UNIT="devcoveer-canonical-restart-${STAMP//[:]/-}"
+  systemd-run --user --quiet --collect \
+    --unit="$RESTART_UNIT" --on-active=2s \
+    /usr/bin/systemctl --user restart codex-devserver-tunnel.service \
+    || die "could not schedule deferred tunnel restart"
   trap - EXIT
   echo "tunnel_restart=DEFERRED"
+  echo "tunnel_restart_unit=$RESTART_UNIT"
   echo "deployment_evidence=$TMP"
   exit 0
 fi
