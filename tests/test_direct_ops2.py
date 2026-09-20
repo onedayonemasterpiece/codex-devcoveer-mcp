@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -14,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime"
 sys.path.insert(0, str(RUNTIME))
 import direct_ops2 as ops
+import direct_actions as da
 
 
 def git(repo: Path, *args: str) -> str:
@@ -124,3 +126,38 @@ def test_direct_ops2_schema_variants_are_unique():
     assert len(project_kinds)==len(set(project_kinds))
     assert len(host_kinds)==len(set(host_kinds))
     assert len(probe_kinds)==len(set(probe_kinds))
+
+def test_batch_schema_is_non_recursive_and_bounded():
+    import direct_actions as da
+    variants=da._PROJECT_ACTION_SCHEMA["oneOf"]
+    batch=next(row for row in variants if row["properties"]["kind"].get("const")=="batch")
+    step_variants=batch["properties"]["steps"]["items"]["oneOf"]
+    step_kinds=[row["properties"]["kind"]["const"] for row in step_variants]
+    assert "batch" not in step_kinds
+    assert batch["properties"]["steps"]["maxItems"]==20
+
+def test_batch_executes_in_order_and_stops_on_failure(tmp_path: Path):
+    repo=init_repo(tmp_path/"batchrepo")
+    cfg=tmp_path/"config.json"
+    cfg.write_text(json.dumps({"version":1,"projects":{"p":{}}}),encoding="utf-8")
+    ok=run(da.run_project_action(str(repo),"p",{
+        "kind":"batch",
+        "steps":[
+            {"kind":"mkdir","path":"out"},
+            {"kind":"write_text","path":"out/value.txt","content":"ok\n","must_not_exist":True},
+        ],
+    },config_path=cfg))
+    assert ok["status"]=="ok"
+    assert (repo/"out/value.txt").read_text()=="ok\n"
+
+    before=(repo/"a.txt").read_text()
+    failed=run(da.run_project_action(str(repo),"p",{
+        "kind":"batch",
+        "steps":[
+            {"kind":"write_text","path":"a.txt","content":"no","expected_sha256":"0"*64},
+            {"kind":"write_text","path":"out/should-not-exist.txt","content":"bad","must_not_exist":True},
+        ],
+    },config_path=cfg))
+    assert failed["status"]=="failed" and failed["failed_index"]==0
+    assert (repo/"a.txt").read_text()==before
+    assert not (repo/"out/should-not-exist.txt").exists()
