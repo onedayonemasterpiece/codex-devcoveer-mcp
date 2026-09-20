@@ -127,3 +127,27 @@ def test_cached_run_tool_compat_normalizes_successful_lifecycle_statuses(monkeyp
     },config_path=cfg))
     assert out["status"]=="failed"
     assert out["result"]["status"]=="failed"
+
+def test_cached_run_tool_compat_preserves_handoff_project_id(monkeypatch,tmp_path:Path):
+    cfg=tmp_path/"config.json"
+    cfg.write_text(json.dumps({"version":1,"projects":{"p":{}}}),encoding="utf-8")
+    handoff_id="src_"+"a"*24
+    project_id="handoff:"+handoff_id
+    seen={}
+
+    def fake_binding(root,raw_project_id):
+        assert raw_project_id==project_id
+        return "p",True,{"id":handoff_id}
+
+    async def fake_compat(root,raw_project_id,action):
+        seen["project_id"]=raw_project_id
+        return {"status":"ok","action":"direct_ops_v2_compat","result":{"status":"ok"}}
+
+    monkeypatch.setattr(actions,"_handoff_binding",fake_binding)
+    monkeypatch.setattr(actions,"_run_direct_ops_compat",fake_compat)
+    out=run(actions.run_project_action(str(tmp_path),project_id,{
+        "kind":"run_tool","tool":"python_script","path":"@direct_ops_v2",
+        "args":["project_action","write_text","{}"],
+    },config_path=cfg))
+    assert out["status"]=="ok"
+    assert seen["project_id"]==project_id

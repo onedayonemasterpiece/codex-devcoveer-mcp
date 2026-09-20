@@ -636,9 +636,7 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
         return await _sync_ff(root, binding, action, handoff=handoff)
     if kind == "run_tool":
         if action.get("tool") == "python_script" and action.get("path") == DIRECT_OPS_COMPAT_PATH:
-            if handoff:
-                raise ProbeError("handoff_denied", "Direct Ops compatibility carrier requires a canonical project", status="denied")
-            return await _run_direct_ops_compat(root, binding_id, action)
+            return await _run_direct_ops_compat(root, project_id, action)
         return await _run_tool(root, action)
     if kind == "run_profile":
         return await _run_profile(root, binding, action["profile"], section="project_actions", handoff=handoff)
