@@ -141,7 +141,7 @@ NEW_START_TOOL = """    types.Tool(name="start_task", title="Start DevCoveer tas
             "checks, use direct tools first: project_probe, host_probe, list_models, and list_tasks/read_task. "
             "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, "
             "use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "
-            "Keep OpenCode/GitHub Actions for project Playwright test runners, builds, or webServer harnesses. "
+            "Use project_action for project Playwright test/build/webServer runners when directly available; use GitHub Actions only for CI-specific execution. "
             "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to "
             "OpenCode. ChatGPT should author the exact code/docs change itself and use stage_source_handoff "
             "when direct repository writing is unavailable; the handoff agent should verify, test, commit, "

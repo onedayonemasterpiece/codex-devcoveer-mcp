@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote
 
+from direct_ops2 import resolve_github_remote
 from direct_probe_core import (
     MAX_DIFF_BYTES, MAX_FILE_BYTES, MAX_LIST_ENTRIES, MAX_PROCESS_OUTPUT, MAX_SEARCH_BYTES,
     MAX_SEARCH_FILES, MAX_SEARCH_MATCHES, MAX_TEXT_BYTES, MAX_TREE_ENTRIES, HEX40_RE, ProcessResult, ProbeError,
@@ -99,30 +100,23 @@ async def _gh(binding: dict[str, Any], args: list[str], *, timeout: float = 15.0
 async def _remote_head(root: Path, binding: dict[str, Any], remote: str, branch: str) -> dict[str, Any]:
     remote = _validate_alias(remote)
     branch = _validate_branch(branch)
-    remotes = binding.get("remotes") or {}
-    repo = remotes.get(remote)
-    if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", str(repo)):
-        raise ProbeError("remote_denied", "remote is not bound to a trusted GitHub repository", status="denied")
-
-    # Resolve the configured Git remote without fetching or mutating refs, and
-    # verify that it still points at the allowlisted GitHub repository.
-    url_res = await _git(root, "remote", "get-url", remote, output_limit=2048)
-    remote_url = url_res.stdout.decode("utf-8", "replace").strip()
-    expected = str(repo).removesuffix(".git")
-    trusted_urls = {
-        f"https://github.com/{expected}",
-        f"https://github.com/{expected}.git",
-        f"git@github.com:{expected}",
-        f"git@github.com:{expected}.git",
-        f"ssh://git@github.com/{expected}",
-        f"ssh://git@github.com/{expected}.git",
-    }
-    if remote_url not in trusted_urls:
-        raise ProbeError(
-            "remote_drift",
-            "configured Git remote no longer matches the trusted GitHub binding",
-            status="error",
-        )
+    configured_remotes = binding.get("remotes") or {}
+    if configured_remotes:
+        repo = configured_remotes.get(remote)
+        if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", str(repo)):
+            raise ProbeError("remote_denied", "remote is not bound to a trusted GitHub repository", status="denied")
+        url_res = await _git(root, "remote", "get-url", remote, output_limit=2048)
+        remote_url = url_res.stdout.decode("utf-8", "replace").strip()
+        expected = str(repo).removesuffix(".git")
+        trusted_urls = {
+            f"https://github.com/{expected}", f"https://github.com/{expected}.git",
+            f"git@github.com:{expected}", f"git@github.com:{expected}.git",
+            f"ssh://git@github.com/{expected}", f"ssh://git@github.com/{expected}.git",
+        }
+        if remote_url not in trusted_urls:
+            raise ProbeError("remote_drift", "configured Git remote no longer matches the trusted GitHub binding", status="error")
+    else:
+        repo, remote_url = await resolve_github_remote(root, binding, remote)
 
     ref = f"refs/heads/{branch}"
     fresh = await _git(root, "ls-remote", "--heads", remote, ref, timeout=12.0, output_limit=2048)
