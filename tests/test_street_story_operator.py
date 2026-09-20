@@ -77,6 +77,21 @@ def test_live_token_is_host_generated_private_reused_and_never_returned_by_cli(
     assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
 
 
+def test_python312_prefers_healthy_bridge_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operator = _operator(tmp_path)
+    bridge = tmp_path / "bridge-python"
+    bridge.touch()
+    bridge.chmod(0o700)
+    monkeypatch.setattr(street_story_operator, "BRIDGE_PYTHON", bridge)
+    monkeypatch.setattr(
+        street_story_operator.shutil, "which", lambda name: "/broken/python3.12"
+    )
+
+    assert operator._python312() == str(bridge)
+
+
 def test_edge_target_rejects_arbitrary_hostname_before_host_access(tmp_path: Path) -> None:
     operator = _operator(tmp_path)
     with pytest.raises(OperatorError, match="edge target is not allowlisted"):
