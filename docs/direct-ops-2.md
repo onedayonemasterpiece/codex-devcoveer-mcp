@@ -33,10 +33,22 @@ To-be, using the same typed design rather than project-specific one-off tools:
 - daemon-reload plus registered unit/drop-in materialization through host_files;
 - asynchronous deterministic jobs and cancellation/status for long builds/deployments;
 - fail-fast batch actions with per-step receipts;
-- typed Android Gradle/APK/ADB operations;
 - guarded workspace restore/reconcile that requires a prior capture receipt.
 
 Capabilities should evolve independently by contract. They must not be coupled to another project's SHA.
+
+
+## Local-device boundary
+
+DevCoveer is a server/runtime/deployment host, not an Android-device host.
+ADB, emulator/device discovery, package install/uninstall, package logcat,
+Intent launching and instrumentation belong to the owner's local workstation
+or a dedicated Android CI runner. They are intentionally outside the
+Codex DevCoveer operator surface.
+
+Repository build/test tasks such as Gradle wrapper targets remain valid direct
+project operations because they do not imply ownership of an Android device.
+
 
 ## Direct Ops 2 host/runtime slice
 
@@ -52,7 +64,6 @@ Still to-be:
 - generic release materialization/deploy/activate/edge-route receipts;
 - async deterministic jobs and typed batch actions;
 - guarded workspace reconcile tied to a capture receipt;
-- typed Android ADB/install/logcat primitives.
 
 ## Project-owned runtime worktrees and guarded reconciliation
 
@@ -68,21 +79,6 @@ This makes the recovery rollout path:
 worktree_compare -> worktree_capture_handoff -> tests/build on handoff -> worktree_reconcile -> owned_service_action restart -> health/network probes.
 
 No OpenCode task is required for any step when the desired source/recovery merge is already known.
-
-## Android / ADB direct operations
-
-Android projects no longer need an agent simply to operate an emulator or attached device.
-
-Implemented:
-- adb_devices inventory;
-- adb_package_state using pm path + pidof;
-- adb_package_logcat, restricted to the running PIDs of the requested package and redacted;
-- adb install of a repository/worktree APK;
-- uninstall, force-stop and explicit-confirm clear-data;
-- start_activity with package-bound component and bounded typed string/int/bool Intent extras;
-- instrumentation with a package-bound runner and bounded typed extras.
-
-There is intentionally no arbitrary adb shell, push, pull or unrestricted device filesystem access. Gradle wrapper tasks are already covered by the Direct Ops 2 project runner.
 
 ## Durable direct jobs and typed batches
 

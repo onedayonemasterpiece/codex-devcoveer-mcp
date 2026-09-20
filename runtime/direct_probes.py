@@ -18,7 +18,6 @@ from direct_probe_project import (
 )
 from direct_ops2 import project_capabilities, workspace_compare
 from direct_ops2_worktrees import worktree_compare
-from direct_ops2_android import adb_devices, adb_package_logcat, adb_package_state
 from direct_ops2_host import (
     mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
 )
@@ -136,9 +135,6 @@ async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dic
     if kind == "process_tree": return await process_tree(binding, check), "systemd+/proc"
     if kind == "network": return await network_probe(check), "dns+socket+tls/http"
     if kind == "mcp_manifest": return mcp_manifest(binding, check), "installed-runtime-catalog"
-    if kind == "adb_devices": return await adb_devices(check), "adb"
-    if kind == "adb_package_state": return await adb_package_state(check), "adb"
-    if kind == "adb_package_logcat": return await adb_package_logcat(check), "adb"
     if kind == "config_presence": return await _config_presence(binding, check), "registered-config-presence"
     raise ProbeError("invalid_input", f"unknown host probe kind {kind!r}")
 

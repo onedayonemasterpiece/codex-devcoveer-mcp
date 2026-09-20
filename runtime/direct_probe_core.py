@@ -207,16 +207,6 @@ HOST_CHECK_SCHEMAS = [
     _check_schema("mcp_manifest", {
         "file": {"type":"string","minLength":1,"maxLength":64},
     }),
-    _check_schema("adb_devices"),
-    _check_schema("adb_package_state", {
-        "serial": {"type":"string","minLength":1,"maxLength":128},
-        "package": {"type":"string","minLength":2,"maxLength":255},
-    }, ["package"]),
-    _check_schema("adb_package_logcat", {
-        "serial": {"type":"string","minLength":1,"maxLength":128},
-        "package": {"type":"string","minLength":2,"maxLength":255},
-        "lines": {"type":"integer","minimum":1,"maximum":1000},
-    }, ["package"]),
     _check_schema("config_presence", {
         "source": {"type": "string", "minLength": 1, "maxLength": 64},
         "keys": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": True,
