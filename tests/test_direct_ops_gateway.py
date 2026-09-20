@@ -83,10 +83,12 @@ def test_cached_run_tool_schema_can_carry_direct_ops_v2(monkeypatch,tmp_path:Pat
     seen={}
     async def fake(root,project,plane,operation,payload):
         seen.update(root=root,project=project,plane=plane,operation=operation,payload=payload)
-        return {"status":"ok","compat":True}
+        return {"execution":"direct","results":[]}
     monkeypatch.setattr(gateway,"run_direct_ops_v2",fake)
     out=run(actions.run_project_action(str(tmp_path),"p",action,config_path=cfg))
-    assert out=={"status":"ok","compat":True}
+    assert out["status"]=="ok"
+    assert out["action"]=="direct_ops_v2_compat"
+    assert out["result"]=={"execution":"direct","results":[]}
     assert seen["plane"]=="project_probe"
     assert seen["operation"]=="capabilities"
     assert seen["payload"]=={}
