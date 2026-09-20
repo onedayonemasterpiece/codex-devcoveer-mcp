@@ -2,8 +2,7 @@
 
 This module is intentionally not a generic command runner.  It may deploy only
 one repository/branch, one loopback service, and one public hostname.  Dynamic
-release SHAs are accepted only when the current remote branch HEAD and a managed
-ChatGPT source-handoff resolve to the same Git tree.
+release SHAs are accepted only when they equal the current remote branch HEAD.
 """
 from __future__ import annotations
 
@@ -26,7 +25,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from source_handoff import SourceHandoffError, resolve_source_handoff
 
 TARGET_REPOSITORY = "onedayonemasterpiece/street-story"
 TARGET_BRANCH = "work/street-story-mvp-20260908"
@@ -47,11 +45,9 @@ VIBE_DB = Path("/home/dev/.local/state/vibepublish/vibepublish.sqlite3")
 VIBE_OWNER_TOKEN_FILE = Path("/home/dev/.local/state/vibepublish/owner-token.txt")
 VIBE_BASE_URL = "http://127.0.0.1:18765"
 HOST_ENV = Path("/home/dev/.env")
-HANDOFF_ROOT = Path("/home/dev/.local/share/openai-codex-mcp/handoffs")
 GH_BINARY = Path("/usr/bin/gh")
 DEVICE_TOKEN_FILE = APP_STATE_ROOT / "device-token"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-HANDOFF_RE = re.compile(r"^src_[0-9a-f]{24}$")
 KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 
 _SECRET_PATTERNS = (
@@ -80,43 +76,11 @@ def _canonical_json(value: Mapping[str, Any]) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def _safe_handoff_id(value: str) -> str:
-    value = value.strip()
-    if HANDOFF_RE.fullmatch(value) is None:
-        raise OperatorError("invalid source handoff id")
-    return value
-
-
 def _safe_sha(value: str) -> str:
     value = value.strip().lower()
     if SHA_RE.fullmatch(value) is None:
         raise OperatorError("invalid Street Story release SHA")
     return value
-
-
-def _parse_env_file(path: Path) -> dict[str, str]:
-    try:
-        st = path.lstat()
-    except OSError as exc:
-        raise OperatorError("private Street Story config is unavailable") from exc
-    if path.is_symlink() or stat.S_IMODE(st.st_mode) != 0o600:
-        raise OperatorError("private Street Story config permissions are unsafe")
-    result: dict[str, str] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            parsed = shlex.split(line, posix=True)
-        except ValueError as exc:
-            raise OperatorError("private Street Story config is invalid") from exc
-        if len(parsed) != 1 or "=" not in parsed[0]:
-            raise OperatorError("private Street Story config is invalid")
-        key, value = parsed[0].split("=", 1)
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", key):
-            raise OperatorError("private Street Story config contains an invalid key")
-        result[key] = value
-    return result
 
 
 class StreetStoryOperator:
@@ -139,7 +103,6 @@ class StreetStoryOperator:
         vibe_db: Path = VIBE_DB,
         vibe_owner_token_file: Path = VIBE_OWNER_TOKEN_FILE,
         host_env: Path = HOST_ENV,
-        handoff_root: Path = HANDOFF_ROOT,
         runner: Callable[[list[str], Path | None, Mapping[str, str] | None, int], CommandResult] | None = None,
     ) -> None:
         self.state_root = state_root
@@ -156,7 +119,6 @@ class StreetStoryOperator:
         self.vibe_db = vibe_db
         self.vibe_owner_token_file = vibe_owner_token_file
         self.host_env = host_env
-        self.handoff_root = handoff_root
         self._runner = runner or self._run
         self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.state_root, 0o700)
@@ -297,30 +259,6 @@ class StreetStoryOperator:
                 (key, operation, digest, "succeeded", int(time.time())),
             )
             return receipt
-
-    def _handoff(self, handoff_id: str, *, require_private_config: bool = False) -> Path:
-        hid = _safe_handoff_id(handoff_id)
-        try:
-            workspace = resolve_source_handoff(hid, root=self.handoff_root)
-        except SourceHandoffError as exc:
-            raise OperatorError("Street Story source handoff is unavailable") from exc
-        meta_path = workspace.parent / "meta.json"
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError) as exc:
-            raise OperatorError("Street Story source handoff metadata is invalid") from exc
-        if meta.get("projectId") != "street-story":
-            raise OperatorError("handoff is not bound to Street Story")
-        if Path(str(meta.get("projectRoot", ""))).resolve() != self.project_root.resolve():
-            raise OperatorError("handoff is not bound to the canonical Street Story checkout")
-        if require_private_config:
-            matches = [
-                p for p in workspace.glob(".runtime-seal-*/github-live.env")
-                if p.is_file() and not p.is_symlink()
-            ]
-            if len(matches) != 1:
-                raise OperatorError("exactly one sealed Street Story live config is required")
-        return workspace
 
     def _remote_head_and_tree(self) -> tuple[str, str]:
         fixed_ref = f"refs/remotes/origin/{TARGET_BRANCH}"
