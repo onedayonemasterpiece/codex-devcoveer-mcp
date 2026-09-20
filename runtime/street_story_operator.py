@@ -44,6 +44,7 @@ VIBE_PY = Path("/home/dev/.local/opt/vibepublish/bin/python")
 VIBE_DB = Path("/home/dev/.local/state/vibepublish/vibepublish.sqlite3")
 VIBE_OWNER_TOKEN_FILE = Path("/home/dev/.local/state/vibepublish/owner-token.txt")
 VIBE_BASE_URL = "http://127.0.0.1:18765"
+BRIDGE_PYTHON = Path("/home/dev/.local/share/openai-codex-mcp/bridge-venv/bin/python")
 HOST_ENV = Path("/home/dev/.env")
 GH_BINARY = Path("/usr/bin/gh")
 DEVICE_TOKEN_FILE = APP_STATE_ROOT / "device-token"
@@ -663,6 +664,15 @@ class StreetStoryOperator:
             raise OperatorError("Street Story Vibe projection lacks lovekenig_tg")
         return safe
 
+    @staticmethod
+    def _python312() -> str:
+        if BRIDGE_PYTHON.is_file() and os.access(BRIDGE_PYTHON, os.X_OK):
+            return str(BRIDGE_PYTHON)
+        py = shutil.which("python3.12")
+        if not py:
+            raise OperatorError("Python 3.12 is unavailable")
+        return py
+
     def deploy_user_service(
         self,
         *,
@@ -684,9 +694,7 @@ class StreetStoryOperator:
             os.chmod(self.app_state_root, 0o700)
             providers_env = self._provider_env()
 
-            py = shutil.which("python3.12")
-            if not py:
-                raise OperatorError("Python 3.12 is unavailable")
+            py = self._python312()
             venv = release / "venv"
             if not venv.is_dir():
                 self._call([py, "-m", "venv", str(venv)], timeout=180)
