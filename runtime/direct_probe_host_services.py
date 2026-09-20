@@ -154,7 +154,7 @@ async def _listeners(service_cfg: dict[str, Any]) -> dict[str, Any]:
                     target = os.readlink(fd)
                 except OSError:
                     continue
-                match = re.fullmatch(r"socket:\\[(\\d+)\\]", target)
+                match = re.fullmatch(r"socket:\[(\d+)\]", target)
                 if match:
                     socket_inodes.add(match.group(1))
             fd_scan_complete = True
