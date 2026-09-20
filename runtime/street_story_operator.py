@@ -452,7 +452,7 @@ class StreetStoryOperator:
     def _provider_env(self) -> Path:
         host = self._read_host_env()
         refs = [
-            name for name in ("GOOGLE_API_KEY", "GOOGLE_API_KEY2", "GOOGLE_API_KEY3", "GOOGLE_API_KEY4", "GOOGLE_API_KEY5")
+            name for name in ("GOOGLE_API_KEY", "GOOGLE_API_KEY2", "GOOGLE_API_KEY3", "GOOGLE_API_KEY4", "GOOGLE_API_KEY5", "GOOGLE_API_KEY6")
             if host.get(name)
         ]
         if not refs:

@@ -95,6 +95,28 @@ def test_python312_prefers_healthy_bridge_runtime(
     assert operator._python312() == str(bridge)
 
 
+def test_provider_env_includes_sixth_registered_google_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operator = _operator(tmp_path)
+    host = {
+        "GOOGLE_API_KEY": "k1",
+        "GOOGLE_API_KEY2": "k2",
+        "GOOGLE_API_KEY3": "k3",
+        "GOOGLE_API_KEY4": "k4",
+        "GOOGLE_API_KEY5": "k5",
+        "GOOGLE_API_KEY6": "k6",
+        "GOOGLE_AI_LIMITER_SUPABASE_URL": "https://quota.example.test",
+        "GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY": "quota-key",
+    }
+    monkeypatch.setattr(operator, "_read_host_env", lambda: host)
+
+    rendered = operator._provider_env().read_text(encoding="utf-8")
+
+    assert "GOOGLE_API_KEY6=k6" in rendered
+    assert '"GOOGLE_API_KEY6"' in rendered
+
+
 def test_vibe_principal_name_avoids_existing_ids(tmp_path: Path) -> None:
     operator = _operator(tmp_path)
     with sqlite3.connect(operator.vibe_db) as db:
