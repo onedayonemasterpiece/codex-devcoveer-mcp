@@ -68,3 +68,18 @@ This makes the recovery rollout path:
 worktree_compare -> worktree_capture_handoff -> tests/build on handoff -> worktree_reconcile -> owned_service_action restart -> health/network probes.
 
 No OpenCode task is required for any step when the desired source/recovery merge is already known.
+
+## Android / ADB direct operations
+
+Android projects no longer need an agent simply to operate an emulator or attached device.
+
+Implemented:
+- adb_devices inventory;
+- adb_package_state using pm path + pidof;
+- adb_package_logcat, restricted to the running PIDs of the requested package and redacted;
+- adb install of a repository/worktree APK;
+- uninstall, force-stop and explicit-confirm clear-data;
+- start_activity with package-bound component and bounded typed string/int/bool Intent extras;
+- instrumentation with a package-bound runner and bounded typed extras.
+
+There is intentionally no arbitrary adb shell, push, pull or unrestricted device filesystem access. Gradle wrapper tasks are already covered by the Direct Ops 2 project runner.
