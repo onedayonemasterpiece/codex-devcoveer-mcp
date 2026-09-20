@@ -131,3 +131,23 @@ The contract now fixes both layers:
 The older strongly typed top-level tools remain available for compatibility and
 ergonomics when the client has a fresh schema. direct_ops_v2 is the cache-resistant
 operator surface and should be preferred when schema freshness is uncertain.
+
+
+## Frozen-client compatibility carrier
+
+Some ChatGPT turns materialize connector tool schemas once and cannot add a newly
+discovered top-level tool until a later discovery cycle. To avoid making the user
+restart or move chats, the already-existing project_action/run_tool schema contains
+a reserved compatibility carrier:
+
+- tool = python_script
+- path = @direct_ops_v2
+- args[0] = plane
+- args[1] = operation
+- args[2:] = concatenated JSON payload chunks
+
+The reserved path is intercepted before filesystem lookup and never executes Python
+or shell. It calls the same direct_ops_v2 server gateway, which re-validates the
+stable envelope and then the current strict concrete operation schema. Nested
+run_tool through the carrier is denied. This fallback is limited to the old client's
+bounded args capacity; fresh clients should use the normal direct_ops_v2 tool.

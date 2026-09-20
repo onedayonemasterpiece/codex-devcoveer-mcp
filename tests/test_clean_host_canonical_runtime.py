@@ -89,7 +89,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.21.0-direct-ops2"' in bridge
+        assert 'BRIDGE_VERSION = "3.22.0-direct-ops2"' in bridge
         assert 'name="stage_source_handoff"' in bridge
         assert 'name="cleanup_source_handoff"' in bridge
         assert 'name="street_story_materialize_release"' in bridge
@@ -104,6 +104,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'on_subscriptions_listen=tool_refresh_listen_handler' in bridge
         assert 'NotificationOptions(tools_changed=True)' in bridge
         assert 'send_tool_list_changed()' in bridge
+        assert '@direct_ops_v2' in (out / "direct_actions.py").read_text(encoding="utf-8")
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
         assert 'headers["x-opencode-directory"]' in backend
         assert '"User-Agent": "opencode/" + (self._server_version or "unknown")' in backend
