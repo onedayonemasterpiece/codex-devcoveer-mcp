@@ -170,7 +170,7 @@ def test_sync_ff_preserves_untracked_and_requires_expected_remote_sha(tmp_path: 
     git(seed, "push", "-q", "-u", "origin", "main")
 
     work = tmp_path / "work"
-    subprocess.check_call(["/usr/bin/git", "clone", "-q", str(bare), str(work)])
+    subprocess.check_call(["/usr/bin/git", "clone", "-q", "--branch", "main", str(bare), str(work)])
     git(work, "config", "user.name", "T")
     git(work, "config", "user.email", "t@example.invalid")
     old = git(work, "rev-parse", "HEAD")
