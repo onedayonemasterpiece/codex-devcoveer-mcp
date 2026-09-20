@@ -106,8 +106,8 @@ _BROWSER_TOOL_REMINDER_STRONG = (
 _BROWSER_TOOL_REMINDER_TEXT = (
     "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation, "
     "clicks, fills, uploads or downloads, use the available my-browser-bridge MCP directly instead of "
-    "starting OpenCode solely to drive Playwright. Use project_action for a registered project Playwright "
-    "test/build/webServer profile; use GitHub Actions for CI-specific execution, and start an agent only when "
+    "starting OpenCode solely to drive Playwright. Use project_action for a registered project Playwright test/build/webServer profile; "
+    "use GitHub Actions for CI-specific execution, and start an agent only when "
     "the browser/project investigation actually requires reasoning."
 )
 _SOURCE_AUTHORSHIP_REMINDER_TEXT = (

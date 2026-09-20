@@ -38,6 +38,52 @@ def test_empty_listener_registration_is_never_reported_complete(monkeypatch):
     assert data["transport"] == "loopback_http"
 
 
+def test_listener_matches_proc_socket_inode_target(monkeypatch):
+    async def fake_show(_cfg):
+        return {"unit": "fixture.service", "MainPID": "123"}
+
+    class FakeFd:
+        pass
+
+    class FakeFdDir:
+        def iterdir(self):
+            return [FakeFd()]
+
+    real_path = host_services.Path
+
+    def fake_path(value):
+        if str(value) == "/proc/123/fd":
+            return FakeFdDir()
+        return real_path(value)
+
+    monkeypatch.setattr(host_services, "_systemctl_show", fake_show)
+    monkeypatch.setattr(host_services, "Path", fake_path)
+    monkeypatch.setattr(host_services.os, "readlink", lambda _fd: "socket:[424242]")
+    monkeypatch.setattr(
+        host_services,
+        "_parse_proc_tcp",
+        lambda path: [("0100007F", 7311, "424242")] if path.name == "tcp" else [],
+    )
+
+    data = run(host_services._listeners({
+        "unit": "fixture.service",
+        "scope": "user",
+        "ports": [7311],
+        "transport": "loopback_http",
+        "endpoints": ["http://127.0.0.1:7311"],
+    }))
+    assert data["listeners"] == [{
+        "port": 7311,
+        "pid": 123,
+        "protocol": "tcp",
+        "ownership_verified": True,
+    }]
+    assert data["complete"] is True
+    assert data["observability"] == "observed"
+    assert data["missing_registered_ports"] == []
+    assert data["fd_scan_complete"] is True
+
+
 def test_unobservable_main_pid_does_not_claim_global_listener_ownership(monkeypatch):
     async def fake_show(_cfg):
         return {"unit": "fixture.service", "MainPID": "999999999"}

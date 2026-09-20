@@ -27,7 +27,7 @@ ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 SECRET_ENV_RE = re.compile(r"(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|AUTH|COOKIE)", re.I)
 MAX_ACTION_OUTPUT = 256 * 1024
 MAX_ACTION_TIMEOUT = 3600.0
-ARG_RE = re.compile(r"^[^\\x00\\r\\n]{0,500}$")
+ARG_RE = re.compile(r"^[^\x00\r\n]{0,500}$")
 NPM_SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,79}$")
 
 _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
