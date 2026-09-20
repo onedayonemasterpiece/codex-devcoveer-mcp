@@ -18,6 +18,11 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 export HOME=/home/dev XDG_RUNTIME_DIR="/run/user/${DEV_UID}"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${DEV_UID}/bus"
 export PATH="/home/dev/.opencode/bin:/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin"
+SKIP_TUNNEL_RESTART="${DEVCOVEER_SKIP_TUNNEL_RESTART:-0}"
+[ "$SKIP_TUNNEL_RESTART" = "0" ] || [ "$SKIP_TUNNEL_RESTART" = "1" ] || {
+  echo "ERROR: DEVCOVEER_SKIP_TUNNEL_RESTART must be 0 or 1" >&2
+  exit 1
+}
 
 die(){ echo "ERROR: $*" >&2; exit 1; }
 sha(){ sha256sum "$1" | awk '{print $1}'; }
@@ -73,7 +78,12 @@ restore_previous(){
     mv "$CAN_BACKUP" "$CAN" 2>/dev/null || true
   fi
 }
-trap 'rc=$?; if [ "$rc" -ne 0 ]; then restore_previous; systemctl --user restart codex-devserver-tunnel.service || true; fi; exit "$rc"' EXIT
+restart_after_failure(){
+  if [ "$SKIP_TUNNEL_RESTART" != "1" ]; then
+    systemctl --user restart codex-devserver-tunnel.service || true
+  fi
+}
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then restore_previous; restart_after_failure; fi; exit "$rc"' EXIT
 
 if [ -L "$WRAP" ]; then
   target="$(readlink -f "$WRAP")"
@@ -114,6 +124,16 @@ async def main():
 asyncio.run(main())
 PY
 
+echo "bridge=$BRIDGE_SHA"
+echo "backend=$BACKEND_SHA"
+echo "wrapper_canonical=PASS"
+if [ "$SKIP_TUNNEL_RESTART" = "1" ]; then
+  trap - EXIT
+  echo "tunnel_restart=DEFERRED"
+  echo "deployment_evidence=$TMP"
+  exit 0
+fi
+
 systemctl --user restart codex-devserver-tunnel.service
 ready=0
 for _ in $(seq 1 60); do
@@ -125,8 +145,5 @@ for _ in $(seq 1 60); do
 done
 [ "$ready" -eq 1 ] || die "tunnel did not become ready"
 trap - EXIT
-echo "bridge=$BRIDGE_SHA"
-echo "backend=$BACKEND_SHA"
-echo "wrapper_canonical=PASS"
 echo "tunnel_ready=PASS"
 echo "deployment_evidence=$TMP"
