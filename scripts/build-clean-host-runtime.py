@@ -34,7 +34,7 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.12.0-routing-evidence"', "version")
+                          'BRIDGE_VERSION = "3.13.0-street-story-deploy"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -55,6 +55,10 @@ from source_handoff import (
     cleanup_source_handoff as _cleanup_source_handoff,
     resolve_source_handoff as _resolve_source_handoff,
     stage_source_handoff as _stage_source_handoff,
+)
+from street_story_operator import (
+    OperatorError as StreetStoryOperatorError,
+    StreetStoryOperator,
 )
 """
     source = replace_once(source, import_anchor, direct_import, "direct-probe import")
@@ -91,6 +95,66 @@ CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA: dict[str, Any] = {
     "required": ["handoff_id"],
     "additionalProperties": False,
 }
+_STREET_STORY_OPERATOR: StreetStoryOperator | None = None
+
+def _street_story_operator() -> StreetStoryOperator:
+    global _STREET_STORY_OPERATOR
+    if _STREET_STORY_OPERATOR is None:
+        _STREET_STORY_OPERATOR = StreetStoryOperator()
+    return _STREET_STORY_OPERATOR
+
+_STREET_SHA = r"^[0-9a-f]{40}$"
+_STREET_HANDOFF = r"^src_[0-9a-f]{24}$"
+_STREET_KEY = r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
+
+STREET_STORY_MATERIALIZE_RELEASE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "repository": {"type": "string", "const": "onedayonemasterpiece/street-story"},
+        "exact_sha": {"type": "string", "pattern": _STREET_SHA},
+        "source_handoff_id": {"type": "string", "pattern": _STREET_HANDOFF},
+        "idempotency_key": {"type": "string", "pattern": _STREET_KEY},
+    },
+    "required": ["repository", "exact_sha", "source_handoff_id", "idempotency_key"],
+    "additionalProperties": False,
+}
+STREET_STORY_DEPLOY_USER_SERVICE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "release_sha": {"type": "string", "pattern": _STREET_SHA},
+        "source_handoff_id": {"type": "string", "pattern": _STREET_HANDOFF},
+        "config_handoff_id": {"type": "string", "pattern": _STREET_HANDOFF},
+        "idempotency_key": {"type": "string", "pattern": _STREET_KEY},
+    },
+    "required": ["release_sha", "source_handoff_id", "config_handoff_id", "idempotency_key"],
+    "additionalProperties": False,
+}
+STREET_STORY_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "hostname": {"type": "string", "const": "street-story.kenigevents.ru"},
+        "loopback_port": {"type": "integer", "const": 8080},
+        "idempotency_key": {"type": "string", "pattern": _STREET_KEY},
+    },
+    "required": ["hostname", "loopback_port", "idempotency_key"],
+    "additionalProperties": False,
+}
+STREET_STORY_SERVICE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": ["status", "restart"]},
+        "service": {"type": "string", "const": "street-story.service"},
+    },
+    "required": ["action"],
+    "additionalProperties": False,
+}
+STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"idempotency_key": {"type": "string", "pattern": _STREET_KEY}},
+    "required": ["idempotency_key"],
+    "additionalProperties": False,
+}
+
 '''
     source = replace_once(
         source, schema_anchor,
@@ -123,13 +187,47 @@ CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA: dict[str, Any] = {
         input_schema=CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=True,
             idempotent_hint=True, open_world_hint=False)),
+    types.Tool(name="street_story_materialize_release", title="Materialize Street Story release",
+        description=("Materialize only the current exact Street Story PR-branch SHA after a managed "
+            "ChatGPT source handoff proves the identical Git tree."),
+        input_schema=STREET_STORY_MATERIALIZE_RELEASE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+            idempotent_hint=True, open_world_hint=True)),
+    types.Tool(name="street_story_deploy_user_service", title="Deploy Street Story user service",
+        description=("Deploy only the verified Street Story release to the fixed loopback "
+            "street-story.service using current DevCoveer provider and VibePublish infrastructure."),
+        input_schema=STREET_STORY_DEPLOY_USER_SERVICE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+            idempotent_hint=True, open_world_hint=True)),
+    types.Tool(name="street_story_publish_edge_route", title="Publish Street Story edge route",
+        description=("Publish only street-story.kenigevents.ru to fixed loopback port 8080 through "
+            "the existing DevCoveer VPN/DNS/TLS renderer after exact-SHA local health passes."),
+        input_schema=STREET_STORY_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+            idempotent_hint=True, open_world_hint=True)),
+    types.Tool(name="street_story_service", title="Read or restart Street Story service",
+        description="Read status or restart only the allowlisted street-story.service user unit.",
+        input_schema=STREET_STORY_SERVICE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+            idempotent_hint=False, open_world_hint=False)),
+    types.Tool(name="street_story_deployment_receipt", title="Read Street Story deployment receipt",
+        description="Read one sanitized durable Street Story deployment capability receipt.",
+        input_schema=STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=True, destructive_hint=False,
+            idempotent_hint=True, open_world_hint=False)),
+
 '''
     source = replace_once(source, tool_anchor, tool_block + tool_anchor, "tool catalog")
     validator_anchor = '    "council_run": Draft202012Validator(COUNCIL_RUN_INPUT_SCHEMA),\n'
     validators = ('    "project_probe": Draft202012Validator(PROJECT_PROBE_INPUT_SCHEMA),\n'
                   '    "host_probe": Draft202012Validator(HOST_PROBE_INPUT_SCHEMA),\n'
                   '    "stage_source_handoff": Draft202012Validator(STAGE_SOURCE_HANDOFF_INPUT_SCHEMA),\n'
-                  '    "cleanup_source_handoff": Draft202012Validator(CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA),\n')
+                  '    "cleanup_source_handoff": Draft202012Validator(CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA),\n                  '    "street_story_materialize_release": Draft202012Validator(STREET_STORY_MATERIALIZE_RELEASE_INPUT_SCHEMA),\n'
+                  '    "street_story_deploy_user_service": Draft202012Validator(STREET_STORY_DEPLOY_USER_SERVICE_INPUT_SCHEMA),\n'
+                  '    "street_story_publish_edge_route": Draft202012Validator(STREET_STORY_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA),\n'
+                  '    "street_story_service": Draft202012Validator(STREET_STORY_SERVICE_INPUT_SCHEMA),\n'
+                  '    "street_story_deployment_receipt": Draft202012Validator(STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA),\n'
+')
     source = replace_once(source, validator_anchor, validators + validator_anchor,
                           "validator catalog")
     old_default = '''    if model is None:
@@ -222,6 +320,44 @@ CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA: dict[str, Any] = {
             except SourceHandoffError as exc:
                 return _tool_result({"status": "failed",
                     "errorCategory": "source_handoff", "content": str(exc)}, error=True)
+
+        if name == "street_story_materialize_release":
+            try:
+                return _tool_result(_street_story_operator().materialize_release(
+                    repository=arguments["repository"], exact_sha=arguments["exact_sha"],
+                    source_handoff_id=arguments["source_handoff_id"],
+                    idempotency_key=arguments["idempotency_key"]))
+            except StreetStoryOperatorError as exc:
+                return _tool_result({"status":"failed","errorCategory":"street_story_operator","content":str(exc)}, error=True)
+
+        if name == "street_story_deploy_user_service":
+            try:
+                return _tool_result(_street_story_operator().deploy_user_service(
+                    release_sha=arguments["release_sha"], source_handoff_id=arguments["source_handoff_id"],
+                    config_handoff_id=arguments["config_handoff_id"], idempotency_key=arguments["idempotency_key"]))
+            except StreetStoryOperatorError as exc:
+                return _tool_result({"status":"failed","errorCategory":"street_story_operator","content":str(exc)}, error=True)
+
+        if name == "street_story_publish_edge_route":
+            try:
+                return _tool_result(_street_story_operator().publish_edge_route(
+                    hostname=arguments["hostname"], loopback_port=arguments["loopback_port"],
+                    idempotency_key=arguments["idempotency_key"]))
+            except StreetStoryOperatorError as exc:
+                return _tool_result({"status":"failed","errorCategory":"street_story_operator","content":str(exc)}, error=True)
+
+        if name == "street_story_service":
+            try:
+                return _tool_result(_street_story_operator().service(
+                    action=arguments["action"], service=arguments.get("service")))
+            except StreetStoryOperatorError as exc:
+                return _tool_result({"status":"failed","errorCategory":"street_story_operator","content":str(exc)}, error=True)
+
+        if name == "street_story_deployment_receipt":
+            try:
+                return _tool_result(_street_story_operator().receipt(idempotency_key=arguments["idempotency_key"]))
+            except StreetStoryOperatorError as exc:
+                return _tool_result({"status":"failed","errorCategory":"street_story_operator","content":str(exc)}, error=True)
 
 '''
     source = replace_once(source, handler_anchor, handlers + handler_anchor, "probe dispatch")
@@ -360,6 +496,8 @@ def main() -> int:
                  out / "direct_probe_config.json")
     shutil.copy2(ROOT / "runtime" / "source_handoff.py",
                  out / "source_handoff.py")
+    shutil.copy2(ROOT / "runtime" / "street_story_operator.py",
+                 out / "street_story_operator.py")
     for name in ("session_evidence.py", "opencode_routing.py", "model_health.py"):
         shutil.copy2(ROOT / "runtime" / name, out / name)
     for path in out.glob("*.py"):
