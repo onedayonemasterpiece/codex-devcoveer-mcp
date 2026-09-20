@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 import stat
 import sys
@@ -92,6 +93,9 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'name="street_story_publish_edge_route"' in bridge
         assert 'name="street_story_service"' in bridge
         assert 'name="street_story_deployment_receipt"' in bridge
+        assert "_CHATGPT_OPERATING_REMINDER_V2" in bridge
+        assert "my-browser-bridge directly" in bridge
+        assert "project Playwright test runners" in bridge
         assert 'raw_hint.startswith("handoff:")' in bridge
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
         assert 'headers["x-opencode-directory"]' in backend
@@ -106,6 +110,20 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
             "source_handoff.py", "street_story_operator.py",
         ):
             assert (out / name).is_file()
+
+
+def test_my_browser_bridge_is_registered_for_host_observability() -> None:
+    config = json.loads(
+        (ROOT / "runtime" / "direct_probe_config.json").read_text(encoding="utf-8")
+    )
+    binding = config["projects"]["my-browser-bridge"]
+    assert binding["services"]["browser"]["unit"] == "my-browser-bridge.service"
+    assert binding["services"]["browser"]["ports"] == [7311]
+    assert binding["services"]["mcp_tunnel"]["unit"] == "my-browser-bridge-tunnel.service"
+    assert binding["health"]["browser_health"]["url"] == "http://127.0.0.1:7311/healthz"
+    assert binding["health"]["browser_ready"]["url"] == "http://127.0.0.1:7311/readyz"
+    assert binding["runtimes"]["node"]["argv"] == ["/usr/local/bin/node", "--version"]
+    assert binding["runtimes"]["playwright"]["argv"][-1] == "--version"
 
 
 def test_clean_host_builder_source_handoff_transport_contract() -> None:

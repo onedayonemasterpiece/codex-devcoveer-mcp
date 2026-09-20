@@ -44,6 +44,8 @@ def test_transform_adds_pre_call_and_post_call_reminders():
     assert 'payload["content"] += "\\n" + direct_tools_hint' in transformed
     assert "project_probe for Git/read/search/diff/remote/CI facts" in transformed
     assert "host_probe for services/logs/listeners/resources/runtime" in transformed
+    assert "my-browser-bridge directly" in transformed
+    assert "project Playwright test runners" in transformed
     assert "do not delegate repository code or documentation authoring" in transformed
     assert "stage_source_handoff" in transformed
     assert "rather than rewrite source/docs" in transformed
@@ -82,5 +84,8 @@ def test_helper_policy_has_strong_and_soft_signals():
     assert 'access == "read" and soft_hits >= 1' in helper
     assert 'if access == "write"' in helper
     assert "_SOURCE_AUTHORSHIP_REMINDER_TEXT" in helper
+    assert "_BROWSER_TOOL_REMINDER_TEXT" in helper
+    assert '"playwright"' in helper and '"browser ui"' in helper
+    assert "my-browser-bridge MCP directly" in helper
     assert "stage_source_handoff" in helper
     assert "explicit user-requested agent authoring are exceptions" in helper
