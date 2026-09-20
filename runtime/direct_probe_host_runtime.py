@@ -194,7 +194,7 @@ async def _runtime(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, 
         if not interpreter.startswith("/") or not re.fullmatch(r"[A-Za-z0-9_.-]+", distribution):
             raise ProbeError("config", "package runtime binding is invalid")
         helper = "import importlib.metadata as m, json, sys; n=sys.argv[1]; print(json.dumps({'name':n,'version':m.version(n)}))"
-        result = await _run_process([interpreter,"-I","-c",helper,distribution], env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":os.environ.get("HOME","/home/dev"),"LANG":"C.UTF-8"}, timeout=4, output_limit=4096)
+        result = await _run_process([interpreter,"-P","-c",helper,distribution], env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":os.environ.get("HOME","/home/dev"),"LANG":"C.UTF-8"}, timeout=4, output_limit=4096)
         if result.exit_code != 0: raise ProbeError("runtime", result.stderr.decode("utf-8","replace")[-1000:], exit_code=result.exit_code)
         payload = json.loads(result.stdout)
         return {"runtime":alias,"type":"package","python":interpreter,"distribution":payload["name"],"version":payload["version"],"app_imported":False}
