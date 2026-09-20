@@ -22,20 +22,19 @@ DESCRIPTION_OLD = (
 )
 DESCRIPTION_V1 = (
     '            "creation, and updates. Before start_task for deterministic Git/host/runtime/model/task-state "\n'
-    '            "checks, use direct tools first: project_probe, host_probe, list_models, and list_tasks/read_task. "\n'
+    '            "checks and deterministic operations, use direct tools first: project_probe, host_probe, project_action, host_action, list_models, and list_tasks/read_task. "\n'
     '            "start_task is for work that actually needs an agent. Use read_task later to check status and "\n'
     '            "obtain the result."),\n'
 )
 DESCRIPTION_NEW = (
     '            "creation, and updates. Before start_task for deterministic Git/host/runtime/model/task-state "\n'
-    '            "checks, use direct tools first: project_probe, host_probe, list_models, and list_tasks/read_task. "\n'
+    '            "checks and deterministic operations, use direct tools first: project_probe, host_probe, project_action, host_action, list_models, and list_tasks/read_task. "\n'
     '            "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, "\n'
     '            "use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "\n'
-    '            "Keep OpenCode/GitHub Actions for project Playwright test runners, builds, or webServer harnesses. "\n'
+    '            "Use project_action for registered project test/build/deploy profiles (including Playwright runners) and host_action for registered restarts; use GitHub Actions for CI-specific workflows. "\n'
     '            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to "\n'
     '            "OpenCode: ChatGPT should author the exact code/docs change itself and use stage_source_handoff "\n'
-    '            "when direct repository writing is unavailable. The handoff agent should verify, test, commit, "\n'
-    '            "push, or deploy the supplied patch rather than rewrite source/docs. start_task is for work that "\n'
+    '            "when direct repository writing is unavailable. Use project_action on the handoff for registered tests and direct commit/push; use an agent only when the work actually requires reasoning beyond typed operations. start_task is for work that "\n'
     '            "actually needs an agent. Use read_task later to check status and obtain the result."),\n'
 )
 
@@ -44,10 +43,11 @@ TOOL_RESULT_ANCHOR = (
 )
 
 HELPER_BLOCK_V1 = '''_DIRECT_TOOL_REMINDER_STRONG = (
-    "project_probe", "host_probe", "list_models", "list_tasks", "read_task",
-    "git status", "git log", "git diff", "git show", "git rev-parse",
+    "project_probe", "host_probe", "project_action", "host_action", "list_models", "list_tasks", "read_task",
+    "git status", "git log", "git diff", "git show", "git rev-parse", "fast-forward",
     "remote head", "github status", "systemctl status", "journalctl",
     "service status", "listener", "runtime", "health", "sha256",
+    "pytest", "test runner", "run tests", "build", "deploy", "restart",
     "статус сервиса", "логи", "порт", "диск", "ветка", "коммит",
 )
 _DIRECT_TOOL_REMINDER_SOFT = (
@@ -55,9 +55,10 @@ _DIRECT_TOOL_REMINDER_SOFT = (
     "read", "check", "провер", "посмотр", "прочит",
 )
 _DIRECT_TOOL_REMINDER_TEXT = (
-    "Direct DevCoveer tools may be faster here: project_probe for Git/read/search/diff/remote/CI facts; "
-    "host_probe for services/logs/listeners/resources/runtime; list_models for live model health; "
-    "list_tasks/read_task for task state. Prefer those for deterministic checks before starting another task."
+    "Direct DevCoveer tools should be used first: project_probe for Git/read/search/diff/remote/CI facts; "
+    "host_probe for services/logs/listeners/resources/runtime; project_action for registered sync/test/build/deploy "
+    "and source-handoff commit/push; host_action for registered host operations/restarts; list_models for live model "
+    "health; list_tasks/read_task for task state. Start an agent only for work that needs reasoning beyond typed operations."
 )
 
 
@@ -74,9 +75,10 @@ def _direct_tool_reminder(prompt: str, access: str) -> str | None:
 '''
 
 HELPER_POLICY_V1 = '''_DIRECT_TOOL_REMINDER_TEXT = (
-    "Direct DevCoveer tools may be faster here: project_probe for Git/read/search/diff/remote/CI facts; "
-    "host_probe for services/logs/listeners/resources/runtime; list_models for live model health; "
-    "list_tasks/read_task for task state. Prefer those for deterministic checks before starting another task."
+    "Direct DevCoveer tools should be used first: project_probe for Git/read/search/diff/remote/CI facts; "
+    "host_probe for services/logs/listeners/resources/runtime; project_action for registered sync/test/build/deploy "
+    "and source-handoff commit/push; host_action for registered host operations/restarts; list_models for live model "
+    "health; list_tasks/read_task for task state. Start an agent only for work that needs reasoning beyond typed operations."
 )
 
 
@@ -91,9 +93,10 @@ def _direct_tool_reminder(prompt: str, access: str) -> str | None:
 '''
 HELPER_POLICY_V2 = '''_CHATGPT_OPERATING_REMINDER_V2 = True
 _DIRECT_TOOL_REMINDER_TEXT = (
-    "Direct DevCoveer tools may be faster here: project_probe for Git/read/search/diff/remote/CI facts; "
-    "host_probe for services/logs/listeners/resources/runtime; list_models for live model health; "
-    "list_tasks/read_task for task state. Prefer those for deterministic checks before starting another task."
+    "Direct DevCoveer tools should be used first: project_probe for Git/read/search/diff/remote/CI facts; "
+    "host_probe for services/logs/listeners/resources/runtime; project_action for registered sync/test/build/deploy "
+    "and source-handoff commit/push; host_action for registered host operations/restarts; list_models for live model "
+    "health; list_tasks/read_task for task state. Start an agent only for work that needs reasoning beyond typed operations."
 )
 _BROWSER_TOOL_REMINDER_STRONG = (
     "playwright", "browser ui", "browser interaction", "dom", "console", "network",
@@ -103,14 +106,16 @@ _BROWSER_TOOL_REMINDER_STRONG = (
 _BROWSER_TOOL_REMINDER_TEXT = (
     "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation, "
     "clicks, fills, uploads or downloads, use the available my-browser-bridge MCP directly instead of "
-    "starting OpenCode solely to drive Playwright. Keep OpenCode/GitHub Actions for project Playwright "
-    "test runners, builds, or webServer harnesses."
+    "starting OpenCode solely to drive Playwright. Use project_action for a registered project Playwright "
+    "test/build/webServer profile; use GitHub Actions for CI-specific execution, and start an agent only when "
+    "the browser/project investigation actually requires reasoning."
 )
 _SOURCE_AUTHORSHIP_REMINDER_TEXT = (
     "Repository code and documentation should normally be authored by ChatGPT itself, not delegated to weaker "
     "OpenCode models. If ChatGPT cannot write the repository directly, author the exact code/docs patch here and "
-    "use stage_source_handoff; the handoff agent should verify/test/commit/push/deploy rather than rewrite source "
-    "or documentation. Runtime mutation/restart/deploy and explicit user-requested agent authoring are exceptions."
+    "use stage_source_handoff; then prefer project_action for registered tests and direct commit/push, plus host_action "
+    "for registered rollout/restart operations. Use an agent only for genuinely non-deterministic investigation or "
+    "when the user explicitly requests agent authoring."
 )
 
 
