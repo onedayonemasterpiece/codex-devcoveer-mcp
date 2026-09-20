@@ -48,16 +48,37 @@ PYTHONPATH="$CAND" "$BRIDGE_PY" - "$CAND/codex-chatgpt-bridge.py" <<'PY'
 import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-required={"project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
+required={"direct_ops_v2","project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
 async def main():
     async with stdio_client(StdioServerParameters(command=sys.executable,args=[sys.argv[1]])) as (r,w):
         async with ClientSession(r,w) as s:
             init=await asyncio.wait_for(s.initialize(),30)
             tools=await asyncio.wait_for(s.list_tools(),30)
-            names={x.name for x in tools.tools}; missing=sorted(required-names)
+            by={x.name:x for x in tools.tools}
+            names=set(by); missing=sorted(required-names)
             print(f"candidate_version={init.server_info.version}")
             print(f"candidate_tool_count={len(names)}")
             if missing: raise SystemExit("missing tools: "+",".join(missing))
+            if init.capabilities.tools is None or init.capabilities.tools.list_changed is not True:
+                raise SystemExit("tools.listChanged capability is not advertised")
+            project_kinds={
+                row.get("properties",{}).get("kind",{}).get("const")
+                for row in by["project_probe"].input_schema["properties"]["checks"]["items"]["oneOf"]
+            }
+            for required_kind in {"capabilities","workspace_compare","worktree_compare"}:
+                if required_kind not in project_kinds:
+                    raise SystemExit("project_probe schema missing "+required_kind)
+            action_kinds={
+                row.get("properties",{}).get("kind",{}).get("const")
+                for row in by["project_action"].input_schema["properties"]["action"]["oneOf"]
+            }
+            for required_kind in {"write_text","worktree_reconcile","adb","job_start","batch","github_pr_merge"}:
+                if required_kind not in action_kinds:
+                    raise SystemExit("project_action schema missing "+required_kind)
+            gateway=by["direct_ops_v2"].input_schema
+            op_schema=gateway["properties"]["operation"]
+            if op_schema.get("type")!="string" or "enum" in op_schema:
+                raise SystemExit("direct_ops_v2 operation schema is not future-stable")
 asyncio.run(main())
 PY
 
@@ -113,7 +134,7 @@ echo "=== canonical wrapper acceptance ==="
 import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-required={"project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
+required={"direct_ops_v2","project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
 async def main():
     async with stdio_client(StdioServerParameters(command=sys.argv[1],args=[])) as (r,w):
         async with ClientSession(r,w) as s:
