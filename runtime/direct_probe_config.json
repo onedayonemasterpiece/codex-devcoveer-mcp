@@ -219,17 +219,28 @@
           ],
           "executable": "/home/dev/.local/opt/vibepublish/bin/python",
           "working_directory": "/home/dev/projects/vibepublish"
+        },
+        "worker": {
+          "unit": "vibepublish-worker.service",
+          "scope": "user",
+          "executable": "/home/dev/.local/opt/vibepublish/bin/python",
+          "working_directory": "/home/dev/projects/vibepublish"
         }
       },
       "logs": {
         "server": {
           "type": "journal",
           "service": "server"
+        },
+        "worker": {
+          "type": "journal",
+          "service": "worker"
         }
       },
       "roots": {
         "runtime_source": "/home/dev/projects/vibepublish",
-        "runtime_state": "/home/dev/.local/state/vibepublish"
+        "runtime_state": "/home/dev/.local/state/vibepublish",
+        "codex_home": "/home/dev/.codex"
       },
       "health": {},
       "runtimes": {
@@ -244,6 +255,17 @@
           "type": "package",
           "python": "/home/dev/.local/opt/vibepublish/bin/python",
           "distribution": "Telethon"
+        },
+        "worker_unit": {
+          "type": "cli",
+          "argv": [
+            "/usr/bin/systemctl",
+            "--user",
+            "show",
+            "vibepublish-worker.service",
+            "--no-pager",
+            "--property=LoadState,ActiveState,SubState,FragmentPath,ExecStart,WorkingDirectory,User,Group,ProtectHome,ReadWritePaths,ReadOnlyPaths,InaccessiblePaths"
+          ]
         }
       },
       "runtime_files": {
