@@ -78,6 +78,14 @@ def test_action_schemas_are_typed_and_do_not_expose_shell_surface():
     }))
     assert list(p.iter_errors({
         "project": "p",
+        "action": {"kind": "run_tool", "tool": "pytest", "executable": "/bin/sh"},
+    }))
+    assert list(p.iter_errors({
+        "project": "p",
+        "action": {"kind": "run_tool", "tool": "pytest", "env": {"TOKEN": "x"}},
+    }))
+    assert list(p.iter_errors({
+        "project": "p",
         "action": {"kind": "sync_ff", "remote": "origin", "branch": "main",
                    "expected_sha": "0" * 40, "cwd": "/tmp"},
     }))
@@ -85,6 +93,50 @@ def test_action_schemas_are_typed_and_do_not_expose_shell_surface():
         "project": "p",
         "action": {"kind": "restart_service", "service": "browser", "unit": "evil.service"},
     }))
+
+
+def test_run_tool_is_project_scoped_and_has_fixed_executable(tmp_path: Path, monkeypatch):
+    repo = init_repo(tmp_path / "repo")
+    cfg = write_cfg(tmp_path / "cfg.json", repo)
+    observed = {}
+
+    async def fake_run(argv, **kwargs):
+        observed["argv"] = argv
+        observed["cwd"] = kwargs.get("cwd")
+        return SimpleNamespace(
+            stdout=b"TOOL_OK\n", stderr=b"", exit_code=0,
+            truncated=False, duration_ms=2,
+        )
+
+    monkeypatch.setattr(da, "_run_process", fake_run)
+    result = run(da.run_project_action(
+        str(repo), "p",
+        {"kind": "run_tool", "tool": "pytest",
+         "args": ["-q", "tests/test_example.py"], "timeout_seconds": 30},
+        config_path=cfg,
+    ))
+    assert result["status"] == "ok"
+    assert observed["argv"][:3] == ["/usr/bin/python3", "-m", "pytest"]
+    assert observed["argv"][3:] == ["-q", "tests/test_example.py"]
+    assert observed["cwd"] == repo.resolve()
+
+    script = repo / "scripts" / "check.sh"
+    script.parent.mkdir()
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    result = run(da.run_project_action(
+        str(repo), "p",
+        {"kind": "run_tool", "tool": "bash_script", "path": "scripts/check.sh"},
+        config_path=cfg,
+    ))
+    assert result["status"] == "ok"
+    assert observed["argv"][:2] == ["/usr/bin/bash", str(script.resolve())]
+
+    with pytest.raises(da.ProbeError):
+        run(da.run_project_action(
+            str(repo), "p",
+            {"kind": "run_tool", "tool": "bash_script", "path": "../escape.sh"},
+            config_path=cfg,
+        ))
 
 
 def test_run_profile_executes_only_registered_argv(tmp_path: Path):
