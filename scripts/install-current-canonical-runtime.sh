@@ -25,9 +25,13 @@ test -d "$WORK_REPO/.git" || die "repository missing"
 test -x "$BRIDGE_PY" || die "bridge Python missing"
 test -e "$WRAP" || die "MCP wrapper missing"
 
+git -C "$WORK_REPO" fetch --no-tags origin \
+  +refs/heads/main:refs/remotes/origin/main \
+  || die "cannot refresh origin/main"
 TMP="$(dev-artifacts new codex-devcoveer-mcp install-current-runtime --retain --reason "Runtime deployment and rollback evidence")"
 SOURCE_SHA="$(git -C "$WORK_REPO" rev-parse "$SOURCE_REF^{commit}")" || die "cannot resolve $SOURCE_REF"
-git -C "$WORK_REPO" merge-base --is-ancestor "$SOURCE_SHA" main || die "source must be a validated main commit"
+git -C "$WORK_REPO" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+  || die "source must be a validated origin/main commit"
 SRC="$TMP/source"
 mkdir -p "$SRC"
 git -C "$WORK_REPO" archive "$SOURCE_SHA" | tar -x -C "$SRC"
