@@ -90,6 +90,13 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert '"User-Agent": "opencode/" + (self._server_version or "unknown")' in backend
         assert 'await self.request("GET", "/config", directory=directory' in backend
         assert '"agent": "plan" if access == "read" else "build"' in backend
+        assert "WRITE is operational, not source-authoring" in backend
+        assert "Shell commands" in backend
+        assert "task-requested tests, builds, deployment" in backend
+        assert "Do not design, author, or rewrite repository source/docs" in backend
+        assert "do not read secrets/.env" in backend
+        assert "WRITE is limited to file edit tools" not in backend
+        assert "Do not run shell commands, read secrets/.env" not in backend
         assert '"tools": tools' not in backend
         assert '"title": title[:200]' not in backend
         for name in (
