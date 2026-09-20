@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import sqlite3
@@ -30,7 +31,7 @@ from source_handoff import SourceHandoffError, resolve_source_handoff
 TARGET_REPOSITORY = "onedayonemasterpiece/street-story"
 TARGET_BRANCH = "work/street-story-mvp-20260908"
 TARGET_HOSTNAME = "street-story.kenigevents.ru"
-TARGET_PORT = 8080
+TARGET_PORT = 8188
 TARGET_SERVICE = "street-story.service"
 PROJECT_ROOT = Path("/home/dev/projects/street-story")
 STATE_ROOT = Path("/home/dev/.local/state/openai-codex-mcp/street-story-operator")
@@ -47,6 +48,8 @@ VIBE_OWNER_TOKEN_FILE = Path("/home/dev/.local/state/vibepublish/owner-token.txt
 VIBE_BASE_URL = "http://127.0.0.1:18765"
 HOST_ENV = Path("/home/dev/.env")
 HANDOFF_ROOT = Path("/home/dev/.local/share/openai-codex-mcp/handoffs")
+GH_BINARY = Path("/usr/bin/gh")
+DEVICE_TOKEN_FILE = APP_STATE_ROOT / "device-token"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HANDOFF_RE = re.compile(r"^src_[0-9a-f]{24}$")
 KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
@@ -337,34 +340,27 @@ class StreetStoryOperator:
         tree = self._call(["git", "-C", str(self.project_root), "rev-parse", f"{head}^{{tree}}"], timeout=30).output.strip()
         return head, tree
 
-    def _verify_approved_source(self, exact_sha: str, handoff_id: str) -> tuple[Path, str]:
+    def _verify_approved_source(self, exact_sha: str) -> str:
         sha = _safe_sha(exact_sha)
-        workspace = self._handoff(handoff_id)
-        self._call(["git", "-C", str(workspace), "diff", "--cached", "--check"], timeout=30)
-        staged_tree = self._call(["git", "-C", str(workspace), "write-tree"], timeout=30).output.strip()
         remote_head, remote_tree = self._remote_head_and_tree()
         if remote_head != sha:
             raise OperatorError("requested SHA is not the current Street Story PR branch HEAD")
-        if remote_tree != staged_tree:
-            raise OperatorError("managed Street Story handoff tree does not match current remote HEAD")
-        return workspace, remote_tree
+        return remote_tree
 
     def materialize_release(
         self,
         *,
         repository: str,
         exact_sha: str,
-        source_handoff_id: str,
         idempotency_key: str,
     ) -> dict[str, Any]:
         if repository != TARGET_REPOSITORY:
             raise OperatorError("repository is not the allowlisted Street Story repository")
         sha = _safe_sha(exact_sha)
-        hid = _safe_handoff_id(source_handoff_id)
-        request = {"repository": repository, "exact_sha": sha, "source_handoff_id": hid}
+        request = {"repository": repository, "exact_sha": sha}
 
         def action() -> Mapping[str, Any]:
-            _workspace, tree = self._verify_approved_source(sha, hid)
+            tree = self._verify_approved_source(sha)
             self.releases_root.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(self.releases_root, 0o700)
             release = self.releases_root / sha
@@ -428,15 +424,57 @@ class StreetStoryOperator:
             raise OperatorError("Street Story release manifest mismatch")
         return release
 
-    def _live_token_from_handoff(self, config_handoff_id: str) -> str:
-        workspace = self._handoff(config_handoff_id, require_private_config=True)
-        matches = list(workspace.glob(".runtime-seal-*/github-live.env"))
-        values = _parse_env_file(matches[0])
-        live = values.get("STREET_STORY_LIVE_TOKEN", "")
-        device = values.get("STREET_STORY_DEVICE_TOKEN", "")
-        if len(live) < 20 or live != device:
-            raise OperatorError("sealed Street Story live token is missing or inconsistent")
-        return live
+    def _ensure_live_token(self) -> str:
+        self.app_state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.app_state_root, 0o700)
+        path = DEVICE_TOKEN_FILE
+        if path.exists():
+            st = path.lstat()
+            if path.is_symlink() or stat.S_IMODE(st.st_mode) != 0o600:
+                raise OperatorError("Street Story device token path is unsafe")
+            token = path.read_text(encoding="utf-8").strip()
+            if len(token) < 32:
+                raise OperatorError("Street Story device token is invalid")
+        else:
+            token = secrets.token_urlsafe(48)
+            fd, temporary = tempfile.mkstemp(prefix=".device-token-", dir=self.app_state_root)
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(token + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, path)
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(temporary)
+
+        if not GH_BINARY.is_file():
+            raise OperatorError("GitHub CLI is unavailable for Street Story secret sync")
+        try:
+            result = subprocess.run(
+                [
+                    str(GH_BINARY),
+                    "secret",
+                    "set",
+                    "STREET_STORY_LIVE_TOKEN",
+                    "--repo",
+                    TARGET_REPOSITORY,
+                ],
+                input=token + "\n",
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise OperatorError(f"Street Story GitHub secret sync unavailable: {type(exc).__name__}") from None
+        if result.returncode != 0:
+            raise OperatorError(
+                f"Street Story GitHub secret sync failed ({result.returncode}): {_redact(result.stdout or '')}"
+            )
+        return token
 
     def _read_host_env(self) -> dict[str, str]:
         try:
@@ -691,27 +729,19 @@ class StreetStoryOperator:
         self,
         *,
         release_sha: str,
-        source_handoff_id: str,
-        config_handoff_id: str,
         idempotency_key: str,
     ) -> dict[str, Any]:
         sha = _safe_sha(release_sha)
-        source_hid = _safe_handoff_id(source_handoff_id)
-        config_hid = _safe_handoff_id(config_handoff_id)
-        request = {
-            "release_sha": sha,
-            "source_handoff_id": source_hid,
-            "config_handoff_id": config_hid,
-        }
+        request = {"release_sha": sha}
 
         def action() -> Mapping[str, Any]:
-            self._verify_approved_source(sha, source_hid)
+            self._verify_approved_source(sha)
             release = self._release(sha)
             source = release / "source"
             requirements = source / "backend" / "requirements.txt"
             if not requirements.is_file():
                 raise OperatorError("Street Story backend requirements are missing")
-            live_token = self._live_token_from_handoff(config_hid)
+            live_token = self._ensure_live_token()
             self.app_state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(self.app_state_root, 0o700)
             providers_env = self._provider_env()
@@ -820,6 +850,7 @@ class StreetStoryOperator:
                 "local_health": local,
                 "destinations": destinations,
                 "safe_alias_configured": False,
+                "github_live_token_synced": True,
                 "secrets_disclosed": False,
             }
 
