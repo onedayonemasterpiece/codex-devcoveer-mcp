@@ -225,7 +225,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                   '    "street_story_publish_edge_route": Draft202012Validator(STREET_STORY_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA),\n'
                   '    "street_story_service": Draft202012Validator(STREET_STORY_SERVICE_INPUT_SCHEMA),\n'
                   '    "street_story_deployment_receipt": Draft202012Validator(STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA),\n'
-')
+)
     source = replace_once(source, validator_anchor, validators + validator_anchor,
                           "validator catalog")
     old_default = '''    if model is None:
