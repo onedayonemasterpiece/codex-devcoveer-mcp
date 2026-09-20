@@ -132,10 +132,7 @@
         "server_source": "/home/dev/projects/vibepublish/deploy/devcoveer/serve.py",
         "production_worker": "/home/dev/projects/vibepublish/deploy/devcoveer/production_worker.py"
       },
-      "config_presence": {
-        "owner_token": "/home/dev/.local/state/vibepublish/owner-token.txt",
-        "database": "/home/dev/.local/state/vibepublish/vibepublish.sqlite3"
-      }
+      "config_presence": {}
     },
     "dataset-loop-mcp": {
       "github_repo": "onedayonemasterpiece/dataset-loop-mcp",
@@ -229,12 +226,27 @@
         }
       },
       "runtime_files": {
-        "app": "/home/dev/.local/share/street-story/current/source/backend/street_story/app.py",
-        "service_env": "/home/dev/.local/state/street-story/service.env",
-        "provider_env": "/home/dev/.local/state/street-story/providers.env"
+        "app": "/home/dev/.local/share/street-story/current/source/backend/street_story/app.py"
       },
       "config_presence": {
-        "device_token": "/home/dev/.local/state/street-story/device-token"
+        "service_env": {
+          "path": "/home/dev/.local/state/street-story/service.env",
+          "keys": [
+            "STREET_STORY_DEVICE_TOKEN",
+            "VIBEPUBLISH_BASE_URL",
+            "VIBEPUBLISH_BEARER_TOKEN",
+            "STREET_STORY_DEPLOY_SHA"
+          ]
+        },
+        "provider_env": {
+          "path": "/home/dev/.local/state/street-story/providers.env",
+          "keys": [
+            "GEMINI_API_KEY_REFS",
+            "GEMINI_MODEL",
+            "GEMINI_QUOTA_SUPABASE_URL",
+            "GEMINI_QUOTA_SUPABASE_KEY"
+          ]
+        }
       }
     }
   }
