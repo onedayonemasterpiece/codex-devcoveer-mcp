@@ -34,6 +34,9 @@ def test_source_controlled_baseline_is_complete_and_pinned() -> None:
 def test_clean_host_installer_does_not_use_bootstrap_as_source() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
     assert 'SOURCE_REF="${DEVCOVEER_SOURCE_REF:-origin/main}"' in source
+    assert '+refs/heads/main:refs/remotes/origin/main' in source
+    assert 'merge-base --is-ancestor "$SOURCE_SHA" origin/main' in source
+    assert 'merge-base --is-ancestor "$SOURCE_SHA" main' not in source
     assert 'git -C "$WORK_REPO" archive "$SOURCE_SHA"' in source
     assert 'build-clean-host-runtime.py" "$CAND"' in source
     assert 'cp -a "$BOOT" "$CAND"' not in source
