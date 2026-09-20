@@ -266,4 +266,4 @@ async def _config_presence(binding: dict[str, Any], check: dict[str, Any]) -> di
     return data
 
 def _inventory(binding: dict[str, Any]) -> dict[str, Any]:
-    return {"services":sorted(_host_section(binding,"services")),"logs":sorted(_host_section(binding,"logs")),"roots":sorted(_host_section(binding,"roots")),"health":sorted(_host_section(binding,"health")),"runtimes":sorted(_host_section(binding,"runtimes")),"runtime_files":sorted(_host_section(binding,"runtime_files")),"config_presence":sorted(_host_section(binding,"config_presence"))}
+    return {"services":sorted(_host_section(binding,"services")),"logs":sorted(_host_section(binding,"logs")),"roots":sorted(_host_section(binding,"roots")),"health":sorted(_host_section(binding,"health")),"runtimes":sorted(_host_section(binding,"runtimes")),"runtime_files":sorted(_host_section(binding,"runtime_files")),"host_files":sorted(_host_section(binding,"host_files")),"config_presence":sorted(_host_section(binding,"config_presence"))}

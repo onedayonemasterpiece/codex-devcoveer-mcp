@@ -25,6 +25,7 @@ from direct_ops2 import (
     git_stage, mkdir, move_path, resolve_github_remote, runner_argv, service_action,
     write_registered_file, write_text,
 )
+from direct_ops2_host import daemon_reload, delete_registered_file
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -142,6 +143,8 @@ HOST_ACTION_INPUT_SCHEMA: dict[str, Any] = {
                 },
                 {"type":"object","properties":{"kind":{"const":"service_action"},"service":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"operation":{"type":"string","enum":["start","stop","restart","reload","enable","disable"]}},"required":["kind","service","operation"],"additionalProperties":False},
                 {"type":"object","properties":{"kind":{"const":"write_registered_file"},"file":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"content":{"type":"string","maxLength":2097152},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","file","content"],"additionalProperties":False},
+                {"type":"object","properties":{"kind":{"const":"delete_registered_file"},"file":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","file"],"additionalProperties":False},
+                {"type":"object","properties":{"kind":{"const":"daemon_reload"}},"required":["kind"],"additionalProperties":False},
             ]
         },
     },
@@ -591,4 +594,6 @@ async def run_host_action(project_root: str, project_id: str, action: dict[str, 
         return await _run_profile(root, binding, action["profile"], section="host_actions", handoff=False)
     if kind == "service_action": return await service_action(binding, action["service"], action["operation"])
     if kind == "write_registered_file": return write_registered_file(binding, action)
+    if kind == "delete_registered_file": return delete_registered_file(binding, action)
+    if kind == "daemon_reload": return await daemon_reload(binding)
     raise ProbeError("invalid_input", f"unknown host action kind {kind!r}")
