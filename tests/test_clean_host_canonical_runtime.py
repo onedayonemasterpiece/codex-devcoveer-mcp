@@ -98,7 +98,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'name="street_story_deployment_receipt"' in bridge
         assert "_CHATGPT_OPERATING_REMINDER_V2" in bridge
         assert "my-browser-bridge directly" in bridge
-        assert "project Playwright test runners" in bridge
+        assert "registered project Playwright test/build/webServer profile" in bridge
         assert 'raw_hint.startswith("handoff:")' in bridge
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
         assert 'headers["x-opencode-directory"]' in backend
