@@ -115,6 +115,7 @@ def test_provider_env_includes_sixth_registered_google_key(
 
     assert "GOOGLE_API_KEY6=k6" in rendered
     assert '"GOOGLE_API_KEY6"' in rendered
+    assert "GEMINI_MODEL=gemini-2.5-flash-lite" in rendered
 
 
 def test_vibe_principal_name_avoids_existing_ids(tmp_path: Path) -> None:
