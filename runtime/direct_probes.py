@@ -16,6 +16,7 @@ from direct_probe_project import (
     _diff, _file_list, _file_sha, _file_stat, _git_blob, _git_log, _git_state, _github_status,
     _read_text, _remote_head, _search, _tree, _worktree_list,
 )
+from direct_ops2 import project_capabilities, workspace_compare
 from direct_probe_host import (
     _config_presence, _health, _host_section, _inventory, _journal_unit, _listeners, _logs,
     _network_listeners, _resources, _runtime, _runtime_file, _service_list, _system_info,
@@ -86,6 +87,8 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
     if kind == "git_log": return await _git_log(root, check), "git-local-object"
     if kind == "tree": return await _tree(root, check), "git-local-object"
     if kind == "worktree_list": return await _worktree_list(root), "git-local"
+    if kind == "capabilities": return await project_capabilities(root, binding), "git-local+trusted-server-config"
+    if kind == "workspace_compare": return await workspace_compare(root, check["target_ref"], include_untracked=bool(check.get("include_untracked", True)), limit=int(check.get("limit", 500))), "git-local-object/worktree"
     if kind == "diff": return await _diff(root, check), "git-local-object/worktree"
     if kind == "read_text": return await _read_text(root, binding, check), check.get("source", "worktree")
     if kind == "search": return await _search(root, check), "worktree-files"

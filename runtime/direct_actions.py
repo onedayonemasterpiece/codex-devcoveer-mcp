@@ -20,6 +20,11 @@ from direct_probe_core import (
     _validate_branch,
 )
 from direct_probe_host_services import _host_section, _systemd_env
+from direct_ops2 import (
+    capture_handoff, chmod_executable, delete_file, git_commit_push, git_create_branch,
+    git_stage, mkdir, move_path, resolve_github_remote, runner_argv, service_action,
+    write_registered_file, write_text,
+)
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -50,7 +55,8 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
             "properties": {
                 "kind": {"const": "run_tool"},
                 "tool": {"type": "string", "enum": [
-                    "pytest", "bash_script", "python_script", "node_script", "npm_script"
+                    "pytest", "bash_script", "python_script", "node_script", "npm_script",
+                    "pnpm_script", "yarn_script", "gradle_task", "make_target", "python_module"
                 ]},
                 "path": {"type": "string", "minLength": 1, "maxLength": 500},
                 "script": {"type": "string", "minLength": 1, "maxLength": 80,
@@ -86,6 +92,15 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
             "required": ["kind", "remote", "branch", "commit_message"],
             "additionalProperties": False,
         },
+        {"type":"object","properties":{"kind":{"const":"write_text"},"path":{"type":"string","minLength":1,"maxLength":500},"content":{"type":"string","maxLength":2097152},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"},"must_not_exist":{"type":"boolean"}},"required":["kind","path","content"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"mkdir"},"path":{"type":"string","minLength":1,"maxLength":500},"parents":{"type":"boolean"}},"required":["kind","path"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"move_path"},"source":{"type":"string","minLength":1,"maxLength":500},"target":{"type":"string","minLength":1,"maxLength":500},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","source","target"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"delete_file"},"path":{"type":"string","minLength":1,"maxLength":500},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","path"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"chmod_executable"},"path":{"type":"string","minLength":1,"maxLength":500},"executable":{"type":"boolean"},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","path","executable"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"git_create_branch"},"branch":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"start_ref":{"type":"string","minLength":1,"maxLength":200}},"required":["kind","branch"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"git_stage"},"paths":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","paths"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"git_commit_push"},"remote":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"commit_message":{"type":"string","minLength":1,"maxLength":200}},"required":["kind","commit_message"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"capture_handoff"},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","base_sha"],"additionalProperties":False},
     ]
 }
 
@@ -125,6 +140,8 @@ HOST_ACTION_INPUT_SCHEMA: dict[str, Any] = {
                     "required": ["kind", "profile"],
                     "additionalProperties": False,
                 },
+                {"type":"object","properties":{"kind":{"const":"service_action"},"service":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"operation":{"type":"string","enum":["start","stop","restart","reload","enable","disable"]}},"required":["kind","service","operation"],"additionalProperties":False},
+                {"type":"object","properties":{"kind":{"const":"write_registered_file"},"file":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"content":{"type":"string","maxLength":2097152},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","file","content"],"additionalProperties":False},
             ]
         },
     },
@@ -202,10 +219,13 @@ async def _sync_ff(root: Path, binding: dict[str, Any], action: dict[str, Any], 
     if HEX40_RE.fullmatch(expected) is None:
         raise ProbeError("invalid_input", "expected_sha must be exact 40-hex")
 
-    registered_repo = _registered_remote(binding, remote)
-    remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
-    if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
-        raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    if binding.get("remotes"):
+        registered_repo = _registered_remote(binding, remote)
+        remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
+        if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
+            raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    else:
+        registered_repo, _remote_url = await resolve_github_remote(root, binding, remote)
 
     current_branch = await _git(root, "symbolic-ref", "--quiet", "--short", "HEAD", timeout=10)
     if current_branch.exit_code != 0 or current_branch.stdout.decode().strip() != branch:
@@ -321,7 +341,10 @@ async def _run_tool(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         if args:
             argv.extend(["--", *args])
     else:
-        raise ProbeError("invalid_input", f"unknown direct project tool {tool!r}")
+        extended = runner_argv(root, action, cwd)
+        if extended is None:
+            raise ProbeError("invalid_input", f"unknown direct project tool {tool!r}")
+        argv = extended
 
     result = await _run_process(
         argv, cwd=cwd, env=_action_env({}), timeout=timeout, output_limit=MAX_ACTION_OUTPUT,
@@ -436,10 +459,13 @@ async def _handoff_commit_push(root: Path, binding: dict[str, Any], action: dict
     message = action["commit_message"].strip()
     if not message or any(ord(ch) < 32 and ch not in "\t" for ch in message):
         raise ProbeError("invalid_input", "commit message contains control characters")
-    registered_repo = _registered_remote(binding, remote)
-    remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
-    if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
-        raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    if binding.get("remotes"):
+        registered_repo = _registered_remote(binding, remote)
+        remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
+        if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
+            raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    else:
+        registered_repo, _remote_url = await resolve_github_remote(root, binding, remote)
 
     base = str(meta.get("baseSha") or "")
     if HEX40_RE.fullmatch(base) is None:
@@ -513,6 +539,17 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
         return await _run_profile(root, binding, action["profile"], section="project_actions", handoff=handoff)
     if kind == "handoff_commit_push":
         return await _handoff_commit_push(root, binding, action, meta)
+    if kind == "write_text": return write_text(root, action)
+    if kind == "mkdir": return mkdir(root, action)
+    if kind == "move_path": return move_path(root, action)
+    if kind == "delete_file": return delete_file(root, action)
+    if kind == "chmod_executable": return chmod_executable(root, action)
+    if kind == "git_create_branch": return await git_create_branch(root, action)
+    if kind == "git_stage": return await git_stage(root, action)
+    if kind == "git_commit_push": return await git_commit_push(root, binding, action)
+    if kind == "capture_handoff":
+        if handoff: raise ProbeError("handoff_denied", "capture_handoff requires a canonical project", status="denied")
+        return await capture_handoff(root, binding_id, action)
     raise ProbeError("invalid_input", f"unknown project action kind {kind!r}")
 
 
@@ -552,4 +589,6 @@ async def run_host_action(project_root: str, project_id: str, action: dict[str, 
         return await _restart_service(binding, action["service"])
     if kind == "run_profile":
         return await _run_profile(root, binding, action["profile"], section="host_actions", handoff=False)
+    if kind == "service_action": return await service_action(binding, action["service"], action["operation"])
+    if kind == "write_registered_file": return write_registered_file(binding, action)
     raise ProbeError("invalid_input", f"unknown host action kind {kind!r}")

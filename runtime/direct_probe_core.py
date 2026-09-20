@@ -104,6 +104,12 @@ PROJECT_CHECK_SCHEMAS = [
     _check_schema("git_log", {"ref": _REF_SCHEMA, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}, ["ref"]),
     _check_schema("tree", {"ref": _REF_SCHEMA, "path": {"type": "string", "maxLength": 500}, "limit": _LIMIT_SCHEMA}, ["ref"]),
     _check_schema("worktree_list"),
+    _check_schema("capabilities"),
+    _check_schema("workspace_compare", {
+        "target_ref": _REF_SCHEMA,
+        "include_untracked": {"type": "boolean", "default": True},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+    }, ["target_ref"]),
     _check_schema("diff", {
         "base": {"type": "string", "minLength": 1, "maxLength": 200},
         "target": {"type": "string", "minLength": 1, "maxLength": 200},

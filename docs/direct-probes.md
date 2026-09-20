@@ -21,7 +21,7 @@ A probe batch has a 60-second safety ceiling and a 64 KiB response ceiling. Chec
 
 `host_action` does not accept arbitrary commands. It can execute trusted host profiles and can restart only a server-registered user service. Self-restart of the MCP tunnel is scheduled through a short deferred systemd unit so the current MCP call can return before the tunnel is replaced.
 
-This means ordinary tests, builds, staged-patch verification and known rollout commands do not need an OpenCode task. OpenCode remains the escape hatch for non-deterministic investigation rather than a remote shell for routine commands.
+Direct Ops 2 extends this boundary to ordinary repository writes, structured dirty-worktree reconciliation, typed Git writes, broader repository task runners, registered user-service lifecycle operations and registered host-file writes. See docs/direct-ops-2.md for the implemented surface and remaining to-be capabilities. OpenCode remains the escape hatch for genuinely non-deterministic investigation rather than a remote shell for routine operations.
 
 ## Security boundary
 
