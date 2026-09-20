@@ -145,8 +145,10 @@ def test_resource_order_is_zen_then_groq_then_nvidia_then_metered():
 def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     discovery = (RUNTIME / "bridge_fragments" / "model_discovery_adaptive.py").read_text(encoding="utf-8")
     read_task = (RUNTIME / "bridge_fragments" / "read_opencode_task_adaptive.py").read_text(encoding="utf-8")
+    routing = (RUNTIME / "opencode_routing.py").read_text(encoding="utf-8")
     ast.parse(discovery)
     ast.parse(read_task)
+    ast.parse(routing)
 
     for field in (
         "currentRuntimeStatus",
@@ -189,6 +191,8 @@ def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     assert "The durable task state was not changed" in read_task
     assert "for msg in reversed(messages):" in read_task
     assert "latest assistant turn" in read_task
+    assert "elif info.get('time', {}).get('completed'): result['status'] = 'completed'" in routing
+    assert "info.get('time', {}).get('completed') and text" not in routing
 
 
 def test_backend_patches_are_bounded_and_include_runtime_observability():
