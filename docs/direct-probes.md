@@ -43,6 +43,6 @@ Health aliases are diagnostic observations only. A non-2xx application result is
 
 ## Deployment
 
-`scripts/install-current-canonical-runtime.sh` is the canonical rollout path. It archives a validated main commit, builds the clean-host runtime, runs candidate MCP acceptance, installs the canonical runtime, and runs wrapper acceptance. For direct self-rollout it can set `DEVCOVEER_SKIP_TUNNEL_RESTART=1`, return deployment evidence, and let `host_action` schedule the registered MCP tunnel restart after the call has returned. The clean-host builder includes probes, direct actions, source handoff and the routing policy, so a recovered server retains the same operating contract.
+`scripts/install-current-canonical-runtime.sh` is the canonical rollout path. It archives a validated main commit, builds the clean-host runtime, runs candidate MCP acceptance, installs the canonical runtime, and runs wrapper acceptance. For direct self-rollout it can set `DEVCOVEER_SKIP_TUNNEL_RESTART=1`; after candidate and wrapper acceptance the installer schedules the registered MCP tunnel restart through a short-lived user `systemd-run` unit, returns deployment evidence, and exits before the tunnel is replaced. The clean-host builder includes probes, direct actions, source handoff and the routing policy, so a recovered server retains the same operating contract.
 
 `scripts/install-direct-probes.py` remains a fail-closed legacy probe-only incremental installer; it is not the canonical way to install the complete direct execution surface.
