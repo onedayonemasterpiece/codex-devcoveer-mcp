@@ -16,7 +16,7 @@ BASE_SHA = {
     "opencode_backend.py": "56699a39b2d635cdc397774cc25f122b119e7794599b0d50776c7596e6c9af84",
 }
 DIRECT_FILES = (
-    "direct_probes.py", "direct_probe_core.py", "direct_probe_project.py",
+    "direct_probes.py", "direct_actions.py", "direct_probe_core.py", "direct_probe_project.py",
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
@@ -34,7 +34,7 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.13.0-street-story-deploy"', "version")
+                          'BRIDGE_VERSION = "3.14.0-direct-ops"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -49,6 +49,12 @@ def transform_bridge(source: str) -> str:
     ProbeError,
     run_host_probe as _run_host_probe,
     run_project_probe as _run_project_probe,
+)
+from direct_actions import (
+    HOST_ACTION_INPUT_SCHEMA,
+    PROJECT_ACTION_INPUT_SCHEMA,
+    run_host_action as _run_host_action,
+    run_project_action as _run_project_action,
 )
 from source_handoff import (
     SourceHandoffError,
@@ -171,9 +177,24 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
         input_schema=HOST_PROBE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=True, destructive_hint=False,
             idempotent_hint=True, open_world_hint=False)),
+    types.Tool(name="project_action", title="Run registered project operation",
+        description=("Execute one typed deterministic project operation without an agent: safe "
+            "fast-forward sync, a trusted registered test/build/deploy profile, or direct commit/push "
+            "of an already staged source handoff. No arbitrary command, cwd, env, or executable is accepted."),
+        input_schema=PROJECT_ACTION_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+            idempotent_hint=False, open_world_hint=True)),
+    types.Tool(name="host_action", title="Run registered host operation",
+        description=("Execute one typed operation against trusted server configuration without an agent. "
+            "Supports registered host profiles and deferred restart of registered user services; "
+            "no arbitrary shell command, path, environment, or service name is accepted."),
+        input_schema=HOST_ACTION_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=True,
+            idempotent_hint=False, open_world_hint=False)),
     types.Tool(name="stage_source_handoff", title="Stage source handoff",
         description=("Materialize an exact-base Git binary patch in an isolated detached "
             "worktree without modifying the canonical checkout. Returns handoff:<id> for "
+            "direct project_action test/commit/push or, only when real reasoning is needed, "
             "start_task/continue_task. Patch bytes are consumed through stdin and not persisted."),
         input_schema=STAGE_SOURCE_HANDOFF_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
@@ -218,6 +239,8 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     validator_anchor = '    "council_run": Draft202012Validator(COUNCIL_RUN_INPUT_SCHEMA),\n'
     validators = ('    "project_probe": Draft202012Validator(PROJECT_PROBE_INPUT_SCHEMA),\n'
                   '    "host_probe": Draft202012Validator(HOST_PROBE_INPUT_SCHEMA),\n'
+                  '    "project_action": Draft202012Validator(PROJECT_ACTION_INPUT_SCHEMA),\n'
+                  '    "host_action": Draft202012Validator(HOST_ACTION_INPUT_SCHEMA),\n'
                   '    "stage_source_handoff": Draft202012Validator(STAGE_SOURCE_HANDOFF_INPUT_SCHEMA),\n'
                   '    "cleanup_source_handoff": Draft202012Validator(CLEANUP_SOURCE_HANDOFF_INPUT_SCHEMA),\n'
                   '    "street_story_materialize_release": Draft202012Validator(STREET_STORY_MATERIALIZE_RELEASE_INPUT_SCHEMA),\n'
@@ -291,6 +314,34 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                 return _tool_result(await _run_host_probe(
                     project.path, project.canonical, arguments["checks"],
                 ))
+            except ProbeError as exc:
+                payload = {"status": exc.status, "errorCategory": exc.category,
+                           "message": str(exc)}
+                if exc.exit_code is not None:
+                    payload["exitCode"] = exc.exit_code
+                return _tool_result(payload, error=True)
+
+        if name == "project_action":
+            assert project is not None
+            try:
+                result = await _run_project_action(
+                    project.path, project.canonical, arguments["action"],
+                )
+                return _tool_result(result, error=result.get("status") not in {"ok", "scheduled"})
+            except ProbeError as exc:
+                payload = {"status": exc.status, "errorCategory": exc.category,
+                           "message": str(exc)}
+                if exc.exit_code is not None:
+                    payload["exitCode"] = exc.exit_code
+                return _tool_result(payload, error=True)
+
+        if name == "host_action":
+            assert project is not None
+            try:
+                result = await _run_host_action(
+                    project.path, project.canonical, arguments["action"],
+                )
+                return _tool_result(result, error=result.get("status") not in {"ok", "scheduled"})
             except ProbeError as exc:
                 payload = {"status": exc.status, "errorCategory": exc.category,
                            "message": str(exc)}
