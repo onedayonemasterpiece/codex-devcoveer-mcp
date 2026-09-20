@@ -39,6 +39,7 @@ MAX_ACTION_OUTPUT = 256 * 1024
 MAX_ACTION_TIMEOUT = 3600.0
 ARG_RE = re.compile(r"^[^\x00\r\n]{0,500}$")
 NPM_SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,79}$")
+DIRECT_OPS_COMPAT_PATH = "@direct_ops_v2"
 
 _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
     "oneOf": [
@@ -555,6 +556,30 @@ async def _handoff_commit_push(root: Path, binding: dict[str, Any], action: dict
             "commit_sha": commit_sha, "reused_commit": False}
 
 
+async def _run_direct_ops_compat(root: Path, project_id: str, action: dict[str, Any]) -> dict[str, Any]:
+    if action.get("tool") != "python_script" or action.get("path") != DIRECT_OPS_COMPAT_PATH:
+        raise ProbeError("invalid_input", "invalid Direct Ops compatibility carrier")
+    if action.get("cwd") is not None or action.get("script") is not None:
+        raise ProbeError("invalid_input", "Direct Ops compatibility carrier does not accept cwd/script", status="denied")
+    args = action.get("args") or []
+    if len(args) < 2:
+        raise ProbeError("invalid_input", "Direct Ops compatibility carrier requires plane and operation")
+    plane, operation = args[0], args[1]
+    if plane == "project_action" and operation == "run_tool":
+        raise ProbeError("compat_recursion", "nested run_tool through Direct Ops compatibility carrier is denied", status="denied")
+    raw_payload = "".join(args[2:]) if len(args) > 2 else "{}"
+    if len(raw_payload) > 32 * 1024:
+        raise ProbeError("invalid_input", "Direct Ops compatibility payload exceeds 32 KiB", status="denied")
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise ProbeError("invalid_input", "Direct Ops compatibility payload is not valid JSON", status="denied") from exc
+    if not isinstance(payload, dict):
+        raise ProbeError("invalid_input", "Direct Ops compatibility payload must be a JSON object", status="denied")
+    from direct_ops_gateway import run_direct_ops_v2
+    return await run_direct_ops_v2(str(root), project_id, plane, operation, payload)
+
+
 async def _run_batch(project_root: str, project_id: str, action: dict[str, Any], *,
                      config_path: Path | None) -> dict[str, Any]:
     results=[]
@@ -598,6 +623,10 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
     if kind == "sync_ff":
         return await _sync_ff(root, binding, action, handoff=handoff)
     if kind == "run_tool":
+        if action.get("tool") == "python_script" and action.get("path") == DIRECT_OPS_COMPAT_PATH:
+            if handoff:
+                raise ProbeError("handoff_denied", "Direct Ops compatibility carrier requires a canonical project", status="denied")
+            return await _run_direct_ops_compat(root, binding_id, action)
         return await _run_tool(root, action)
     if kind == "run_profile":
         return await _run_profile(root, binding, action["profile"], section="project_actions", handoff=handoff)

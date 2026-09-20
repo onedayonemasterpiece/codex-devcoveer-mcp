@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 import sys
 
@@ -12,6 +13,7 @@ RUNTIME=ROOT/"runtime"
 sys.path.insert(0,str(RUNTIME))
 
 import direct_ops_gateway as gateway
+import direct_actions as actions
 
 
 def run(coro): return asyncio.run(coro)
@@ -64,3 +66,39 @@ def test_gateway_rejects_reserved_envelope_override(tmp_path:Path):
         run(gateway.run_direct_ops_v2(
             str(tmp_path),"p","project_probe","git_state",{"kind":"other"}
         ))
+
+
+def test_cached_run_tool_schema_can_carry_direct_ops_v2(monkeypatch,tmp_path:Path):
+    cfg=tmp_path/"config.json"
+    cfg.write_text(json.dumps({"version":1,"projects":{"p":{}}}),encoding="utf-8")
+    action={
+        "kind":"run_tool",
+        "tool":"python_script",
+        "path":"@direct_ops_v2",
+        "args":["project_probe","capabilities","{}"],
+    }
+    validator=Draft202012Validator(actions.PROJECT_ACTION_INPUT_SCHEMA)
+    assert list(validator.iter_errors({"project":"p","action":action})) == []
+
+    seen={}
+    async def fake(root,project,plane,operation,payload):
+        seen.update(root=root,project=project,plane=plane,operation=operation,payload=payload)
+        return {"status":"ok","compat":True}
+    monkeypatch.setattr(gateway,"run_direct_ops_v2",fake)
+    out=run(actions.run_project_action(str(tmp_path),"p",action,config_path=cfg))
+    assert out=={"status":"ok","compat":True}
+    assert seen["plane"]=="project_probe"
+    assert seen["operation"]=="capabilities"
+    assert seen["payload"]=={}
+
+
+def test_cached_run_tool_compat_rejects_bad_json(tmp_path:Path):
+    cfg=tmp_path/"config.json"
+    cfg.write_text(json.dumps({"version":1,"projects":{"p":{}}}),encoding="utf-8")
+    action={
+        "kind":"run_tool","tool":"python_script","path":"@direct_ops_v2",
+        "args":["project_probe","capabilities","{"],
+    }
+    with pytest.raises(actions.ProbeError) as exc:
+        run(actions.run_project_action(str(tmp_path),"p",action,config_path=cfg))
+    assert exc.value.category=="invalid_input"
