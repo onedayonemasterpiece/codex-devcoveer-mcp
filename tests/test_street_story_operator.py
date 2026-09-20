@@ -15,6 +15,7 @@ from runtime.street_story_operator import (
     TARGET_PORT,
     TARGET_REPOSITORY,
     TARGET_SERVICE,
+    VIBE_BASE_URL,
 )
 
 
@@ -42,6 +43,7 @@ def test_operator_targets_are_compile_time_allowlisted() -> None:
     assert TARGET_HOSTNAME == "street-story.kenigevents.ru"
     assert TARGET_PORT == 8188
     assert TARGET_SERVICE == "street-story.service"
+    assert VIBE_BASE_URL == "https://mcp-vibepublish.kenigevents.ru"
 
 
 def test_source_gate_accepts_only_current_remote_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
