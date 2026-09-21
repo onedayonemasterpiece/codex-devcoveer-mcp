@@ -45,11 +45,11 @@ def main():
     checkpoint = None
     if job is not None:
         row = db.execute(
-            "SELECT payload_json FROM checkpoints WHERE job_id=? AND name='grounded_research_v2'",
+            "SELECT value_json FROM research_checkpoints WHERE job_id=? AND stage='grounded_research_v2'",
             (job["id"],),
         ).fetchone()
         if row is not None:
-            checkpoint = safe_json(row["payload_json"])
+            checkpoint = safe_json(row["value_json"])
     checkpoint = checkpoint or {}
     payload = checkpoint.get("payload") if isinstance(checkpoint.get("payload"), dict) else {}
     facts = payload.get("facts") if isinstance(payload.get("facts"), list) else []
