@@ -83,6 +83,8 @@ def main():
             "size": SKILL.stat().st_size if SKILL.is_file() else None,
         },
         "recent_visual_operations": [],
+        "recent_boundary_operations": [],
+        "principal_scopes": [],
     }
     try:
         proc = subprocess.run(
@@ -104,6 +106,37 @@ def main():
     uri = f"file:{DB}?mode=ro"
     db = sqlite3.connect(uri, uri=True)
     db.row_factory = sqlite3.Row
+    principal_rows = db.execute(
+        "SELECT id,scopes,owner,active FROM principals ORDER BY id"
+    ).fetchall()
+    for principal in principal_rows:
+        scopes = safe_json(principal["scopes"])
+        out["principal_scopes"].append({
+            "principal_id": principal["id"],
+            "scopes": sorted(scopes) if isinstance(scopes, list) else [],
+            "owner": bool(principal["owner"]),
+            "active": bool(principal["active"]),
+        })
+    boundary_rows = db.execute(
+        """
+        SELECT id,created,action,state,complete,work_state,error
+          FROM operations
+         WHERE action IN ('asset_ingress','visual')
+         ORDER BY created DESC
+         LIMIT 20
+        """
+    ).fetchall()
+    for op in boundary_rows:
+        out["recent_boundary_operations"].append({
+            "operation_id": op["id"],
+            "created": op["created"],
+            "action": op["action"],
+            "state": op["state"],
+            "complete": bool(op["complete"]),
+            "work_state": op["work_state"],
+            "error": safe_json(op["error"]),
+        })
+
     rows = db.execute(
         """
         SELECT o.id AS operation_id, o.created, o.state AS operation_state,
