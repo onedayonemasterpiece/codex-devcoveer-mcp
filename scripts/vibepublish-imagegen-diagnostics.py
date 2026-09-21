@@ -85,6 +85,7 @@ def main():
         "recent_visual_operations": [],
         "recent_boundary_operations": [],
         "principal_scopes": [],
+        "tenant_storage": [],
     }
     try:
         proc = subprocess.run(
@@ -116,6 +117,22 @@ def main():
             "scopes": sorted(scopes) if isinstance(scopes, list) else [],
             "owner": bool(principal["owner"]),
             "active": bool(principal["active"]),
+        })
+    tenant_rows = db.execute(
+        """
+        SELECT t.id,t.storage_limit,COALESCE(SUM(length(a.bytes)),0) AS used_bytes,COUNT(a.id) AS asset_count
+          FROM tenants t
+          LEFT JOIN assets a ON a.tenant_id=t.id
+         GROUP BY t.id,t.storage_limit
+         ORDER BY t.id
+        """
+    ).fetchall()
+    for tenant in tenant_rows:
+        out["tenant_storage"].append({
+            "tenant_id": tenant["id"],
+            "storage_limit": tenant["storage_limit"],
+            "used_bytes": tenant["used_bytes"],
+            "asset_count": tenant["asset_count"],
         })
     boundary_rows = db.execute(
         """
