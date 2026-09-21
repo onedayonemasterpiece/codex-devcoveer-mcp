@@ -11,7 +11,7 @@ if [[ -x "$BIN" ]] && [[ "$("$BIN" --version)" == "$EXPECTED" ]]; then
   exit 0
 fi
 
-/usr/bin/npm install --global --prefix /home/dev/.local --no-audit --no-fund '@openai/codex@0.153.0'
+PATH="/usr/local/bin:/usr/bin:/bin:/home/dev/.local/bin" npm install --global --prefix /home/dev/.local --no-audit --no-fund '@openai/codex@0.153.0'
 
 actual="$("$BIN" --version)"
 if [[ "$actual" != "$EXPECTED" ]]; then
