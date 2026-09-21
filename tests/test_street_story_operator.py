@@ -95,17 +95,15 @@ def test_python312_prefers_healthy_bridge_runtime(
     assert operator._python312() == str(bridge)
 
 
-def test_provider_env_includes_sixth_registered_google_key(
+def test_provider_env_includes_registered_google_key_pool_through_32(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     operator = _operator(tmp_path)
     host = {
         "GOOGLE_API_KEY": "k1",
-        "GOOGLE_API_KEY2": "k2",
-        "GOOGLE_API_KEY3": "k3",
-        "GOOGLE_API_KEY4": "k4",
-        "GOOGLE_API_KEY5": "k5",
         "GOOGLE_API_KEY6": "k6",
+        "GOOGLE_API_KEY7": "k7",
+        "GOOGLE_API_KEY32": "k32",
         "GOOGLE_AI_LIMITER_SUPABASE_URL": "https://quota.example.test",
         "GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY": "quota-key",
     }
@@ -114,8 +112,10 @@ def test_provider_env_includes_sixth_registered_google_key(
     rendered = operator._provider_env().read_text(encoding="utf-8")
 
     assert "GOOGLE_API_KEY6=k6" in rendered
-    assert '"GOOGLE_API_KEY6"' in rendered
-    assert "GEMINI_MODEL=gemini-2.5-flash-lite" in rendered
+    assert "GOOGLE_API_KEY7=k7" in rendered
+    assert "GOOGLE_API_KEY32=k32" in rendered
+    assert '"GOOGLE_API_KEY32"' in rendered
+    assert "GEMINI_MODEL=gemini-3.1-flash-lite" in rendered
 
 
 def test_vibe_principal_name_avoids_existing_ids(tmp_path: Path) -> None:
