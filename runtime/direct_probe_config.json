@@ -111,6 +111,16 @@
           "env": {
             "DEVCOVEER_SKIP_TUNNEL_RESTART": "1"
           }
+        },
+        "codex_cli_0153": {
+          "argv": [
+            "/usr/bin/bash",
+            "scripts/install-codex-cli-0153.sh"
+          ],
+          "cwd": ".",
+          "timeout_seconds": 300,
+          "output_bytes": 65536,
+          "allow_handoff": false
         }
       }
     },

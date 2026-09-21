@@ -16,7 +16,7 @@ DEV=dev
 H=/home/dev
 P="$H/projects"
 
-CODEX_VERSION="0.151.0-alpha.7.2"
+CODEX_VERSION="0.153.0"
 TUNNEL_VERSION="v0.0.14"
 TUNNEL_ID="${CONTROL_PLANE_TUNNEL_ID:-tunnel_6a8afbe7d1c08191a9bf0769ccba7077}"
 TUNNEL_ASSET="tunnel-client-${TUNNEL_VERSION}-linux-amd64.zip"
