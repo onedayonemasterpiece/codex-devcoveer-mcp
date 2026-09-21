@@ -451,10 +451,11 @@ class StreetStoryOperator:
 
     def _provider_env(self) -> Path:
         host = self._read_host_env()
-        refs = [
-            name for name in ("GOOGLE_API_KEY", "GOOGLE_API_KEY2", "GOOGLE_API_KEY3", "GOOGLE_API_KEY4", "GOOGLE_API_KEY5", "GOOGLE_API_KEY6")
-            if host.get(name)
-        ]
+        refs: list[str] = []
+        for ordinal in range(1, 33):
+            name = "GOOGLE_API_KEY" if ordinal == 1 else f"GOOGLE_API_KEY{ordinal}"
+            if host.get(name):
+                refs.append(name)
         if not refs:
             raise OperatorError("registered Google API key pool is unavailable")
         quota_url = host.get("GOOGLE_AI_LIMITER_SUPABASE_URL") or host.get("SUPABASE_URL")
@@ -469,7 +470,7 @@ class StreetStoryOperator:
         values.update(
             {
                 "GEMINI_API_KEY_REFS": json.dumps(refs, separators=(",", ":")),
-                "GEMINI_MODEL": "gemini-2.5-flash-lite",
+                "GEMINI_MODEL": "gemini-3.1-flash-lite",
                 "GEMINI_QUOTA_SUPABASE_URL": quota_url,
                 "GEMINI_QUOTA_SUPABASE_KEY": quota_key,
             }
