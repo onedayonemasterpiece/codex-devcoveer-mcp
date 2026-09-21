@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_SHA = "08329075c494d4c386394c13810b2592750608d6"
-EXPECTED_OLD = "8d17abd4f31c258d16ae7afa3783c2c8f8625dee"
-EXPECTED_BRANCH = "work/review-theses-product-fix-20260920"
+EXPECTED_SHA = "be940aecfa7fac4c872e5ced0bb36277e69a878f"
+EXPECTED_OLD = "a389d71747e61a895480d0f9ac8e1287f48a3e9a"
+EXPECTED_BRANCH = "main"
 
 
 def test_wonderful_lections_runtime_profile_is_allowlisted_and_exact():
