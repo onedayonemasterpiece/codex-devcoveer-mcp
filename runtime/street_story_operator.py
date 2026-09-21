@@ -525,7 +525,9 @@ class StreetStoryOperator:
             raise OperatorError(f"VibePublish returned invalid JSON for {path}")
         return value
 
-    def _vibe_preview_preflight(self, token: str, sha: str) -> dict[str, str]:
+    def _vibe_preview_preflight(
+        self, token: str, sha: str, deploy_idempotency_key: str
+    ) -> dict[str, str]:
         operation = self._vibe_request(
             token,
             "POST",
@@ -535,7 +537,10 @@ class StreetStoryOperator:
                 "content": {"text": f"Street Story deployment preflight for {sha[:12]}. Preview only; do not dispatch."},
                 "mode": "preview",
             },
-            request_key=f"street-story-deploy-preview-v2-{sha[:24]}",
+            request_key=(
+                f"street-story-deploy-preview-v3-{sha[:16]}-"
+                f"{hashlib.sha256(deploy_idempotency_key.encode()).hexdigest()[:16]}"
+            ),
         )
         operation_id = str(operation.get("operation_id") or "")
         if not operation_id:
@@ -815,7 +820,7 @@ class StreetStoryOperator:
             vibe_token = vibe_token_file.read_text(encoding="utf-8").strip()
             if len(vibe_token) < 20:
                 raise OperatorError("Street Story Vibe token is invalid")
-            vibe_preflight = self._vibe_preview_preflight(vibe_token, sha)
+            vibe_preflight = self._vibe_preview_preflight(vibe_token, sha, idempotency_key)
             data_dir = self.app_state_root / "data"
             data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(data_dir, 0o700)
