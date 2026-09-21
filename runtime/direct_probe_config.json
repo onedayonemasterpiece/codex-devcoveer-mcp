@@ -496,8 +496,8 @@
           "timeout_seconds": 900,
           "output_bytes": 262144,
           "env": {
-            "WONDERFUL_EXPECTED_OLD_SHA": "be940aecfa7fac4c872e5ced0bb36277e69a878f",
-            "WONDERFUL_RELEASE_SHA": "20a42062934be7f656d87d14f215b5c73de35786",
+            "WONDERFUL_EXPECTED_OLD_SHA": "20a42062934be7f656d87d14f215b5c73de35786",
+            "WONDERFUL_RELEASE_SHA": "5f9de5e17605fb2a1c49ed1876de5681142a2ae8",
             "WONDERFUL_RELEASE_BRANCH": "main"
           }
         }

@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_SHA = "20a42062934be7f656d87d14f215b5c73de35786"
-EXPECTED_OLD = "be940aecfa7fac4c872e5ced0bb36277e69a878f"
+EXPECTED_SHA = "5f9de5e17605fb2a1c49ed1876de5681142a2ae8"
+EXPECTED_OLD = "20a42062934be7f656d87d14f215b5c73de35786"
 EXPECTED_BRANCH = "main"
 
 
