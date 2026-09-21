@@ -8,6 +8,10 @@ EXPECTED_SHA = "5f9de5e17605fb2a1c49ed1876de5681142a2ae8"
 EXPECTED_OLD = "20a42062934be7f656d87d14f215b5c73de35786"
 EXPECTED_BRANCH = "main"
 
+THESIS_CONTRACT_SHA = "782f4c6bb5b9e81c8e859cdfc7554f1a9586cda0"
+THESIS_CONTRACT_OLD = "ae47f61bac02c5546143122f7f3dba0cdbf24158"
+THESIS_CONTRACT_PROFILE = "deploy_thesis_field_contract_20260921"
+
 
 def test_wonderful_lections_runtime_profile_is_allowlisted_and_exact():
     config = json.loads((ROOT / "runtime" / "direct_probe_config.json").read_text())
@@ -40,3 +44,17 @@ def test_wonderful_lections_deployer_fails_closed_around_exact_release():
     assert "width:fit-content" in text
     assert "max-width:min(520px,42%)" in text
     assert "systemctl" not in text
+
+
+def test_wonderful_lections_thesis_contract_release_profile_is_exact():
+    config = json.loads((ROOT / "runtime" / "direct_probe_config.json").read_text())
+    project = config["projects"]["wonderful-lections"]
+    profile = project["host_actions"][THESIS_CONTRACT_PROFILE]
+    assert profile["cwd"] == project["roots"]["runtime_source"]
+    assert profile["argv"] == [
+        "/usr/bin/bash",
+        "/home/dev/projects/codex-devcoveer-mcp/scripts/deploy-wonderful-lections-release.sh",
+    ]
+    assert profile["env"]["WONDERFUL_EXPECTED_OLD_SHA"] == THESIS_CONTRACT_OLD
+    assert profile["env"]["WONDERFUL_RELEASE_SHA"] == THESIS_CONTRACT_SHA
+    assert profile["env"]["WONDERFUL_RELEASE_BRANCH"] == EXPECTED_BRANCH

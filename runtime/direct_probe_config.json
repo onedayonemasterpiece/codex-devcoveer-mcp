@@ -500,6 +500,20 @@
             "WONDERFUL_RELEASE_SHA": "5f9de5e17605fb2a1c49ed1876de5681142a2ae8",
             "WONDERFUL_RELEASE_BRANCH": "main"
           }
+        },
+        "deploy_thesis_field_contract_20260921": {
+          "argv": [
+            "/usr/bin/bash",
+            "/home/dev/projects/codex-devcoveer-mcp/scripts/deploy-wonderful-lections-release.sh"
+          ],
+          "cwd": "/home/dev/.local/opt/wonderful-lections-runtime-source",
+          "timeout_seconds": 900,
+          "output_bytes": 262144,
+          "env": {
+            "WONDERFUL_EXPECTED_OLD_SHA": "ae47f61bac02c5546143122f7f3dba0cdbf24158",
+            "WONDERFUL_RELEASE_SHA": "782f4c6bb5b9e81c8e859cdfc7554f1a9586cda0",
+            "WONDERFUL_RELEASE_BRANCH": "main"
+          }
         }
       }
     }
