@@ -262,13 +262,32 @@
           "type": "package",
           "python": "/home/dev/.local/opt/vibepublish/bin/python",
           "distribution": "Telethon"
+        },
+        "codex_cli": {
+          "type": "cli",
+          "argv": [
+            "/home/dev/.local/bin/codex",
+            "--version"
+          ]
         }
       },
       "runtime_files": {
         "server_source": "/home/dev/projects/vibepublish/deploy/devcoveer/serve.py",
         "production_worker": "/home/dev/projects/vibepublish/deploy/devcoveer/production_worker.py"
       },
-      "config_presence": {}
+      "config_presence": {},
+      "project_actions": {
+        "imagegen_diagnostics": {
+          "argv": [
+            "/usr/bin/python3",
+            "/home/dev/projects/codex-devcoveer-mcp/scripts/vibepublish-imagegen-diagnostics.py"
+          ],
+          "cwd": "/home/dev/projects/vibepublish",
+          "timeout_seconds": 30,
+          "output_bytes": 131072,
+          "allow_handoff": false
+        }
+      }
     },
     "dataset-loop-mcp": {
       "github_repo": "onedayonemasterpiece/dataset-loop-mcp",
