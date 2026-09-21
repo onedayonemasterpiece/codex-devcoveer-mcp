@@ -32,7 +32,7 @@ def main():
     db = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     story = db.execute(
-        "SELECT id,state,error_code,research_json,updated_at FROM stories ORDER BY updated_at DESC LIMIT 1"
+        "SELECT id,state,error_code,error_message,research_json,updated_at FROM stories ORDER BY updated_at DESC LIMIT 1"
     ).fetchone()
     if story is None:
         print(json.dumps({"story": None}, sort_keys=True))
@@ -89,6 +89,7 @@ def main():
             "id": story["id"],
             "state": story["state"],
             "error_code": story["error_code"],
+            "error_message": story["error_message"],
             "updated_at": story["updated_at"],
             "research_source_count": research.get("source_count"),
         },
