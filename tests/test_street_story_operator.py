@@ -143,7 +143,9 @@ def test_vibe_preview_preflight_requires_supported_capability(
             assert kwargs["body"]["content"]["text"] == (
                 "Street Story deployment preflight for aaaaaaaaaaaa. Preview only; do not dispatch."
             )
-            assert kwargs["request_key"] == "street-story-deploy-preview-v2-" + "a" * 24
+            assert kwargs["request_key"] == (
+                "street-story-deploy-preview-v3-" + "a" * 16 + "-7bf58a3023ca48c3"
+            )
             return {"operation_id": "op_preview"}
         if path == "/v1/operations/op_preview":
             return {
@@ -167,7 +169,9 @@ def test_vibe_preview_preflight_requires_supported_capability(
 
     monkeypatch.setattr(operator, "_vibe_request", fake_request)
 
-    result = operator._vibe_preview_preflight("t" * 40, "a" * 40)
+    result = operator._vibe_preview_preflight(
+        "t" * 40, "a" * 40, "deploy-attempt-1"
+    )
 
     assert result["alias"] == "lovekenig_tg"
     assert result["status"] == "supported"
@@ -176,6 +180,44 @@ def test_vibe_preview_preflight_requires_supported_capability(
         ("GET", "/v1/operations/op_preview"),
         ("GET", "/v1/bootstrap"),
     ]
+
+
+def test_vibe_preview_request_key_changes_for_new_deploy_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operator = _operator(tmp_path)
+    request_keys: list[str] = []
+
+    def fake_request(_token: str, _method: str, path: str, **kwargs):
+        if path == "/v1/publications":
+            request_keys.append(kwargs["request_key"])
+            return {"operation_id": "op_preview"}
+        if path == "/v1/operations/op_preview":
+            return {
+                "receipts": [
+                    {"operation_id": "op_preview", "operation_complete": True, "state": "verified"}
+                ]
+            }
+        if path == "/v1/bootstrap":
+            return {
+                "capabilities": [
+                    {
+                        "destination": "lovekenig_tg",
+                        "operation": "publish",
+                        "surface": "post",
+                        "status": "supported",
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(operator, "_vibe_request", fake_request)
+
+    operator._vibe_preview_preflight("t" * 40, "a" * 40, "deploy-attempt-1")
+    operator._vibe_preview_preflight("t" * 40, "a" * 40, "deploy-attempt-2")
+
+    assert request_keys[0] != request_keys[1]
+    assert all(key.startswith("street-story-deploy-preview-v3-") for key in request_keys)
 
 
 def test_edge_target_rejects_arbitrary_hostname_before_host_access(tmp_path: Path) -> None:
