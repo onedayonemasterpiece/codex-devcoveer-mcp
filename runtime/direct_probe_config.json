@@ -496,9 +496,9 @@
           "timeout_seconds": 900,
           "output_bytes": 262144,
           "env": {
-            "WONDERFUL_EXPECTED_OLD_SHA": "8d17abd4f31c258d16ae7afa3783c2c8f8625dee",
-            "WONDERFUL_RELEASE_SHA": "08329075c494d4c386394c13810b2592750608d6",
-            "WONDERFUL_RELEASE_BRANCH": "work/review-theses-product-fix-20260920"
+            "WONDERFUL_EXPECTED_OLD_SHA": "a389d71747e61a895480d0f9ac8e1287f48a3e9a",
+            "WONDERFUL_RELEASE_SHA": "be940aecfa7fac4c872e5ced0bb36277e69a878f",
+            "WONDERFUL_RELEASE_BRANCH": "main"
           }
         }
       }
