@@ -525,7 +525,9 @@ class StreetStoryOperator:
             raise OperatorError(f"VibePublish returned invalid JSON for {path}")
         return value
 
-    def _vibe_preview_preflight(\n        self, token: str, sha: str, deploy_idempotency_key: str\n    ) -> dict[str, str]:
+    def _vibe_preview_preflight(
+        self, token: str, sha: str, deploy_idempotency_key: str
+    ) -> dict[str, str]:
         operation = self._vibe_request(
             token,
             "POST",
@@ -535,7 +537,10 @@ class StreetStoryOperator:
                 "content": {"text": f"Street Story deployment preflight for {sha[:12]}. Preview only; do not dispatch."},
                 "mode": "preview",
             },
-            request_key=(\n                f"street-story-deploy-preview-v3-{sha[:16]}-"\n                f"{hashlib.sha256(deploy_idempotency_key.encode()).hexdigest()[:16]}"\n            ),
+            request_key=(
+                f"street-story-deploy-preview-v3-{sha[:16]}-"
+                f"{hashlib.sha256(deploy_idempotency_key.encode()).hexdigest()[:16]}"
+            ),
         )
         operation_id = str(operation.get("operation_id") or "")
         if not operation_id:
