@@ -412,6 +412,18 @@
             "GEMINI_QUOTA_SUPABASE_KEY"
           ]
         }
+      },
+      "project_actions": {
+        "research_projection_diagnostics": {
+          "argv": [
+            "/usr/bin/python3",
+            "/home/dev/projects/codex-devcoveer-mcp/scripts/street-story-research-projection-diagnostics.py"
+          ],
+          "cwd": "/home/dev/projects/street-story",
+          "timeout_seconds": 30,
+          "output_bytes": 131072,
+          "allow_handoff": false
+        }
       }
     },
     "wonderful-lections": {
