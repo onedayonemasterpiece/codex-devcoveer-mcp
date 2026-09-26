@@ -32,6 +32,7 @@ DESCRIPTION_NEW = (
     '            "If a current direct operation name or parameter schema is unknown, call direct_ops_v2 with operation=describe before choosing an agent. "\n'
     '            "Use project_action for registered project test/build/deploy profiles. Known short deterministic tests/builds use run_tool; known long-running deterministic tests/builds use job_start then job_status, with python_env=auto to reuse the existing project environment rather than create a venv. "\n'
     '            "Use git_fetch for fetch without checkout; use typed github_workflow_dispatch/github_run_cancel for applicable GitHub workflow operations. Use list_models for model state and list_tasks/read_task for task state. "\n'
+    '            "For continuation work that names or implies a checkpoint, branch, SHA or prior worktree, first inspect find_projects workspaceContext and project_probe worktree_list; exact repository-name resolution identifies only one physical checkout. Address the matching project before read/write/test/build and pass expected_head on guarded direct actions when a checkpoint SHA is known. stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree. "\n'
     '            "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "\n'
     '            "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. Browser suites and unknown-duration checks use job_start then job_status; pass nonsecret CHECK_BASE/CHECK_OUTPUT through env, with path relative to project root even when cwd is set. Never scan HOME or borrow browser binaries from other checkouts. "\n'
     '            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to OpenCode. ChatGPT should author the exact code/docs change itself, use direct project_action writes when available, and use stage_source_handoff when direct repository writing is unavailable; use the supplied patch for verification/commit/push rather than rewrite source/docs. "\n'
@@ -99,7 +100,9 @@ _DIRECT_TOOL_REMINDER_TEXT = (
     "use direct_ops_v2 operation=describe. Use run_tool for known short tests/builds and job_start then job_status for long "
     "deterministic tests/builds, with python_env=auto to reuse the project environment. Use git_fetch for fetch without checkout "
     "and typed github_workflow_dispatch/github_run_cancel for applicable workflow operations; list_models and list_tasks/read_task "
-    "cover model/task state. Start an agent only for reasoning beyond typed operations or an unforeseen operation absent from the typed surface."
+    "cover model/task state. For continuation/checkpoint work, inspect find_projects workspaceContext plus worktree_list, address the exact "
+    "physical checkout, and pass expected_head when the checkpoint SHA is known; stage_source_handoff is patch isolation, not worktree selection. "
+    "Start an agent only for reasoning beyond typed operations or an unforeseen operation absent from the typed surface."
 )
 _BROWSER_TOOL_REMINDER_STRONG = (
     "playwright", "browser ui", "browser interaction", "dom", "console", "network",
