@@ -31,10 +31,11 @@ DESCRIPTION_NEW = (
     '            "project_probe for Git/source/read/search/diff/remote/CI facts; host_probe for service/log/listener/resource/runtime facts; direct_ops_v2, project_action, and host_action for deterministic mutations, tests, builds, Git, GitHub, and registered host actions. "\n'
     '            "If a current direct operation name or parameter schema is unknown, call direct_ops_v2 with operation=describe before choosing an agent. "\n'
     '            "Use project_action for registered project test/build/deploy profiles. Known short deterministic tests/builds use run_tool; known long-running deterministic tests/builds use job_start then job_status, with python_env=auto to reuse the existing project environment rather than create a venv. "\n'
-    '            "Use git_fetch for fetch without checkout; use typed github_workflow_dispatch/github_run_cancel for applicable GitHub workflow operations. Use list_models for model state and list_tasks/read_task for task state. "\n'
+    '            "Use git_fetch for fetch without checkout; use git_switch_ff for an exact existing-branch switch+fast-forward; use typed github_workflow_dispatch/github_run_cancel for applicable GitHub workflow operations. Use apply_source_patch or stage_source_handoff for inert source patches and artifact_fetch for arbitrary HTTPS project artifacts with hashing/provenance. Use list_models for model state and list_tasks/read_task for task state. "\n'
+    '            "These typed operations are preferred semantic fast paths, not a capability boundary. If a legitimate operation is absent from the typed surface, start_task remains available as the full-power reasoning escape hatch; do not invent a restriction merely because a typed primitive is missing. "\n'
     '            "For continuation work that names or implies a checkpoint, branch, SHA or prior worktree, first inspect find_projects workspaceContext and project_probe worktree_list; exact repository-name resolution identifies only one physical checkout. Address the matching project before read/write/test/build and pass expected_head on guarded direct actions when a checkpoint SHA is known. When project_probe git_state provides tracked_workspace_digest, pass expected_workspace_digest on guarded local actions when the exact tracked workspace must be preserved across parallel work. stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree. "\n'
     '            "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "\n'
-    '            "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. Browser suites and unknown-duration checks use job_start then job_status; pass nonsecret CHECK_BASE/CHECK_OUTPUT through env, with path relative to project root even when cwd is set. Never scan HOME or borrow browser binaries from other checkouts. "\n'
+    '            "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. Browser suites and unknown-duration checks use job_start then job_status; pass nonsecret CHECK_BASE/CHECK_OUTPUT through env, with path relative to project root even when cwd is set. Prefer exact probes over broad HOME enumeration; use broader agent investigation only when it is actually required, and do not borrow browser binaries from other checkouts. "\n'
     '            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to OpenCode. ChatGPT should author the exact code/docs change itself, use direct project_action writes when available, and use stage_source_handoff when direct repository writing is unavailable; use the supplied patch for verification/commit/push rather than rewrite source/docs. "\n'
     '            "Use start_task only when the work requires reasoning beyond typed operations or an unforeseen operation absent from the typed surface. Use read_task later to check status and obtain the result."),\n'
 )
@@ -99,10 +100,11 @@ _DIRECT_TOOL_REMINDER_TEXT = (
     "mutations, tests, builds, Git, GitHub and registered host actions, including source-handoff commit/push through project_action. If an operation name or parameters are unknown, "
     "use direct_ops_v2 operation=describe. Use run_tool for known short tests/builds and job_start then job_status for long "
     "deterministic tests/builds, with python_env=auto to reuse the project environment. Use git_fetch for fetch without checkout "
-    "and typed github_workflow_dispatch/github_run_cancel for applicable workflow operations; list_models and list_tasks/read_task "
+    "and typed github_workflow_dispatch/github_run_cancel for applicable workflow operations; use git_switch_ff for exact existing-branch switching, "
+    "apply_source_patch/stage_source_handoff for inert source transport, and artifact_fetch for arbitrary HTTPS project artifacts. list_models and list_tasks/read_task "
     "cover model/task state. For continuation/checkpoint work, inspect find_projects workspaceContext plus worktree_list, address the exact "
     "physical checkout, and pass expected_head when the checkpoint SHA is known; stage_source_handoff is patch isolation, not worktree selection. "
-    "Start an agent only for reasoning beyond typed operations or an unforeseen operation absent from the typed surface."
+    "Typed operations are preferred fast paths, not a capability boundary: if a legitimate operation is absent, start_task remains available as the full-power reasoning escape hatch."
 )
 _BROWSER_TOOL_REMINDER_STRONG = (
     "playwright", "browser ui", "browser interaction", "dom", "console", "network",
@@ -116,12 +118,12 @@ _BROWSER_TOOL_REMINDER_TEXT = (
     "use GitHub Actions for CI-specific execution, and start an agent only when "
     "the browser/project investigation actually requires reasoning. First use project_probe web_preflight at the package cwd; "
     "browser suites use job_start then job_status. CHECK_BASE/CHECK_OUTPUT are supported nonsecret env flags. "
-    "Use instructions scope=home/project for exact AGENTS.md reads, not broad filesystem scans."
+    "Use instructions scope=home/project for exact AGENTS.md reads; prefer exact probes over broad filesystem scans, while retaining agent investigation when broader discovery is genuinely required."
 )
 _SOURCE_AUTHORSHIP_REMINDER_TEXT = (
     "Repository code and documentation should normally be authored by ChatGPT itself, not delegated to weaker "
     "OpenCode models. If ChatGPT cannot write the repository directly, author the exact code/docs patch here and "
-    "use stage_source_handoff; then prefer project_action for registered tests and direct commit/push, plus host_action "
+    "use apply_source_patch or stage_source_handoff; then prefer project_action for registered tests and direct commit/push, plus host_action "
     "for registered rollout/restart operations. Use an agent only for genuinely non-deterministic investigation or "
     "when the user explicitly requests agent authoring."
 )

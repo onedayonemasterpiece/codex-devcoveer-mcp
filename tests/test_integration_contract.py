@@ -131,3 +131,20 @@ def test_busy_task_is_never_cancelled_for_elapsed_time(tmp_path):
     base.return_value={'status':'running','history':[{}],'latestTurn':{'providerErrorCategory':None,'providerState':{'type':'busy'}}}
     asyncio.run(env['_read_opencode_task'](record))
     fake.cancel.assert_not_called(); fake.prompt.assert_not_called()
+
+
+def test_evidence_suspicious_scope_classifies_policy_mismatch_without_blocking(tmp_path):
+    env,record,base,fake=fragment_env(tmp_path)
+    document = {
+        "messages": [
+            {"info": {"role": "user"}, "parts": [{"type": "text", "text":
+                "DevCoveer access policy: Do not run shell commands. Deterministic operation only."}]},
+            {"info": {"role": "assistant"}, "parts": [{"type": "tool", "tool": "bash",
+                "state": {"input": {"command": "git fetch origin main && git status"}}}]},
+        ]
+    }
+    findings = env["_evidence_findings"](document, {"redacted": False})
+    assert "policy_mismatch:shell_used_while_prompt_forbids_shell" in findings
+    assert "untyped_git_shell:semantic_git_operation_used_via_shell" in findings
+    # Diagnostic-only: the classifier returns evidence labels and has no execution side effects.
+    assert all(isinstance(item, str) for item in findings)
