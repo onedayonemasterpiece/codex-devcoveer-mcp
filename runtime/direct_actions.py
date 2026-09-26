@@ -121,17 +121,28 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
 }
 
 # Extend the existing contracts before constructing the batch schema. No new runner.
+_ALLOWED_TOOL_ENV = (
+    "CI", "NODE_ENV", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED",
+    "TZ", "LANG", "LC_ALL", "CHECK_BASE", "CHECK_OUTPUT",
+)
 _EXECUTION_OPTIONS = {
     "python_env": {"type": "string", "minLength": 1, "maxLength": 500,
                    "description": "auto (cwd/.venv, root/.venv, system), system, or a project-relative venv directory"},
-    "env": {"type": "object", "maxProperties": 8,
-            "propertyNames": {"enum": ["CI", "NODE_ENV", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "TZ", "LANG", "LC_ALL"]},
+    "env": {"type": "object", "maxProperties": len(_ALLOWED_TOOL_ENV),
+            "propertyNames": {"enum": list(_ALLOWED_TOOL_ENV)},
             "additionalProperties": {"type": "string", "maxLength": 500}},
 }
 for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
     _kind = _variant["properties"]["kind"]["const"]
     if _kind in {"run_tool", "job_start"}:
         _variant["properties"].update(_EXECUTION_OPTIONS)
+        _variant["description"] = (
+            "Known short synchronous command. Use job_start instead for browser suites, full builds or unknown duration; do not hold a client RPC open."
+            if _kind == "run_tool" else
+            "Durable job_start: use a stable request_key, then job_status on the SAME project/worktree. Reuse the key after a lost response; use a new key for an intentional rerun."
+        )
+        _variant["properties"]["path"]["description"] = "Script file is project-root-relative, independent of cwd. Example: path=site/tests/check.mjs, cwd=site."
+        _variant["properties"]["cwd"]["description"] = "Project-relative execution directory. npm_script requires package.json here; path is still relative to project root."
     if _kind == "job_start":
         _variant["properties"]["request_key"] = {"type": "string", "minLength": 1, "maxLength": 128}
     if _kind == "job_status":
@@ -396,7 +407,7 @@ def _project_python(root: Path, cwd: Path, selection: str = "auto") -> str:
 
 def _tool_env(action: dict[str, Any], python: str | None) -> dict[str, str]:
     extra = action.get("env") or {}
-    allowed = {"CI", "NODE_ENV", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "TZ", "LANG", "LC_ALL"}
+    allowed = set(_ALLOWED_TOOL_ENV)
     if not isinstance(extra, dict) or set(extra) - allowed:
         raise ProbeError("invalid_input", "only documented nonsecret execution flags may be overridden")
     env = _action_env({"env": extra})

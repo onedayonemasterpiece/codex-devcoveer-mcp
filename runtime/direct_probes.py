@@ -18,6 +18,7 @@ from direct_probe_project import (
 )
 from direct_ops2 import project_capabilities, workspace_compare
 from direct_ops2_worktrees import worktree_compare
+from direct_web_context import read_instructions, web_preflight
 from direct_ops2_host import (
     mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
 )
@@ -86,6 +87,8 @@ def _fit_response(payload: dict[str, Any]) -> dict[str, Any]:
 
 async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any]) -> tuple[dict[str, Any], str]:
     kind = check["kind"]
+    if kind == "instructions": return read_instructions(root, check), "exact-instruction-file"
+    if kind == "web_preflight": return await web_preflight(root, check), "project-local-web-runtime"
     if kind == "git_state": return await _git_state(root), "git-local"
     if kind == "remote_head": return await _remote_head(root, binding, check["remote"], check["branch"]), "github-remote+git-tracking"
     if kind == "git_log": return await _git_log(root, check), "git-local-object"

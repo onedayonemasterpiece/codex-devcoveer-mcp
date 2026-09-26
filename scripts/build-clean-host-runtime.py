@@ -16,7 +16,7 @@ BASE_SHA = {
     "opencode_backend.py": "56699a39b2d635cdc397774cc25f122b119e7794599b0d50776c7596e6c9af84",
 }
 DIRECT_FILES = (
-    "direct_probes.py", "direct_actions.py", "direct_probe_core.py", "direct_probe_project.py",
+    "direct_web_context.py", "direct_probes.py", "direct_actions.py", "direct_probe_core.py", "direct_probe_project.py",
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
@@ -181,7 +181,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
             idempotent_hint=False, open_world_hint=True)),
     types.Tool(name="project_probe", title="Read deterministic project facts",
         description=("Read bounded deterministic project facts without starting an agent task. "
-            "Use this for Git state, files, hashes, searches, and narrowly scoped CI status."),
+            "Use this for Git state, files, hashes, searches, and narrowly scoped CI status. Use instructions for exact home/project AGENTS.md reads and web_preflight for local pinned Playwright readiness before web tests."),
         input_schema=PROJECT_PROBE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=True, destructive_hint=False,
             idempotent_hint=True, open_world_hint=True)),

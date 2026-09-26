@@ -6,16 +6,16 @@ Use a direct probe when the missing input is a deterministic fact: Git state/obj
 
 ## Contract and limits
 
-`project_probe` and `host_probe` accept `project` plus independently evaluated `checks`. The JSON schemas enumerate every operation and parameter; callers cannot supply commands, scripts, argv, cwd, environment overrides, arbitrary GitHub URLs/API paths, HTTP URLs, ports, systemd units, log files, or host roots. The response uses `execution=direct`, observation time, resolved target, duration and per-check status/source/data/error/complete/truncated/redacted information. One failed check does not discard successful siblings. A batch is not globally atomic; worktree reads report detected changes where applicable.
+`project_probe` and `host_probe` accept `project` plus independently evaluated `checks`. The JSON schemas enumerate every operation and parameter; callers cannot supply arbitrary commands, scripts or environment overrides. Some typed probes accept a project-relative cwd or bounded network parameters; use direct_ops_v2 operation=describe for the current exact schema. The response uses `execution=direct`, observation time, resolved target, duration and per-check status/source/data/error/complete/truncated/redacted information. One failed check does not discard successful siblings. A batch is not globally atomic; worktree reads report detected changes where applicable.
 
-A probe batch has a 60-second safety ceiling and a 64 KiB response ceiling. Checks run independently/concurrently, while each operation has its own bounded timeout: cheap local facts remain short, and GitHub/disk/resource checks may use up to roughly 50 seconds. Text, logs, Git output, traversals, line pages and process output have smaller operation-specific caps. Subprocesses are limited to four concurrent executions and are terminated as a process group on timeout or cancellation. There are no probe task IDs or durable probe jobs.
+A probe batch has a 60-second safety ceiling and a 256 KiB response ceiling. Checks run independently/concurrently, while each operation has its own bounded timeout: cheap local facts remain short, and GitHub/disk/resource checks may use up to roughly 50 seconds. Text, logs, Git output, traversals, line pages and process output have smaller operation-specific caps. Subprocesses are limited to four concurrent executions and are terminated as a process group on timeout or cancellation. There are no probe task IDs or durable probe jobs.
 
 ## Direct execution boundary
 
 `project_action` is intentionally more liberal than the probes without becoming an arbitrary host shell. Its caller-facing operations are typed:
 
 - `sync_ff` fetches one server-registered remote/branch and fast-forwards only when the fetched SHA exactly matches the supplied expected SHA, the move is a true fast-forward, and tracked/staged state is clean. Untracked files are preserved.
-- `run_tool` supports fixed project-local tool classes such as pytest and repository bash/Python/Node/npm scripts. The executable is selected by server code, cwd is confined to the resolved project or managed handoff, and callers cannot provide environment variables or `bash -c`.
+- `run_tool` supports fixed project-local tool classes such as pytest and repository bash/Python/Node/npm scripts. The executable is selected by server code, cwd is confined to the resolved project or managed handoff, and callers cannot supply inline `bash -c`. A small explicit allowlist supports nonsecret environment flags, including `CHECK_BASE` and `CHECK_OUTPUT`; secret and loader overrides remain denied.
 - `run_profile` executes an exact argv/cwd/env profile from trusted server configuration. It is used when an operation needs a stable environment flag or command shape, for example canonical runtime installation.
 - `handoff_commit_push` works only on a managed `handoff:<id>`, requires clean unstaged/untracked state plus `git diff --cached --check`, and pushes only a non-force `chatgpt/*` branch to a server-registered remote.
 
@@ -46,3 +46,51 @@ Health aliases are diagnostic observations only. A non-2xx application result is
 `scripts/install-current-canonical-runtime.sh` is the canonical rollout path. It archives a validated main commit, builds the clean-host runtime, runs candidate MCP acceptance, installs the canonical runtime, and runs wrapper acceptance. For direct self-rollout it can set `DEVCOVEER_SKIP_TUNNEL_RESTART=1`; after candidate and wrapper acceptance the installer returns deployment evidence with `tunnel_restart=DEFERRED` and does not schedule or perform a restart. The caller then invokes `host_action.restart_service` for the registered MCP tunnel after the installer RPC has returned. The clean-host builder includes probes, direct actions, source handoff and the routing policy, so a recovered server retains the same operating contract.
 
 `scripts/install-direct-probes.py` remains a fail-closed legacy probe-only incremental installer; it is not the canonical way to install the complete direct execution surface.
+
+
+## Web testing workflow (2026-09-26)
+
+No new executor or browser controller is needed. The existing direct runners and
+my-browser-bridge have different jobs: repository tests/builds run as direct jobs;
+interactive visual/DOM/console/network review uses my-browser-bridge.
+
+1. Resolve the actual project/worktree, not a similar checkout. Read exact rules:
+   `project_probe/instructions` with `scope=home` reads only `~/AGENTS.md`;
+   `scope=project` reads only project `AGENTS.md`, optionally in a named `cwd`.
+   Follow `next_start_line` until the instruction file is covered. This does not
+   search HOME, follow symlinks, inspect .env, or discover unrelated projects.
+2. Call `project_probe/web_preflight` with the package directory (`cwd=site` for
+   KenigEvents). It lists script names and reports the locally installed Node,
+   pinned Playwright and expected browser executable. It does not download,
+   launch a browser, navigate to a site or claim application acceptance.
+3. An absent dependency and an absent browser are different problems. For an
+   installed Playwright package, `install_action` points to that package's own
+   CLI through the existing `job_start` runner. Add an attempt-specific
+   `request_key`. Do not use `npx` to fetch the latest version or borrow a cached
+   executable from another checkout. Installation is a separate explicit action,
+   never a side effect of preflight. OS dependency changes are not automatic.
+4. Run an existing project test. `path` is always **project-root-relative** even
+   when `cwd` is set. Browser suites, full builds and unknown-duration commands
+   use `job_start`, followed by `job_status` on the **same project/worktree**.
+   Use the same request key after a lost response, a new key for a deliberate
+   rerun. Preserve the job ID; do not launch OpenCode just to wait for a command.
+5. Use the actual output and assertions to decide whether the check passed.
+   `executable_present=true` is not `launch_verified`: default Chromium may need
+   a separate headless-shell binary and system libraries. HTTP 200, successful
+   compilation and a process exit code do not replace UI assertions or review.
+
+Example after live schema discovery (substitute actual project, URL and a
+managed artifact directory from the project's existing artifact workflow):
+
+```json
+{"project":"events-bot-new-islands-home","plane":"project_probe","operation":"web_preflight","payload":{"cwd":"site"}}
+```
+
+```json
+{"project":"events-bot-new-islands-home","plane":"project_action","operation":"job_start","payload":{"tool":"node_script","path":"site/tests/mobile-review-20260926.playwright.mjs","cwd":"site","env":{"CHECK_BASE":"http://127.0.0.1:4321/review/","CHECK_OUTPUT":"/home/dev/artifacts/PROJECT/MANAGED-TASK"},"timeout_seconds":900,"request_key":"mobile-review-attempt-1"}}
+```
+
+The gateway's live `describe` response includes these routing hints even when a
+client's concrete tool schema is cached. `instructions` and `web_preflight` use
+the existing stable `direct_ops_v2` envelope. No unrestricted filesystem search,
+secret environment forwarding, extra test service or new agent layer is added.

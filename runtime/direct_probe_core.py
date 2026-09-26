@@ -111,6 +111,16 @@ PROJECT_CHECK_SCHEMAS = [
         "limit": {"type":"integer","minimum":1,"maximum":1000},
     }, ["worktree","target_ref"]),
     _check_schema("capabilities"),
+    {**_check_schema("instructions", {
+        "scope": {"type": "string", "enum": ["home", "project"], "default": "project"},
+        "cwd": {"type": "string", "maxLength": 500},
+        "start_line": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "end_line": {"type": "integer", "minimum": 1, "maximum": 1000000},
+    }), "description": "Read only ~/AGENTS.md (scope=home) or project cwd/AGENTS.md (scope=project). Exact bounded redacted read, no recursive HOME search. Follow next_start_line when present."},
+    {**_check_schema("web_preflight", {
+        "cwd": {"type": "string", "maxLength": 500, "description": "Project-relative directory containing package.json, e.g. site."},
+        "browser": {"type": "string", "enum": ["chromium", "firefox", "webkit"], "default": "chromium"},
+    }), "description": "Inspect this project's installed Node/Playwright, script names and expected browser executable. No download, browser launch or website access. Returns pinned local CLI job_start parameters; executable presence is not launch acceptance."},
     _check_schema("workspace_compare", {
         "target_ref": _REF_SCHEMA,
         "include_untracked": {"type": "boolean", "default": True},

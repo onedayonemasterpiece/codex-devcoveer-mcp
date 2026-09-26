@@ -33,6 +33,7 @@ DESCRIPTION_NEW = (
     '            "Use project_action for registered project test/build/deploy profiles. Known short deterministic tests/builds use run_tool; known long-running deterministic tests/builds use job_start then job_status, with python_env=auto to reuse the existing project environment rather than create a venv. "\n'
     '            "Use git_fetch for fetch without checkout; use typed github_workflow_dispatch/github_run_cancel for applicable GitHub workflow operations. Use list_models for model state and list_tasks/read_task for task state. "\n'
     '            "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "\n'
+    '            "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. Browser suites and unknown-duration checks use job_start then job_status; pass nonsecret CHECK_BASE/CHECK_OUTPUT through env, with path relative to project root even when cwd is set. Never scan HOME or borrow browser binaries from other checkouts. "\n'
     '            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to OpenCode. ChatGPT should author the exact code/docs change itself, use direct project_action writes when available, and use stage_source_handoff when direct repository writing is unavailable; use the supplied patch for verification/commit/push rather than rewrite source/docs. "\n'
     '            "Use start_task only when the work requires reasoning beyond typed operations or an unforeseen operation absent from the typed surface. Use read_task later to check status and obtain the result."),\n'
 )
@@ -110,7 +111,9 @@ _BROWSER_TOOL_REMINDER_TEXT = (
     "clicks, fills, uploads or downloads, use the available my-browser-bridge MCP directly instead of "
     "starting OpenCode solely to drive Playwright. Use project_action for a registered project Playwright test/build/webServer profile; "
     "use GitHub Actions for CI-specific execution, and start an agent only when "
-    "the browser/project investigation actually requires reasoning."
+    "the browser/project investigation actually requires reasoning. First use project_probe web_preflight at the package cwd; "
+    "browser suites use job_start then job_status. CHECK_BASE/CHECK_OUTPUT are supported nonsecret env flags. "
+    "Use instructions scope=home/project for exact AGENTS.md reads, not broad filesystem scans."
 )
 _SOURCE_AUTHORSHIP_REMINDER_TEXT = (
     "Repository code and documentation should normally be authored by ChatGPT itself, not delegated to weaker "
