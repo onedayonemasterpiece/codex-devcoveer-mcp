@@ -80,6 +80,24 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         )
         assert completed.returncode == 0, completed.stderr
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
+        start_tool_begin = bridge.index('types.Tool(name="start_task"')
+        start_tool_end = bridge.index("input_schema=START_TASK_INPUT_SCHEMA", start_tool_begin)
+        start_task_description = bridge[start_tool_begin:start_tool_end]
+        for routing_term in (
+            "direct_ops_v2",
+            "operation=describe",
+            "project_action",
+            "host_action",
+            "run_tool",
+            "job_start",
+            "job_status",
+            "python_env=auto",
+            "git_fetch",
+            "github_workflow_dispatch",
+            "github_run_cancel",
+            "reasoning beyond typed operations",
+        ):
+            assert routing_term in start_task_description
         assert 'name="direct_ops_v2"' in bridge
         assert 'name="project_probe"' in bridge
         assert 'name="host_probe"' in bridge
