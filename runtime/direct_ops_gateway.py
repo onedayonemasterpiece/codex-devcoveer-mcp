@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import time
-from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from direct_probe_core import ProbeError, _append_direct_receipt, _git
+from direct_probe_core import ProbeError
 from direct_probes import (
     HOST_PROBE_INPUT_SCHEMA,
     PROJECT_PROBE_INPUT_SCHEMA,
@@ -98,7 +96,7 @@ def _validate(schema: dict[str, Any], value: dict[str, Any]) -> None:
     raise ProbeError("invalid_input", message[:2000], status="denied")
 
 
-async def _run_direct_ops_v2_inner(
+async def run_direct_ops_v2(
     project_root: str,
     project_id: str,
     plane: str,
@@ -128,85 +126,25 @@ async def _run_direct_ops_v2_inner(
         check = {"id": "direct_ops_v2", "kind": operation, **body}
         request = {"project": project_id, "checks": [check]}
         _validate(PROJECT_PROBE_INPUT_SCHEMA, request)
-        return await run_project_probe(project_root, project_id, [check])
+        return await run_project_probe(project_root, project_id, [check], receipt_surface="direct_ops_v2")
 
     if plane == "host_probe":
         check = {"id": "direct_ops_v2", "kind": operation, **body}
         request = {"project": project_id, "checks": [check]}
         _validate(HOST_PROBE_INPUT_SCHEMA, request)
-        return await run_host_probe(project_root, project_id, [check])
+        return await run_host_probe(project_root, project_id, [check], receipt_surface="direct_ops_v2")
 
     if plane == "project_action":
         action = {"kind": operation, **body}
         request = {"project": project_id, "action": action}
         _validate(PROJECT_ACTION_INPUT_SCHEMA, request)
-        return await run_project_action(project_root, project_id, action)
+        return await run_project_action(project_root, project_id, action, receipt_surface="direct_ops_v2")
 
     if plane == "host_action":
         action = {"kind": operation, **body}
         request = {"project": project_id, "action": action}
         _validate(HOST_ACTION_INPUT_SCHEMA, request)
-        return await run_host_action(project_root, project_id, action)
+        return await run_host_action(project_root, project_id, action, receipt_surface="direct_ops_v2")
 
     raise ProbeError("invalid_input", f"unknown direct ops plane {plane!r}", status="denied")
 
-
-async def _receipt_head(project_root: str) -> str | None:
-    try:
-        result = await _git(Path(project_root).resolve(strict=True), "rev-parse", "--verify", "HEAD",
-                            ok_codes=(0, 128), output_limit=256)
-    except (OSError, ProbeError):
-        return None
-    if result.exit_code != 0:
-        return None
-    value = result.stdout.decode("utf-8", "replace").strip().lower()
-    return value if len(value) == 40 else None
-
-
-async def run_direct_ops_v2(
-    project_root: str,
-    project_id: str,
-    plane: str,
-    operation: str,
-    payload: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if operation == "describe":
-        return await _run_direct_ops_v2_inner(project_root, project_id, plane, operation, payload)
-
-    started = time.monotonic()
-    body = payload if isinstance(payload, dict) else {}
-    head_before = await _receipt_head(project_root)
-    receipt = {
-        "project": project_id,
-        "cwd": str(Path(project_root).resolve()),
-        "plane": plane,
-        "operation": operation,
-        "head": head_before,
-        "expected_head": body.get("expected_head"),
-        "expected_workspace_digest": body.get("expected_workspace_digest"),
-    }
-    try:
-        result = await _run_direct_ops_v2_inner(project_root, project_id, plane, operation, payload)
-    except ProbeError as exc:
-        _append_direct_receipt({
-            **receipt,
-            "status": exc.status,
-            "error_category": exc.category,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-        })
-        raise
-    except Exception:
-        _append_direct_receipt({
-            **receipt,
-            "status": "error",
-            "error_category": "internal",
-            "duration_ms": int((time.monotonic() - started) * 1000),
-        })
-        raise
-    status = str(result.get("status") or "ok") if isinstance(result, dict) else "ok"
-    _append_direct_receipt({
-        **receipt,
-        "status": status,
-        "duration_ms": int((time.monotonic() - started) * 1000),
-    })
-    return result
