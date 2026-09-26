@@ -97,9 +97,14 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
             "github_run_cancel",
             "reasoning beyond typed operations",
             "instructions", "web_preflight", "CHECK_BASE/CHECK_OUTPUT",
+            "workspaceContext", "worktree_list", "expected_head", "existing worktree",
         ):
             assert routing_term in start_task_description
         assert 'name="direct_ops_v2"' in bridge
+        assert "relatedWorktrees" in bridge
+        assert "continuationCheckRequired" in bridge
+        assert "workspaceContext" in bridge
+        assert "stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree" in start_task_description
         assert 'name="project_probe"' in bridge
         assert 'name="host_probe"' in bridge
         assert 'name="project_action"' in bridge
@@ -134,7 +139,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert '"tools": tools' not in backend
         assert '"title": title[:200]' not in backend
         for name in (
-            "direct_web_context.py", "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py",
+            "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py",
             "direct_probe_config.json", "opencode_backend.py",
             "source_handoff.py", "street_story_operator.py",
         ):
