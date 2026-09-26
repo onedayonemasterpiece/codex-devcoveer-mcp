@@ -16,7 +16,7 @@ BASE_SHA = {
     "opencode_backend.py": "56699a39b2d635cdc397774cc25f122b119e7794599b0d50776c7596e6c9af84",
 }
 DIRECT_FILES = (
-    "direct_web_context.py", "direct_probes.py", "direct_actions.py", "direct_probe_core.py", "direct_probe_project.py",
+    "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_core.py", "direct_probe_project.py",
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
@@ -71,9 +71,45 @@ from direct_ops_gateway import (
     run_direct_ops_v2 as _run_direct_ops_v2,
 )
 from direct_tool_catalog import build_tool_refresh_listen_handler
+from workspace_selection import workspace_context
 from mcp.server import NotificationOptions
 """
     source = replace_once(source, import_anchor, direct_import, "direct-probe import")
+    candidate_tail_old = '''    if score is not None:
+        value["score"] = round(score, 3)
+    return value
+'''
+    candidate_tail_new = '''    if score is not None:
+        value["score"] = round(score, 3)
+    context = workspace_context(entry.path)
+    if context is not None:
+        value["workspaceContext"] = context
+    return value
+'''
+    source = replace_once(source, candidate_tail_old, candidate_tail_new, "project candidate workspace context")
+    selection_old = '''    if len(matches) == 1:
+        entry = matches[0]
+        return entry, {"status": "resolved", "matchType": tier,
+            "project": entry.canonical, "cwd": entry.path, "candidates": candidates}
+'''
+    selection_new = '''    if len(matches) == 1:
+        entry = matches[0]
+        payload = {"status": "resolved", "matchType": tier,
+            "project": entry.canonical, "cwd": entry.path, "candidates": candidates}
+        if candidates and isinstance(candidates[0].get("workspaceContext"), dict):
+            payload["workspaceContext"] = candidates[0]["workspaceContext"]
+        return entry, payload
+'''
+    source = replace_once(source, selection_old, selection_new, "resolved project workspace context")
+    find_projects_old = '''"Resolve a natural project hint against direct Git repositories under "
+            "/home/dev/projects. Use this when a project name is unclear; ambiguity is "
+            "reported instead of choosing a weak match."'''
+    find_projects_new = '''"Resolve a natural project hint against direct Git repositories under "
+            "/home/dev/projects. Use this when a project name is unclear; ambiguity is "
+            "reported instead of choosing a weak match. When the resolved repository has multiple "
+            "tool-addressable worktrees, workspaceContext lists their project/branch/HEAD so continuation "
+            "work can select the intended physical checkout before read/write/test/build."'''
+    source = replace_once(source, find_projects_old, find_projects_new, "find_projects workspace guidance")
     schema_anchor = "\nTOOLS = [\n"
     source_handoff_schemas = r'''
 STAGE_SOURCE_HANDOFF_INPUT_SCHEMA: dict[str, Any] = {
