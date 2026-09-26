@@ -132,8 +132,21 @@ _EXECUTION_OPTIONS = {
             "propertyNames": {"enum": list(_ALLOWED_TOOL_ENV)},
             "additionalProperties": {"type": "string", "maxLength": 500}},
 }
+_EXPECTED_HEAD_SCHEMA = {
+    "type": "string", "pattern": r"^[0-9a-f]{40}$",
+    "description": (
+        "Exact checkpoint SHA for the resolved physical project/worktree. If provided, execution is denied "
+        "before side effects when HEAD differs; use find_projects/worktree_list to select the intended checkout."
+    ),
+}
+_HEAD_GUARDED_KINDS = {
+    "sync_ff", "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
+    "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "capture_handoff", "job_start",
+}
 for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
     _kind = _variant["properties"]["kind"]["const"]
+    if _kind in _HEAD_GUARDED_KINDS:
+        _variant["properties"]["expected_head"] = _EXPECTED_HEAD_SCHEMA
     if _kind in {"run_tool", "job_start"}:
         _variant["properties"].update(_EXECUTION_OPTIONS)
         _variant["description"] = (
@@ -177,6 +190,7 @@ _PROJECT_ACTION_SCHEMA["oneOf"].append({
     "properties":{
         "kind":{"const":"batch"},
         "steps":{"type":"array","minItems":1,"maxItems":20,"items":_BATCH_STEP_SCHEMA},
+        "expected_head": _EXPECTED_HEAD_SCHEMA,
     },
     "required":["kind","steps"],
     "additionalProperties":False,
@@ -682,6 +696,22 @@ async def _run_direct_ops_compat(root: Path, project_id: str, action: dict[str, 
     }
 
 
+async def _guard_expected_head(root: Path, action: dict[str, Any]) -> str | None:
+    expected = action.get("expected_head")
+    if expected is None:
+        return None
+    result = await _git(root, "rev-parse", "HEAD", timeout=15)
+    observed = result.stdout.decode("utf-8", "replace").strip()
+    if observed != expected:
+        raise ProbeError(
+            "workspace_drift",
+            f"resolved project/worktree HEAD {observed} does not match expected checkpoint {expected}; "
+            "use find_projects/worktree_list and address the intended physical checkout before execution",
+            status="denied",
+        )
+    return observed
+
+
 async def _run_batch(project_root: str, project_id: str, action: dict[str, Any], *,
                      config_path: Path | None) -> dict[str, Any]:
     results=[]
@@ -704,6 +734,7 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
     binding_id, handoff, meta = _handoff_binding(root, project_id)
     binding = _binding(_load_config(config_path or DEFAULT_CONFIG_PATH), binding_id)
     kind = action["kind"]
+    await _guard_expected_head(root, action)
     if kind == "batch":
         return await _run_batch(project_root, project_id, action, config_path=config_path)
     if kind == "github_pr_create":
