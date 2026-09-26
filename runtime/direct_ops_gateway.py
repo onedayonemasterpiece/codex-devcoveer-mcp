@@ -63,7 +63,14 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
     operations = {item["properties"]["kind"]["const"]: item for item in variants}
     digest = hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     result = {"status": "ok", "execution": "direct", "plane": plane, "schema_digest": digest,
-              "operations": sorted(operations), "preferred_tool": "direct_ops_v2"}
+              "operations": sorted(operations), "preferred_tool": "direct_ops_v2",
+              "operator_guidance": {
+                  "instructions": "project_probe instructions scope=home/project reads exact AGENTS.md; never recursively scan HOME or other checkouts.",
+                  "web": "project_probe web_preflight cwd=<package directory> checks local pinned Playwright without installing or launching. Missing browser is environment state, not a failed application assertion.",
+                  "execution": "Known short commands use run_tool; browser suites/full builds/unknown duration use job_start then job_status on the same project/worktree, with request_key for safe replay.",
+                  "paths": "path is project-root-relative even with cwd. Web tests may pass nonsecret CHECK_BASE and CHECK_OUTPUT through env. Never pass secrets or read .env for discovery.",
+                  "browser": "Interactive DOM/console/network/visual review uses my-browser-bridge; repository browser tests use existing scripts. A binary on disk, HTTP 200 or a successful build is not UI acceptance.",
+              }}
     if operation is not None:
         if operation not in operations:
             raise ProbeError("unknown_operation", "unknown operation; use describe with an empty payload")

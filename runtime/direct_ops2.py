@@ -77,6 +77,8 @@ async def project_capabilities(root: Path, binding: dict[str, Any]) -> dict[str,
     from direct_ops_gateway import describe_plane
     return {
         "operator_help": {"tool": "direct_ops_v2", "operation": "describe",
+                          "instructions": "project_probe/instructions scope=home or project",
+                          "web_preflight": "project_probe/web_preflight cwd=<package directory>",
                           "compatibility": "project_action/run_tool python_script @direct_ops_v2"},
         "operation_schema_digests": {plane: describe_plane(plane)["schema_digest"] for plane in
                                      ("project_probe", "project_action", "host_probe", "host_action")},
