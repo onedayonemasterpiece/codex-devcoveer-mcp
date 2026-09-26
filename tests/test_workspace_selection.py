@@ -173,3 +173,29 @@ def test_expected_workspace_digest_guard_accepts_and_rejects_tracked_state(tmp_p
     assert failure.value.status == "denied"
     assert expected in str(failure.value)
     assert "refresh project_probe git_state" in str(failure.value)
+
+
+def test_project_and_host_actions_record_typed_receipts(monkeypatch, tmp_path):
+    seen = []
+
+    async def head(_root):
+        return "a" * 40
+
+    async def project_inner(_root, _project, _action, *, config_path=None):
+        return {"status": "ok", "action": "job_list"}
+
+    async def host_inner(_root, _project, _action, *, config_path=None):
+        return {"status": "ok", "action": "daemon_reload"}
+
+    monkeypatch.setattr(actions, "_action_receipt_head", head)
+    monkeypatch.setattr(actions, "_append_direct_receipt", seen.append)
+    monkeypatch.setattr(actions, "_run_project_action_inner", project_inner)
+    monkeypatch.setattr(actions, "_run_host_action_inner", host_inner)
+
+    run(actions.run_project_action(str(tmp_path), "p", {"kind": "job_list"}))
+    run(actions.run_host_action(str(tmp_path), "p", {"kind": "daemon_reload"}))
+
+    assert [item["plane"] for item in seen] == ["project_action", "host_action"]
+    assert all(item["surface"] == "typed" for item in seen)
+    assert seen[0]["head"] == "a" * 40
+    assert "payload" not in seen[0] and "args" not in seen[0] and "output" not in seen[0]
