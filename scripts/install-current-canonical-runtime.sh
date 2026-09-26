@@ -8,7 +8,7 @@ CURRENT_UID="$(id -u)"
   echo "ERROR: run directly as dev; sudo/root is not used." >&2
   exit 1
 }
-WORK_REPO=/home/dev/projects/codex-devcoveer-mcp
+WORK_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_REF="${DEVCOVEER_SOURCE_REF:-origin/main}"
 CAN=/home/dev/.local/libexec/openai-codex-mcp
 BOOT=/home/dev/.local/libexec/openai-codex-mcp-bootstrap
@@ -26,13 +26,21 @@ SKIP_TUNNEL_RESTART="${DEVCOVEER_SKIP_TUNNEL_RESTART:-0}"
 
 die(){ echo "ERROR: $*" >&2; exit 1; }
 sha(){ sha256sum "$1" | awk '{print $1}'; }
-test -d "$WORK_REPO/.git" || die "repository missing"
+if [ "${1:-}" = "--defer-restart" ]; then
+  SKIP_TUNNEL_RESTART=1
+  shift
+fi
+[ "$#" -eq 0 ] || die "only --defer-restart is accepted"
+test -e "$WORK_REPO/.git" || die "repository missing"
+SOURCE_ORIGIN="$(git -C "$WORK_REPO" remote get-url origin)"
+SOURCE_ORIGIN_RE='^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)onedayonemasterpiece/codex-devcoveer-mcp(\.git)?$'
+[[ "$SOURCE_ORIGIN" =~ $SOURCE_ORIGIN_RE ]] || die "unexpected source repository"
 test -x "$BRIDGE_PY" || die "bridge Python missing"
 test -e "$WRAP" || die "MCP wrapper missing"
 
 TMP="$(dev-artifacts new codex-devcoveer-mcp install-current-runtime --retain --reason "Runtime deployment and rollback evidence")"
 SOURCE_SHA="$(git -C "$WORK_REPO" rev-parse "$SOURCE_REF^{commit}")" || die "cannot resolve $SOURCE_REF"
-git -C "$WORK_REPO" merge-base --is-ancestor "$SOURCE_SHA" main || die "source must be a validated main commit"
+git -C "$WORK_REPO" merge-base --is-ancestor "$SOURCE_SHA" origin/main || die "source must be a validated origin/main commit; fetch origin/main first"
 SRC="$TMP/source"
 mkdir -p "$SRC"
 git -C "$WORK_REPO" archive "$SOURCE_SHA" | tar -x -C "$SRC"
