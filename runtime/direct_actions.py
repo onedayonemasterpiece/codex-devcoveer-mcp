@@ -4,12 +4,15 @@ import hashlib
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
 from direct_probe_core import (
     DEFAULT_CONFIG_PATH,
     ProbeError,
+    _append_direct_receipt,
+    _git,
     _binding,
     _git_env,
     _load_config,
@@ -738,7 +741,7 @@ async def _run_batch(project_root: str, project_id: str, action: dict[str, Any],
     results=[]
     for index,step in enumerate(action["steps"]):
         try:
-            result=await run_project_action(project_root,project_id,step,config_path=config_path)
+            result=await _run_project_action_inner(project_root,project_id,step,config_path=config_path)
         except ProbeError as exc:
             message,redacted=_redact_text(str(exc))
             return {"status":"failed","action":"batch","failed_index":index,"results":results,
@@ -749,8 +752,8 @@ async def _run_batch(project_root: str, project_id: str, action: dict[str, Any],
     return {"status":"ok","action":"batch","results":results}
 
 
-async def run_project_action(project_root: str, project_id: str, action: dict[str, Any], *,
-                             config_path: Path | None = None) -> dict[str, Any]:
+async def _run_project_action_inner(project_root: str, project_id: str, action: dict[str, Any], *,
+                                    config_path: Path | None = None) -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
     binding_id, handoff, meta = _handoff_binding(root, project_id)
     binding = _binding(_load_config(config_path or DEFAULT_CONFIG_PATH), binding_id)
@@ -815,6 +818,54 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
     raise ProbeError("invalid_input", f"unknown project action kind {kind!r}")
 
 
+async def _action_receipt_head(root: Path) -> str | None:
+    try:
+        result = await _git(root, "rev-parse", "HEAD", timeout=15)
+    except (OSError, ProbeError):
+        return None
+    if result.exit_code != 0:
+        return None
+    value = result.stdout.decode("utf-8", "replace").strip().lower()
+    return value if HEX40_RE.fullmatch(value) else None
+
+
+async def run_project_action(project_root: str, project_id: str, action: dict[str, Any], *,
+                             config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
+    root = Path(project_root).resolve(strict=True)
+    started = time.monotonic()
+    head_before = await _action_receipt_head(root)
+    receipt = {
+        "project": project_id,
+        "cwd": str(root),
+        "surface": receipt_surface,
+        "plane": "project_action",
+        "operation": action.get("kind"),
+        "head": head_before,
+        "expected_head": action.get("expected_head"),
+        "expected_workspace_digest": action.get("expected_workspace_digest"),
+    }
+    try:
+        result = await _run_project_action_inner(project_root, project_id, action, config_path=config_path)
+    except ProbeError as exc:
+        _append_direct_receipt({
+            **receipt, "status": exc.status, "error_category": exc.category,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        })
+        raise
+    except Exception:
+        _append_direct_receipt({
+            **receipt, "status": "error", "error_category": "internal",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        })
+        raise
+    _append_direct_receipt({
+        **receipt,
+        "status": str(result.get("status") or "ok") if isinstance(result, dict) else "ok",
+        "duration_ms": int((time.monotonic() - started) * 1000),
+    })
+    return result
+
+
 async def _restart_service(binding: dict[str, Any], service_alias: str) -> dict[str, Any]:
     alias = _validate_alias(service_alias)
     cfg = _host_section(binding, "services").get(alias)
@@ -839,8 +890,8 @@ async def _restart_service(binding: dict[str, Any], service_alias: str) -> dict[
             "unit": unit, "scheduled_after_seconds": 1, "transient_unit": transient}
 
 
-async def run_host_action(project_root: str, project_id: str, action: dict[str, Any], *,
-                          config_path: Path | None = None) -> dict[str, Any]:
+async def _run_host_action_inner(project_root: str, project_id: str, action: dict[str, Any], *,
+                                 config_path: Path | None = None) -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
     binding_id, handoff, _meta = _handoff_binding(root, project_id)
     if handoff:
@@ -856,3 +907,36 @@ async def run_host_action(project_root: str, project_id: str, action: dict[str, 
     if kind == "delete_registered_file": return delete_registered_file(binding, action)
     if kind == "daemon_reload": return await daemon_reload(binding)
     raise ProbeError("invalid_input", f"unknown host action kind {kind!r}")
+
+
+async def run_host_action(project_root: str, project_id: str, action: dict[str, Any], *,
+                          config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
+    root = Path(project_root).resolve(strict=True)
+    started = time.monotonic()
+    receipt = {
+        "project": project_id,
+        "cwd": str(root),
+        "surface": receipt_surface,
+        "plane": "host_action",
+        "operation": action.get("kind"),
+    }
+    try:
+        result = await _run_host_action_inner(project_root, project_id, action, config_path=config_path)
+    except ProbeError as exc:
+        _append_direct_receipt({
+            **receipt, "status": exc.status, "error_category": exc.category,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        })
+        raise
+    except Exception:
+        _append_direct_receipt({
+            **receipt, "status": "error", "error_category": "internal",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        })
+        raise
+    _append_direct_receipt({
+        **receipt,
+        "status": str(result.get("status") or "ok") if isinstance(result, dict) else "ok",
+        "duration_ms": int((time.monotonic() - started) * 1000),
+    })
+    return result
