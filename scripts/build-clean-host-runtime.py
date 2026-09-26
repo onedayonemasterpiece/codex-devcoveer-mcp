@@ -233,7 +233,8 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
         description=("Execute typed deterministic project operations without an agent: "
             "direct tools and durable jobs, fetch, GitHub Actions control, registered profiles, "
             "and source-handoff commit/push. Checkout-sensitive actions accept optional expected_head "
-            "to fail before side effects when the resolved physical worktree is not the task checkpoint. "
+            "and expected_workspace_digest to fail before side effects when the resolved physical worktree "
+            "or tracked workspace no longer matches the task checkpoint. "
             "Direct tools accept a project cwd and bounded nonsecret environment flags; executables remain server selected."),
         input_schema=PROJECT_ACTION_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
