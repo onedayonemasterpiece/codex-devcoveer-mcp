@@ -115,11 +115,15 @@ def test_guarded_actions_expose_expected_head(operation):
     expected = schema["properties"]["expected_head"]
     assert expected["pattern"] == r"^[0-9a-f]{40}$"
     assert "checkpoint" in expected["description"]
+    workspace_digest = schema["properties"]["expected_workspace_digest"]
+    assert workspace_digest["pattern"] == r"^[0-9a-f]{64}$"
+    assert "tracked_workspace_digest" in workspace_digest["description"]
 
 
 def test_status_action_does_not_require_workspace_head_guard():
     schema = gateway.describe_plane("project_action", "job_status")["payload_schema"]
     assert "expected_head" not in schema["properties"]
+    assert "expected_workspace_digest" not in schema["properties"]
 
 
 def test_expected_head_guard_accepts_exact_checkpoint(tmp_path, monkeypatch):
@@ -148,3 +152,24 @@ def test_expected_head_guard_fails_before_wrong_workspace_execution(tmp_path, mo
     assert expected in str(failure.value)
     assert observed in str(failure.value)
     assert "find_projects" in str(failure.value)
+
+
+def test_expected_workspace_digest_guard_accepts_and_rejects_tracked_state(tmp_path, monkeypatch):
+    expected = "c" * 64
+
+    async def same(_root):
+        return expected
+
+    monkeypatch.setattr(actions, "_tracked_workspace_digest", same)
+    assert run(actions._guard_expected_head(tmp_path, {"expected_workspace_digest": expected})) is None
+
+    async def changed(_root):
+        return "d" * 64
+
+    monkeypatch.setattr(actions, "_tracked_workspace_digest", changed)
+    with pytest.raises(actions.ProbeError) as failure:
+        run(actions._guard_expected_head(tmp_path, {"expected_workspace_digest": expected}))
+    assert failure.value.category == "workspace_drift"
+    assert failure.value.status == "denied"
+    assert expected in str(failure.value)
+    assert "refresh project_probe git_state" in str(failure.value)
