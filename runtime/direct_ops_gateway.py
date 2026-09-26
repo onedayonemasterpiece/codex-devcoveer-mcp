@@ -51,8 +51,33 @@ DIRECT_OPS_V2_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
+    import hashlib
+    import json
+    import copy
+    schemas = {"project_probe": PROJECT_PROBE_INPUT_SCHEMA, "host_probe": HOST_PROBE_INPUT_SCHEMA,
+               "project_action": PROJECT_ACTION_INPUT_SCHEMA, "host_action": HOST_ACTION_INPUT_SCHEMA}
+    schema = schemas[plane]
+    variants = (schema["properties"]["checks"]["items"] if plane.endswith("probe")
+                else schema["properties"]["action"])["oneOf"]
+    operations = {item["properties"]["kind"]["const"]: item for item in variants}
+    digest = hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    result = {"status": "ok", "execution": "direct", "plane": plane, "schema_digest": digest,
+              "operations": sorted(operations), "preferred_tool": "direct_ops_v2"}
+    if operation is not None:
+        if operation not in operations:
+            raise ProbeError("unknown_operation", "unknown operation; use describe with an empty payload")
+        payload_schema = copy.deepcopy(operations[operation])
+        for reserved in ("id", "kind"):
+            payload_schema["properties"].pop(reserved, None)
+        payload_schema["required"] = [key for key in payload_schema.get("required", []) if key not in {"id", "kind"}]
+        result["payload_schema"] = payload_schema
+        result["operation"] = operation
+    return result
+
+
 def _validate(schema: dict[str, Any], value: dict[str, Any]) -> None:
-    errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda e: list(e.path))
+    errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda e: tuple(str(part) for part in e.path))
     if not errors:
         return
     first = errors[0]
@@ -78,6 +103,10 @@ async def run_direct_ops_v2(
         "payload": raw_payload,
     })
     body = dict(raw_payload)
+    if operation == "describe":
+        if set(body) - {"operation"} or ("operation" in body and not isinstance(body["operation"], str)):
+            raise ProbeError("invalid_input", "describe accepts only an optional operation name")
+        return describe_plane(plane, body.get("operation"))
     if any(key in body for key in ("kind", "id", "project")):
         raise ProbeError(
             "invalid_input",

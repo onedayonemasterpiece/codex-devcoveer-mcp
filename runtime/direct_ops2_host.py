@@ -340,6 +340,7 @@ async def network_probe(check: dict[str, Any]) -> dict[str, Any]:
 
 
 def mcp_manifest(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
+    from direct_ops_gateway import describe_plane
     alias = _validate_alias(check.get("file", "bridge"))
     raw = _host_section(binding, "runtime_files").get(alias)
     if not isinstance(raw, str) or not raw.startswith("/"):
@@ -367,6 +368,9 @@ def mcp_manifest(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, An
         "version": version_match.group(1) if version_match else None,
         "tool_count": len(unique), "tools": [{"name": n, "input_schema_symbol": s} for n, s in unique],
         "catalog_digest": digest,
+        "direct_schema_digests": {plane: describe_plane(plane)["schema_digest"] for plane in
+                                  ("project_probe", "project_action", "host_probe", "host_action")},
+        "direct_schema_source": "loaded-operation-schemas",
     }
 
 
