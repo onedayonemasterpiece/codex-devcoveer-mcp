@@ -101,9 +101,11 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         ):
             assert routing_term in start_task_description
         assert 'name="direct_ops_v2"' in bridge
-        assert "relatedWorktrees" in bridge
-        assert "continuationCheckRequired" in bridge
+        assert "workspace_context(entry.path)" in bridge
         assert "workspaceContext" in bridge
+        workspace_module = (out / "workspace_selection.py").read_text(encoding="utf-8")
+        assert '"relatedWorktrees"' in workspace_module
+        assert '"continuationCheckRequired"' in workspace_module
         assert "stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree" in start_task_description
         assert 'name="project_probe"' in bridge
         assert 'name="host_probe"' in bridge
