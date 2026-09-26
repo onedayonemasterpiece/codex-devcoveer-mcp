@@ -100,7 +100,7 @@ _DIRECT_TOOL_REMINDER_TEXT = (
     "and typed github_workflow_dispatch/github_run_cancel for applicable workflow operations; list_models and list_tasks/read_task "
     "cover model/task state. Start an agent only for reasoning beyond typed operations or an unforeseen operation absent from the typed surface."
 )
-_BROWSER_TOOL_REMINDER_STRONG = (_BROWSER_TOOL_REMINDER_STRONG = (
+_BROWSER_TOOL_REMINDER_STRONG = (
     "playwright", "browser ui", "browser interaction", "dom", "console", "network",
     "screenshot", "navigate", "click", "fill", "upload", "download",
     "браузер", "скриншот", "консоль",
