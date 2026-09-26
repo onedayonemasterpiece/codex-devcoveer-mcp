@@ -145,6 +145,8 @@ NEW_START_TOOL = """    types.Tool(name="start_task", title="Start DevCoveer tas
             "known long-running deterministic tests/builds use job_start then job_status, with python_env=auto to reuse the existing project environment rather than create a venv. "
             "Use git_fetch for fetch without checkout; use typed github_workflow_dispatch/github_run_cancel for applicable GitHub workflow operations. "
             "Use list_models for model state and list_tasks/read_task for task state. "
+            "For continuation work that names or implies a checkpoint, branch, SHA or prior worktree, first inspect find_projects workspaceContext and project_probe worktree_list; exact repository-name resolution identifies only one physical checkout. "
+            "Address the matching project before read/write/test/build and pass expected_head on guarded direct actions when a checkpoint SHA is known. stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree. "
             "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, "
             "use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "
             "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. "
