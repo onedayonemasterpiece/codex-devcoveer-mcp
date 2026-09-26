@@ -74,15 +74,21 @@ def test_git_state_clean_dirty_staged_untracked_and_conflicts(tmp_path: Path):
     repo = init_repo(tmp_path / "r")
     clean = run(dp._git_state(repo))
     assert clean["clean"] is True and clean["scan_complete"] is True and clean["head_state"] == "branch"
+    clean_digest = clean["tracked_workspace_digest"]
+    assert len(clean_digest) == 64
     (repo / "a.txt").write_text("changed\n", encoding="utf-8")
     dirty = run(dp._git_state(repo))
     assert dirty["clean"] is False and dirty["unstaged"] == ["a.txt"]
+    assert dirty["tracked_workspace_digest"] != clean_digest
     git(repo, "add", "a.txt")
     staged = run(dp._git_state(repo))
     assert "a.txt" in staged["staged"] and not staged["unstaged"]
+    staged_digest = staged["tracked_workspace_digest"]
+    assert staged_digest != dirty["tracked_workspace_digest"]
     (repo / "u.txt").write_text("u", encoding="utf-8")
     untracked = run(dp._git_state(repo))
     assert "u.txt" in untracked["untracked"]
+    assert untracked["tracked_workspace_digest"] == staged_digest
     git(repo, "commit", "-q", "-am", "main-change")
     git(repo, "checkout", "-q", "-b", "topic", "HEAD~1")
     (repo / "a.txt").write_text("topic\n", encoding="utf-8")
