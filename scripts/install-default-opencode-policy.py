@@ -137,7 +137,7 @@ NEW_START_TOOL = """    types.Tool(name="start_task", title="Start DevCoveer tas
             "provider='codex' is not an opt-in and will be resolved through OpenCode or fail closed. "
             "Never silently fall back from OpenCode to native Codex. Infer access=read for analysis, "
             "review, reading, planning, and status; infer access=write for implementation, fixes, "
-            "creation, and updates. Before start_task, route deterministic work to typed/direct tools: "
+            "creation, and updates. Before start_task for deterministic Git/host/runtime/model/task-state checks and other deterministic work, route to typed/direct tools: "
             "project_probe for Git/source/read/search/diff/remote/CI facts; host_probe for service/log/listener/resource/runtime facts; "
             "direct_ops_v2, project_action, and host_action for deterministic mutations, tests, builds, Git, GitHub, and registered host actions. "
             "If a current direct operation name or parameter schema is unknown, call direct_ops_v2 with operation=describe before choosing an agent. "
