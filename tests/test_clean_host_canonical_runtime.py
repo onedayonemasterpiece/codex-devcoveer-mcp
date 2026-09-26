@@ -204,3 +204,17 @@ def test_clean_host_builder_street_story_deployment_contract() -> None:
     assert "TARGET_PORT = 8188" in operator
     assert 'TARGET_SERVICE = "street-story.service"' in operator
     assert "requested SHA is not the current Street Story PR branch HEAD" in operator
+
+
+def test_installer_supports_isolated_checkout_without_mutating_common_main() -> None:
+    source = INSTALLER.read_text(encoding="utf-8")
+    assert 'dirname "${BASH_SOURCE[0]}"' in source
+    assert 'WORK_REPO=/home/dev/projects/' not in source
+    assert 'test -e "$WORK_REPO/.git"' in source
+    assert 'merge-base --is-ancestor "$SOURCE_SHA" origin/main' in source
+    assert 'remote get-url origin' in source
+    assert '[[ "$SOURCE_ORIGIN" =~ $SOURCE_ORIGIN_RE ]]' in source
+    assert 'only --defer-restart is accepted' in source
+    assert 'git -C "$WORK_REPO" archive "$SOURCE_SHA"' in source
+    for forbidden in ('git reset', 'git stash', 'git checkout', 'git clean'):
+        assert forbidden not in source
