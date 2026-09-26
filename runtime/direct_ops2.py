@@ -79,7 +79,7 @@ async def project_capabilities(root: Path, binding: dict[str, Any]) -> dict[str,
         "operator_help": {"tool": "direct_ops_v2", "operation": "describe",
                           "instructions": "project_probe/instructions scope=home or project",
                           "web_preflight": "project_probe/web_preflight cwd=<package directory>",
-                          "workspace": "find_projects workspaceContext + project_probe/worktree_list; guarded actions accept expected_head",
+                          "workspace": "find_projects workspaceContext + project_probe/worktree_list; guarded local actions accept expected_head and expected_workspace_digest from git_state",
                           "compatibility": "project_action/run_tool python_script @direct_ops_v2"},
         "operation_schema_digests": {plane: describe_plane(plane)["schema_digest"] for plane in
                                      ("project_probe", "project_action", "host_probe", "host_action")},
