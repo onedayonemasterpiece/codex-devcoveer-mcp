@@ -14,6 +14,7 @@ sys.path.insert(0,str(RUNTIME))
 
 import direct_ops_gateway as gateway
 import direct_actions as actions
+import direct_ops2
 
 
 def run(coro): return asyncio.run(coro)
@@ -154,8 +155,10 @@ def test_cached_run_tool_compat_preserves_handoff_project_id(monkeypatch,tmp_pat
 
 
 def test_recent_direct_ops_is_discoverable():
-    schema = gateway.describe_plane("project_probe", "recent_direct_ops")["payload_schema"]
+    described = gateway.describe_plane("project_probe", "recent_direct_ops")
+    schema = described["payload_schema"]
     assert schema["properties"]["limit"]["maximum"] == 100
+    assert "expected_workspace_digest" in described["operator_guidance"]["workspace"]
 
 
 def test_gateway_records_bounded_direct_receipt(monkeypatch, tmp_path):
@@ -182,3 +185,12 @@ def test_gateway_records_bounded_direct_receipt(monkeypatch, tmp_path):
     assert seen[0]["expected_head"] == "b" * 40
     assert seen[0]["expected_workspace_digest"] == "c" * 64
     assert seen[0]["duration_ms"] >= 0
+
+
+def test_capabilities_workspace_guidance_mentions_workspace_digest(monkeypatch, tmp_path):
+    async def remotes(_root):
+        return {}
+    monkeypatch.setattr(direct_ops2, "discover_github_remotes", remotes)
+    caps = run(direct_ops2.project_capabilities(tmp_path, {}))
+    assert "expected_head" in caps["operator_help"]["workspace"]
+    assert "expected_workspace_digest" in caps["operator_help"]["workspace"]
