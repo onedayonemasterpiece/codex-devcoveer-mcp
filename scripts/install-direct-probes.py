@@ -25,7 +25,7 @@ BACKEND = INSTALL_DIR / "opencode_backend.py"
 HEALTH = INSTALL_DIR / "model_health.py"
 SOURCE_HANDOFF = INSTALL_DIR / "source_handoff.py"
 DIRECT_RUNTIME_NAMES = (
-    "direct_web_context.py", "direct_probes.py", "direct_probe_core.py", "direct_probe_project.py",
+    "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_probe_core.py", "direct_probe_project.py",
     "direct_probe_project_git.py", "direct_probe_project_files.py", "direct_probe_project_github.py",
     "direct_probe_host.py", "direct_probe_host_services.py", "direct_probe_host_runtime.py",
 )
