@@ -47,6 +47,23 @@ def _atomic_json(path: Path, data: dict[str, Any]) -> None:
         except FileNotFoundError: pass
 
 
+def _atomic_json_if_absent(path: Path, data: dict[str, Any]) -> bool:
+    """Publish a terminal receipt only if the runner has not published one."""
+    fd, tmp = tempfile.mkstemp(prefix=".job-", suffix=".json", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        os.unlink(tmp)
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.is_file() or path.is_symlink() or path.stat().st_size > 1024 * 1024:
         raise ProbeError("job_not_found", "direct job metadata is missing", status="not_found")
@@ -183,8 +200,9 @@ async def job_status(root: Path, job_id: str, *, tail_lines: int = 40) -> dict[s
     category = {"timeout": "timeout", "oom-kill": "oom"}.get(props.get("Result"), "result_missing")
     terminal = {"status": "interrupted", "finished_at": time.time(), "unit_state": props,
                 "error": {"category": category, "message": "job exited without a complete result; inspect output_tail"}}
-    _atomic_json(result_path, terminal)
-    return {**base, **terminal}
+    if _atomic_json_if_absent(result_path, terminal):
+        return {**base, **terminal}
+    return {**base, **_public_result(result_path, tail_lines)}
 
 
 def list_jobs(root: Path, *, limit: int = 20, before: str | None = None) -> dict[str, Any]:
@@ -221,7 +239,8 @@ async def cancel_job(root: Path, job_id: str) -> dict[str, Any]:
         raise ProbeError("job_cancel", err[-1200:] or "could not cancel direct job", exit_code=result.exit_code)
     if (directory / "result.json").is_file():
         return {"status": "terminal", "action": "job_cancel", "job_id": job_id}
-    _atomic_json(directory / "result.json", {"status": "cancelled", "finished_at": time.time()})
+    if not _atomic_json_if_absent(directory / "result.json", {"status": "cancelled", "finished_at": time.time()}):
+        return {"status": "terminal", "action": "job_cancel", "job_id": job_id}
     return {"status": "cancelled", "action": "job_cancel", "job_id": job_id}
 
 

@@ -173,6 +173,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     tool_anchor = '    types.Tool(name="council_run", title="Run multi-model council",\n'
     tool_block = '''    types.Tool(name="direct_ops_v2", title="Run stable Direct Ops gateway",
         description=("Cache-resistant deterministic project/host operator gateway. "
+            "Use operation=describe to discover current operations and payload schemas. "
             "The client schema stays stable while the server validates operation+payload "
             "against the current strict Direct Ops schemas."),
         input_schema=DIRECT_OPS_V2_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
@@ -191,9 +192,10 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
         annotations=types.ToolAnnotations(read_only_hint=True, destructive_hint=False,
             idempotent_hint=True, open_world_hint=False)),
     types.Tool(name="project_action", title="Run registered project operation",
-        description=("Execute one typed deterministic project operation without an agent: safe "
-            "fast-forward sync, a trusted registered test/build/deploy profile, or direct commit/push "
-            "of an already staged source handoff. No arbitrary command, cwd, env, or executable is accepted."),
+        description=("Execute typed deterministic project operations without an agent: "
+            "direct tools and durable jobs, fetch, GitHub Actions control, registered profiles, "
+            "and source-handoff commit/push. Direct tools accept a project cwd and bounded "
+            "nonsecret environment flags; executables remain server selected."),
         input_schema=PROJECT_ACTION_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
             idempotent_hint=False, open_world_hint=True)),

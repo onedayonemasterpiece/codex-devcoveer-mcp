@@ -212,6 +212,13 @@ def test_cancel_finish_race_preserves_success(tmp_path, monkeypatch):
     assert jobs._read_json(directory / "result.json")["status"] == "succeeded"
 
 
+def test_missing_result_receipt_does_not_replace_runner_result(tmp_path):
+    path = tmp_path / "result.json"
+    jobs._atomic_json(path, {"status": "succeeded", "result": {"exit_code": 0}})
+    assert jobs._atomic_json_if_absent(path, {"status": "interrupted"}) is False
+    assert jobs._read_json(path)["status"] == "succeeded"
+
+
 def mock_repo(monkeypatch):
     async def repo(*args):
         return "origin", "owner/repo"
