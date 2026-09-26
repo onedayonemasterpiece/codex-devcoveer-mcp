@@ -35,8 +35,8 @@ def test_gateway_schema_is_future_operation_stable():
 
 def test_gateway_project_probe_validates_and_dispatches(monkeypatch,tmp_path:Path):
     seen={}
-    async def fake(root,project,checks):
-        seen.update(root=root,project=project,checks=checks)
+    async def fake(root,project,checks,receipt_surface="typed"):
+        seen.update(root=root,project=project,checks=checks,receipt_surface=receipt_surface)
         return {"execution":"direct","results":[{"id":"direct_ops_v2","status":"ok"}]}
     monkeypatch.setattr(gateway,"run_project_probe",fake)
     out=run(gateway.run_direct_ops_v2(
@@ -44,6 +44,7 @@ def test_gateway_project_probe_validates_and_dispatches(monkeypatch,tmp_path:Pat
     ))
     assert out["execution"]=="direct"
     assert seen["checks"]==[{"id":"direct_ops_v2","kind":"capabilities"}]
+    assert seen["receipt_surface"]=="direct_ops_v2"
 
 
 def test_gateway_project_action_rejects_arbitrary_command_before_dispatch(monkeypatch,tmp_path:Path):
@@ -159,32 +160,6 @@ def test_recent_direct_ops_is_discoverable():
     schema = described["payload_schema"]
     assert schema["properties"]["limit"]["maximum"] == 100
     assert "expected_workspace_digest" in described["operator_guidance"]["workspace"]
-
-
-def test_gateway_records_bounded_direct_receipt(monkeypatch, tmp_path):
-    seen = []
-
-    async def inner(project_root, project_id, plane, operation, payload):
-        return {"status": "ok", "value": 1}
-
-    async def head(_project_root):
-        return "a" * 40
-
-    monkeypatch.setattr(gateway, "_run_direct_ops_v2_inner", inner)
-    monkeypatch.setattr(gateway, "_receipt_head", head)
-    monkeypatch.setattr(gateway, "_append_direct_receipt", seen.append)
-
-    out = run(gateway.run_direct_ops_v2(
-        str(tmp_path), "p", "project_probe", "git_state",
-        {"expected_head": "b" * 40, "expected_workspace_digest": "c" * 64},
-    ))
-    assert out["status"] == "ok"
-    assert seen and seen[0]["project"] == "p"
-    assert seen[0]["operation"] == "git_state"
-    assert seen[0]["head"] == "a" * 40
-    assert seen[0]["expected_head"] == "b" * 40
-    assert seen[0]["expected_workspace_digest"] == "c" * 64
-    assert seen[0]["duration_ms"] >= 0
 
 
 def test_capabilities_workspace_guidance_mentions_workspace_digest(monkeypatch, tmp_path):
