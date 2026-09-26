@@ -820,7 +820,7 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
 
 async def _action_receipt_head(root: Path) -> str | None:
     try:
-        result = await _git(root, "rev-parse", "--verify", "HEAD", ok_codes=(0, 128), output_limit=256)
+        result = await _git(root, "rev-parse", "HEAD", timeout=15)
     except (OSError, ProbeError):
         return None
     if result.exit_code != 0:
