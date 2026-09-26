@@ -17,6 +17,7 @@ from direct_probe_core import (
     MAX_DIFF_BYTES, MAX_FILE_BYTES, MAX_LIST_ENTRIES, MAX_PROCESS_OUTPUT, MAX_SEARCH_BYTES,
     MAX_SEARCH_FILES, MAX_SEARCH_MATCHES, MAX_TEXT_BYTES, MAX_TREE_ENTRIES, HEX40_RE, ProcessResult, ProbeError,
     SKIP_SEARCH_SEGMENTS, _assert_nonsecret_parts, _git, _resolve_commit, _is_binary, _redact_text, _run_process,
+    _tracked_workspace_digest,
     _safe_worktree_path, _sha256_path, _validate_alias, _validate_branch, _validate_ref, _validate_rel_path,
 )
 
@@ -61,6 +62,7 @@ async def _git_state(root: Path) -> dict[str, Any]:
     untracked = [x for x in untracked_res.stdout.decode().split("\0") if x]
     conflicts = [x for x in conflicts_res.stdout.decode("utf-8", "strict").split("\0") if x]
     complete = not any(x.truncated for x in (staged_res, unstaged_res, untracked_res, conflicts_res))
+    tracked_workspace_digest = await _tracked_workspace_digest(root)
     upstream = None
     ahead = behind = None
     if branch:
@@ -76,6 +78,7 @@ async def _git_state(root: Path) -> dict[str, Any]:
         "cwd": str(root.resolve()), "head_state": state, "branch": branch, "head": head,
         "staged": staged, "unstaged": unstaged, "untracked": untracked, "conflicts": conflicts,
         "upstream": upstream, "ahead": ahead, "behind": behind,
+        "tracked_workspace_digest": tracked_workspace_digest,
         "scan_complete": complete, "clean": (not staged and not unstaged and not untracked and not conflicts) if complete else None,
         "changed_during_read": before != after,
     }
