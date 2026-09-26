@@ -151,3 +151,34 @@ def test_cached_run_tool_compat_preserves_handoff_project_id(monkeypatch,tmp_pat
     },config_path=cfg))
     assert out["status"]=="ok"
     assert seen["project_id"]==project_id
+
+
+def test_recent_direct_ops_is_discoverable():
+    schema = gateway.describe_plane("project_probe", "recent_direct_ops")["payload_schema"]
+    assert schema["properties"]["limit"]["maximum"] == 100
+
+
+def test_gateway_records_bounded_direct_receipt(monkeypatch, tmp_path):
+    seen = []
+
+    async def inner(project_root, project_id, plane, operation, payload):
+        return {"status": "ok", "value": 1}
+
+    async def head(_project_root):
+        return "a" * 40
+
+    monkeypatch.setattr(gateway, "_run_direct_ops_v2_inner", inner)
+    monkeypatch.setattr(gateway, "_receipt_head", head)
+    monkeypatch.setattr(gateway, "_append_direct_receipt", seen.append)
+
+    out = run(gateway.run_direct_ops_v2(
+        str(tmp_path), "p", "project_probe", "git_state",
+        {"expected_head": "b" * 40, "expected_workspace_digest": "c" * 64},
+    ))
+    assert out["status"] == "ok"
+    assert seen and seen[0]["project"] == "p"
+    assert seen[0]["operation"] == "git_state"
+    assert seen[0]["head"] == "a" * 40
+    assert seen[0]["expected_head"] == "b" * 40
+    assert seen[0]["expected_workspace_digest"] == "c" * 64
+    assert seen[0]["duration_ms"] >= 0
