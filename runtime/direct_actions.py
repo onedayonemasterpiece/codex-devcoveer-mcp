@@ -16,6 +16,7 @@ from direct_probe_core import (
     _redact_text,
     _run_process,
     _safe_worktree_path,
+    _tracked_workspace_digest,
     _validate_alias,
     _validate_branch,
 )
@@ -139,6 +140,14 @@ _EXPECTED_HEAD_SCHEMA = {
         "before side effects when HEAD differs; use find_projects/worktree_list to select the intended checkout."
     ),
 }
+_EXPECTED_WORKSPACE_DIGEST_SCHEMA = {
+    "type": "string", "pattern": r"^[0-9a-f]{64}$",
+    "description": (
+        "Exact tracked_workspace_digest from project_probe git_state for this physical checkout. It covers "
+        "HEAD, the Git index and tracked working-tree content while excluding untracked files. If provided, "
+        "execution is denied before side effects when the tracked workspace differs."
+    ),
+}
 _HEAD_GUARDED_KINDS = {
     "sync_ff", "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
     "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "capture_handoff", "job_start",
@@ -147,6 +156,7 @@ for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
     _kind = _variant["properties"]["kind"]["const"]
     if _kind in _HEAD_GUARDED_KINDS:
         _variant["properties"]["expected_head"] = _EXPECTED_HEAD_SCHEMA
+        _variant["properties"]["expected_workspace_digest"] = _EXPECTED_WORKSPACE_DIGEST_SCHEMA
     if _kind in {"run_tool", "job_start"}:
         _variant["properties"].update(_EXECUTION_OPTIONS)
         _variant["description"] = (
@@ -191,6 +201,7 @@ _PROJECT_ACTION_SCHEMA["oneOf"].append({
         "kind":{"const":"batch"},
         "steps":{"type":"array","minItems":1,"maxItems":20,"items":_BATCH_STEP_SCHEMA},
         "expected_head": _EXPECTED_HEAD_SCHEMA,
+        "expected_workspace_digest": _EXPECTED_WORKSPACE_DIGEST_SCHEMA,
     },
     "required":["kind","steps"],
     "additionalProperties":False,
@@ -698,17 +709,27 @@ async def _run_direct_ops_compat(root: Path, project_id: str, action: dict[str, 
 
 async def _guard_expected_head(root: Path, action: dict[str, Any]) -> str | None:
     expected = action.get("expected_head")
-    if expected is None:
-        return None
-    result = await _git(root, "rev-parse", "HEAD", timeout=15)
-    observed = result.stdout.decode("utf-8", "replace").strip()
-    if observed != expected:
-        raise ProbeError(
-            "workspace_drift",
-            f"resolved project/worktree HEAD {observed} does not match expected checkpoint {expected}; "
-            "use find_projects/worktree_list and address the intended physical checkout before execution",
-            status="denied",
-        )
+    observed = None
+    if expected is not None:
+        result = await _git(root, "rev-parse", "HEAD", timeout=15)
+        observed = result.stdout.decode("utf-8", "replace").strip()
+        if observed != expected:
+            raise ProbeError(
+                "workspace_drift",
+                f"resolved project/worktree HEAD {observed} does not match expected checkpoint {expected}; "
+                "use find_projects/worktree_list and address the intended physical checkout before execution",
+                status="denied",
+            )
+    expected_workspace = action.get("expected_workspace_digest")
+    if expected_workspace is not None:
+        observed_workspace = await _tracked_workspace_digest(root)
+        if observed_workspace != expected_workspace:
+            raise ProbeError(
+                "workspace_drift",
+                f"tracked workspace digest {observed_workspace} does not match expected {expected_workspace}; "
+                "refresh project_probe git_state and preserve the intended tracked workspace before execution",
+                status="denied",
+            )
     return observed
 
 
