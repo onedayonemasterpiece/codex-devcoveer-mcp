@@ -9,7 +9,7 @@ from typing import Any
 from direct_probe_core import (
     BATCH_DEADLINE_SECONDS, CHECK_TIMEOUT_SECONDS, DEFAULT_CONFIG_PATH, HOST_PROBE_INPUT_SCHEMA,
     MAX_CHECKS, MAX_RESPONSE_BYTES, PROJECT_PROBE_INPUT_SCHEMA, ProcessResult, ProbeError,
-    _binding, _load_config, _now_iso, _recent_direct_receipts, _redact_text, _run_process, _safe_worktree_path,
+    _append_direct_receipt, _binding, _load_config, _now_iso, _recent_direct_receipts, _redact_text, _run_process, _safe_worktree_path,
     _validate_alias, _validate_ref,
 )
 from direct_probe_project import (
@@ -180,7 +180,7 @@ async def _execute_check(root: Path, binding: dict[str, Any], check: dict[str, A
 
 
 async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, Any]], *, host: bool,
-                     config_path: Path | None = None) -> dict[str, Any]:
+                     config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
     request_started = time.monotonic()
     observed = _now_iso()
     root = Path(project_root).resolve(strict=True)
@@ -235,12 +235,29 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
         "batch_deadline_seconds": BATCH_DEADLINE_SECONDS,
         "atomic": False, "results": results, "response_truncated": False,
     }
+    plane = "host_probe" if host else "project_probe"
+    for check, result in zip(checks, results):
+        error = result.get("error") if isinstance(result, dict) else None
+        _append_direct_receipt({
+            "project": project_id,
+            "cwd": str(root),
+            "surface": receipt_surface,
+            "plane": plane,
+            "operation": check.get("kind"),
+            "status": str(result.get("status") or "ok") if isinstance(result, dict) else "ok",
+            "error_category": error.get("type") if isinstance(error, dict) else None,
+            "duration_ms": int(result.get("duration_ms") or 0) if isinstance(result, dict) else 0,
+        })
     return _fit_response(payload)
 
 
-async def run_project_probe(project_root: str, project_id: str, checks: list[dict[str, Any]], *, config_path: Path | None = None) -> dict[str, Any]:
-    return await _run_probe(project_root, project_id, checks, host=False, config_path=config_path)
+async def run_project_probe(project_root: str, project_id: str, checks: list[dict[str, Any]], *,
+                            config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
+    return await _run_probe(project_root, project_id, checks, host=False, config_path=config_path,
+                            receipt_surface=receipt_surface)
 
 
-async def run_host_probe(project_root: str, project_id: str, checks: list[dict[str, Any]], *, config_path: Path | None = None) -> dict[str, Any]:
-    return await _run_probe(project_root, project_id, checks, host=True, config_path=config_path)
+async def run_host_probe(project_root: str, project_id: str, checks: list[dict[str, Any]], *,
+                         config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
+    return await _run_probe(project_root, project_id, checks, host=True, config_path=config_path,
+                            receipt_surface=receipt_surface)
