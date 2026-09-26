@@ -94,3 +94,31 @@ The gateway's live `describe` response includes these routing hints even when a
 client's concrete tool schema is cached. `instructions` and `web_preflight` use
 the existing stable `direct_ops_v2` envelope. No unrestricted filesystem search,
 secret environment forwarding, extra test service or new agent layer is added.
+
+
+## Physical worktree selection and checkpoint guards
+
+A project identifier resolves one physical checkout. Exact resolution of a repository-like name is
+therefore not proof that the checkout is the one intended by a continuation task. When the Git
+repository has several DevCoveer-addressable worktrees, `find_projects` returns a
+`workspaceContext` containing `relatedWorktrees` with the exact `project`, branch, HEAD, path
+and current marker. `project_probe/worktree_list` exposes the same addressable project name for
+direct-child checkouts under `/home/dev/projects`.
+
+For a continuation, checkpoint, named branch/SHA, or "resume" task, compare that context before
+read/write/test/build and address the matching project explicitly. Exact repository-name resolution
+remains valid and is not artificially made ambiguous; the additional context makes the physical
+checkout visible. Managed handoff worktrees are not advertised as ordinary projects.
+`stage_source_handoff` remains patch isolation for ChatGPT-authored changes and must not be used
+as a selector for an already existing product worktree.
+
+Guarded project actions accept optional `expected_head` (40-hex SHA). The guard is checked before
+side effects and returns `workspace_drift` when the resolved checkout HEAD differs. Use it whenever
+the task already supplies a checkpoint SHA. It applies to checkout-sensitive execution and writes
+such as `run_tool`, `job_start`, registered project profiles, file writes, Git stage/commit,
+`sync_ff`, handoff capture and the outer `batch`. Readback/status operations and remote-only
+GitHub operations do not need the local HEAD guard.
+
+This is deliberately not a workspace manager: DevCoveer does not auto-checkout, auto-switch or guess
+which branch the user meant. Discovery makes choices explicit and the SHA guard makes a wrong choice
+fail before execution.
