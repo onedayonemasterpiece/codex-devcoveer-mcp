@@ -27,8 +27,8 @@ from direct_ops2 import (
 )
 from direct_ops2_host import daemon_reload, delete_registered_file
 from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
-from direct_jobs import cancel_job, cleanup_job, job_status, start_job
-from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update
+from direct_jobs import cancel_job, cleanup_job, job_status, start_job, list_jobs
+from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update, git_fetch, workflow_dispatch, run_cancel
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -119,6 +119,46 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"job_cleanup"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
     ]
 }
+
+# Extend the existing contracts before constructing the batch schema. No new runner.
+_EXECUTION_OPTIONS = {
+    "python_env": {"type": "string", "minLength": 1, "maxLength": 500,
+                   "description": "auto (cwd/.venv, root/.venv, system), system, or a project-relative venv directory"},
+    "env": {"type": "object", "maxProperties": 8,
+            "propertyNames": {"enum": ["CI", "NODE_ENV", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "TZ", "LANG", "LC_ALL"]},
+            "additionalProperties": {"type": "string", "maxLength": 500}},
+}
+for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
+    _kind = _variant["properties"]["kind"]["const"]
+    if _kind in {"run_tool", "job_start"}:
+        _variant["properties"].update(_EXECUTION_OPTIONS)
+    if _kind == "job_start":
+        _variant["properties"]["request_key"] = {"type": "string", "minLength": 1, "maxLength": 128}
+    if _kind == "job_status":
+        _variant["properties"]["tail_lines"] = {"type": "integer", "minimum": 0, "maximum": 200}
+_PROJECT_ACTION_SCHEMA["oneOf"].extend([
+    {"type": "object", "properties": {"kind": {"const": "job_list"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "before": {"type": "string", "maxLength": 80}}, "required": ["kind"], "additionalProperties": False},
+    {"type": "object", "properties": {"kind": {"const": "git_fetch"},
+        "remote": {"type": "string", "minLength": 1, "maxLength": 64},
+        "branch": {"type": "string", "minLength": 1, "maxLength": 200}},
+        "required": ["kind", "branch"], "additionalProperties": False},
+    {"type": "object", "properties": {"kind": {"const": "github_workflow_dispatch"},
+        "remote": {"type": "string", "minLength": 1, "maxLength": 64},
+        "workflow": {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"},
+        "ref": {"type": "string", "minLength": 1, "maxLength": 200},
+        "inputs": {"type": "object", "maxProperties": 25,
+            "propertyNames": {"pattern": r"^[A-Za-z_][A-Za-z0-9_-]{0,79}$"},
+            "additionalProperties": {"type": ["string", "boolean", "number"], "maxLength": 500}}},
+        "required": ["kind", "workflow", "ref"], "additionalProperties": False},
+    {"type": "object", "properties": {"kind": {"const": "github_run_cancel"},
+        "remote": {"type": "string", "minLength": 1, "maxLength": 64},
+        "run_id": {"type": "integer", "minimum": 1},
+        "expected_head_sha": {"type": "string", "pattern": r"^[0-9a-f]{40}$"}},
+        "required": ["kind", "run_id", "expected_head_sha"], "additionalProperties": False},
+])
+
 
 _BATCH_STEP_SCHEMA = {"oneOf": list(_PROJECT_ACTION_SCHEMA["oneOf"])}
 _PROJECT_ACTION_SCHEMA["oneOf"].append({
@@ -332,16 +372,53 @@ def _fixed_executable(*candidates: str) -> str:
     raise ProbeError("tool_unavailable", "requested direct project tool is not installed", status="unavailable")
 
 
-async def _run_tool(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+def _project_python(root: Path, cwd: Path, selection: str = "auto") -> str:
+    if selection == "system":
+        return "/usr/bin/python3"
+    candidates = [cwd / ".venv", root / ".venv"] if selection == "auto" else [root / selection]
+    for directory in dict.fromkeys(candidates):
+        if not directory.exists() and not directory.is_symlink() and selection == "auto":
+            continue
+        try:
+            relative = directory.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise ProbeError("path_denied", "python_env must be a project-relative venv directory") from exc
+        directory = _safe_worktree_path(root, relative)
+        _safe_worktree_path(root, (directory / "pyvenv.cfg").relative_to(root).as_posix(), require_file=True)
+        _safe_worktree_path(root, (directory / "bin").relative_to(root).as_posix())
+        executable = directory / "bin" / "python"
+        # A standard venv interpreter is a symlink; the venv and bin directory are not.
+        if executable.is_file() and os.access(executable, os.X_OK):
+            return str(executable)
+        raise ProbeError("environment_unavailable", "selected venv has no executable Python", status="unavailable")
+    return "/usr/bin/python3"
+
+
+def _tool_env(action: dict[str, Any], python: str | None) -> dict[str, str]:
+    extra = action.get("env") or {}
+    allowed = {"CI", "NODE_ENV", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "TZ", "LANG", "LC_ALL"}
+    if not isinstance(extra, dict) or set(extra) - allowed:
+        raise ProbeError("invalid_input", "only documented nonsecret execution flags may be overridden")
+    env = _action_env({"env": extra})
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    if python and python != "/usr/bin/python3":
+        env["VIRTUAL_ENV"] = str(Path(python).parent.parent)
+        env["PATH"] = str(Path(python).parent) + ":" + env["PATH"]
+    return env
+
+
+async def _run_tool(root: Path, action: dict[str, Any], *, log_dir: Path | None = None) -> dict[str, Any]:
     tool = action["tool"]
     cwd = _project_cwd(root, action.get("cwd"))
     args = _args(action)
+    python = _project_python(root, cwd, action.get("python_env", "auto")) if tool in {"pytest", "python_script", "python_module"} or "python_env" in action else None
     timeout = float(action.get("timeout_seconds", 900))
     if not (1 <= timeout <= MAX_ACTION_TIMEOUT):
         raise ProbeError("invalid_input", "tool timeout is out of bounds")
 
     if tool == "pytest":
-        argv = ["/usr/bin/python3", "-m", "pytest", *args]
+        argv = [python, "-m", "pytest", *args]
     elif tool in {"bash_script", "python_script", "node_script"}:
         raw_path = action.get("path")
         if not isinstance(raw_path, str):
@@ -350,11 +427,11 @@ async def _run_tool(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         if tool == "python_script":
             if script.suffix != ".py":
                 raise ProbeError("invalid_input", "python_script requires a .py repository file")
-            executable = "/usr/bin/python3"
+            executable = python
         elif tool == "node_script":
             if script.suffix not in {".js", ".mjs", ".cjs"}:
                 raise ProbeError("invalid_input", "node_script requires a .js/.mjs/.cjs repository file")
-            executable = _fixed_executable("/usr/local/bin/node", "/usr/bin/node")
+            executable = _fixed_executable("/home/dev/.local/bin/node", "/usr/local/bin/node", "/usr/bin/node")
         else:
             executable = "/usr/bin/bash"
         argv = [executable, str(script), *args]
@@ -365,7 +442,7 @@ async def _run_tool(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         package_json = cwd / "package.json"
         if not package_json.is_file() or package_json.is_symlink():
             raise ProbeError("not_found", "package.json is missing in requested project cwd", status="not_found")
-        executable = _fixed_executable("/usr/local/bin/npm", "/usr/bin/npm")
+        executable = _fixed_executable("/home/dev/.local/bin/npm", "/usr/local/bin/npm", "/usr/bin/npm")
         argv = [executable, "run", "--silent", script]
         if args:
             argv.extend(["--", *args])
@@ -374,9 +451,12 @@ async def _run_tool(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         if extended is None:
             raise ProbeError("invalid_input", f"unknown direct project tool {tool!r}")
         argv = extended
+        if tool == "python_module":
+            argv[0] = python
 
     result = await _run_process(
-        argv, cwd=cwd, env=_action_env({}), timeout=timeout, output_limit=MAX_ACTION_OUTPUT,
+        argv, cwd=cwd, env=_tool_env(action, python), timeout=timeout, output_limit=MAX_ACTION_OUTPUT,
+        capture_tail=True, log_dir=log_dir,
     )
     stdout, out_red = _decode(result, "stdout")
     stderr, err_red = _decode(result, "stderr")
@@ -384,6 +464,7 @@ async def _run_tool(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         "status": "ok" if result.exit_code == 0 else "failed",
         "action": "run_tool",
         "tool": tool,
+        "executable": argv[0], "cwd": str(cwd), "output_mode": "tail",
         "exit_code": result.exit_code,
         "duration_ms": result.duration_ms,
         "stdout": stdout,
@@ -622,10 +703,18 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
         return await pr_merge(root, binding, action)
     if kind == "github_branch_delete":
         return await delete_remote_branch(root, binding, action)
+    if kind == "git_fetch":
+        return await git_fetch(root, binding, action)
+    if kind == "github_workflow_dispatch":
+        return await workflow_dispatch(root, binding, action)
+    if kind == "github_run_cancel":
+        return await run_cancel(root, binding, action)
+    if kind == "job_list":
+        return list_jobs(root, limit=action.get("limit", 20), before=action.get("before"))
     if kind == "job_start":
-        return await start_job(root, action)
+        return await start_job(root, action, project_id=project_id)
     if kind == "job_status":
-        return await job_status(root, action["job_id"])
+        return await job_status(root, action["job_id"], tail_lines=action.get("tail_lines", 40))
     if kind == "job_cancel":
         return await cancel_job(root, action["job_id"])
     if kind == "job_cleanup":

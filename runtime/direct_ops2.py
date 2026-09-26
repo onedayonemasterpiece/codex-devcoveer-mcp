@@ -74,11 +74,17 @@ async def project_capabilities(root: Path, binding: dict[str, Any]) -> dict[str,
     ):
         raw = binding.get(key) or {}
         sections[key] = sorted(raw) if isinstance(raw, dict) else []
+    from direct_ops_gateway import describe_plane
     return {
+        "operator_help": {"tool": "direct_ops_v2", "operation": "describe",
+                          "compatibility": "project_action/run_tool python_script @direct_ops_v2"},
+        "operation_schema_digests": {plane: describe_plane(plane)["schema_digest"] for plane in
+                                     ("project_probe", "project_action", "host_probe", "host_action")},
         "github_remotes": await discover_github_remotes(root),
         "configured_github_repo": binding.get("github_repo"),
         **sections,
         "direct_project_actions": [
+            "git_fetch", "github_workflow_dispatch", "github_run_cancel", "job_list",
             "sync_ff", "run_tool", "run_profile", "write_text", "mkdir", "move_path",
             "delete_file", "chmod_executable", "git_create_branch", "git_stage",
             "git_commit_push", "capture_handoff", "worktree_capture_handoff", "worktree_reconcile", "owned_service_action", "github_pr_create", "github_pr_update", "github_pr_merge", "github_branch_delete", "job_start", "job_status", "job_cancel", "job_cleanup", "batch", "handoff_commit_push",

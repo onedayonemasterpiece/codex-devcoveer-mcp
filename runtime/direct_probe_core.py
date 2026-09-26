@@ -70,7 +70,7 @@ REDACTION_PATTERNS = [
     re.compile(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)\S+"),
     re.compile(r"(?i)((?:token|secret|password|passwd|api[_-]?key|access[_-]?key)\s*[:=]\s*)\S+"),
     re.compile(r"(?i)(https?://[^\s:/]+:)[^@/\s]+@"),
-    re.compile(r"(?i)(gh[pousr]_[A-Za-z0-9_]{12,})"),
+    re.compile(r"(?i)(?:gh[pousr]_[A-Za-z0-9_]{12,})"),
 ]
 
 
@@ -373,44 +373,83 @@ def _sha256_path(path: Path, max_bytes: int | None = None) -> str:
 
 
 async def _kill_process(proc: asyncio.subprocess.Process) -> None:
-    if proc.returncode is not None:
-        return
+    # The leader may have exited while its children still own stdout/stderr pipes.
     try:
         os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        proc.kill()
-    try:
-        await proc.wait()
-    except Exception:
+    except ProcessLookupError:
         pass
+    except PermissionError:
+        if proc.returncode is None:
+            try: proc.kill()
+            except ProcessLookupError: pass
+    await proc.wait()
 
 
-async def _read_limited(stream: asyncio.StreamReader | None, limit: int, proc: asyncio.subprocess.Process) -> tuple[bytes, bool]:
+def _append_job_log(path: Path, data: bytes) -> None:
+    text, _ = _redact_text(data.decode("utf-8", "replace"))
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "r+b") as handle:
+        handle.seek(0, 2)
+        handle.write(text.encode("utf-8"))
+        if handle.tell() > 1024 * 1024:
+            handle.seek(-512 * 1024, 2)
+            tail = handle.read().partition(b"\n")[2]
+            handle.seek(0); handle.write(tail); handle.truncate()
+
+
+async def _read_limited(stream: asyncio.StreamReader | None, limit: int, proc: asyncio.subprocess.Process,
+                        *, tail: bool = False, captured: bytearray | None = None,
+                        log_path: Path | None = None) -> tuple[bytes, bool]:
     if stream is None:
         return b"", False
-    parts: list[bytes] = []
-    total_kept = 0
+    kept = captured if captured is not None else bytearray()
     truncated = False
-    while True:
-        chunk = await stream.read(8192)
-        if not chunk:
-            break
-        if total_kept < limit:
-            keep = min(len(chunk), limit - total_kept)
-            if keep:
-                parts.append(chunk[:keep])
-                total_kept += keep
-            if keep < len(chunk):
+    pending = b""
+    dropping = False
+
+    def emit(line: bytes) -> None:
+        nonlocal truncated
+        # Redact before truncating: a tail must not start in the middle of a secret.
+        text, _ = _redact_text(line.decode("utf-8", "replace"))
+        data = text.encode("utf-8")
+        if tail:
+            kept.extend(data)
+            if len(kept) > limit:
+                del kept[:-limit]
                 truncated = True
-        else:
-            truncated = True
-        # Once capped, keep draining/discarding. Runtime is still bounded by the
-        # subprocess timeout, while memory and returned output remain finite.
-    return b"".join(parts), truncated
+        if log_path is not None:
+            _append_job_log(log_path, data)
+
+    try:
+        while True:
+            chunk = await stream.read(8192)
+            if not chunk:
+                break
+            if not tail:
+                room = max(0, limit - len(kept))
+                kept.extend(chunk[:room])
+                truncated |= len(chunk) > room
+            if tail or log_path is not None:
+                pending += chunk
+                while b"\n" in pending:
+                    line, pending = pending.split(b"\n", 1)
+                    if not dropping:
+                        emit(line + b"\n")
+                    dropping = False
+                if len(pending) > 262144:
+                    emit(b"[oversized output line omitted]\n")
+                    pending = b""
+                    dropping = True
+                    truncated = True
+    finally:
+        if (tail or log_path is not None) and pending and not dropping:
+            emit(pending)
+    return bytes(kept), truncated
 
 
 async def _run_process(argv: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None,
-                       timeout: float = 5.0, output_limit: int = MAX_PROCESS_OUTPUT) -> ProcessResult:
+                       timeout: float = 5.0, output_limit: int = MAX_PROCESS_OUTPUT,
+                       capture_tail: bool = False, log_dir: Path | None = None) -> ProcessResult:
     if not argv or not argv[0].startswith("/"):
         raise ProbeError("runner_policy", "trusted executable must be absolute")
     started = time.monotonic()
@@ -418,28 +457,32 @@ async def _run_process(argv: list[str], *, cwd: Path | None = None, env: dict[st
         proc = await asyncio.create_subprocess_exec(
             *argv, cwd=str(cwd) if cwd else None, env=env,
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, start_new_session=True,
-        )
-        out_task = asyncio.create_task(_read_limited(proc.stdout, output_limit, proc))
-        err_task = asyncio.create_task(_read_limited(proc.stderr, min(output_limit, 32 * 1024), proc))
+            stderr=asyncio.subprocess.PIPE, start_new_session=True)
+        out, err = bytearray(), bytearray()
+        out_task = asyncio.create_task(_read_limited(proc.stdout, output_limit, proc,
+            tail=capture_tail, captured=out, log_path=log_dir / "stdout.log" if log_dir else None))
+        err_task = asyncio.create_task(_read_limited(proc.stderr, min(output_limit, 32 * 1024), proc,
+            tail=capture_tail, captured=err, log_path=log_dir / "stderr.log" if log_dir else None))
+        finished = asyncio.gather(proc.wait(), out_task, err_task)
         try:
-            await asyncio.wait_for(proc.wait(), timeout=timeout)
-            stdout, out_truncated = await out_task
-            stderr, err_truncated = await err_task
-        except asyncio.TimeoutError as exc:
+            # The timeout includes pipe EOF, not only leader exit.
+            await asyncio.wait_for(asyncio.shield(finished), timeout=timeout)
+        except BaseException as exc:
             await _kill_process(proc)
-            for task in (out_task, err_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(out_task, err_task, return_exceptions=True)
-            raise ProbeError("timeout", "trusted subprocess timed out", status="timeout") from exc
-        except asyncio.CancelledError:
-            await _kill_process(proc)
-            for task in (out_task, err_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(out_task, err_task, return_exceptions=True)
+            try:
+                await asyncio.wait_for(asyncio.shield(finished), timeout=2)
+            except BaseException:
+                finished.cancel()
+                out_task.cancel(); err_task.cancel()
+                await asyncio.gather(finished, out_task, err_task, return_exceptions=True)
+            if isinstance(exc, asyncio.TimeoutError):
+                failure = ProbeError("timeout", "trusted subprocess timed out", status="timeout")
+                failure.partial_result = ProcessResult(bytes(out), bytes(err), proc.returncode or -9, True,
+                                                        int((time.monotonic() - started) * 1000))
+                raise failure from exc
             raise
+        stdout, out_truncated = out_task.result()
+        stderr, err_truncated = err_task.result()
     return ProcessResult(stdout, stderr, proc.returncode or 0, out_truncated or err_truncated,
                          int((time.monotonic() - started) * 1000))
 

@@ -174,3 +174,59 @@ async def delete_remote_branch(root:Path,binding:dict[str,Any],action:dict[str,A
         raise ProbeError("push_failed",err[-1200:] or "remote branch delete failed",exit_code=result.exit_code)
     return {"status":"ok","action":"github_branch_delete","repository":repo,
             "branch":branch,"deleted_sha":expected}
+
+
+async def git_fetch(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    remote, repo = await _repo(root, binding, action.get("remote", "origin"))
+    branch = _validate_branch(action["branch"])
+    tracking = f"refs/remotes/{remote}/{branch}"
+    await _git(root, "fetch", "--no-tags", "--no-recurse-submodules", remote,
+               f"refs/heads/{branch}:{tracking}", timeout=120, output_limit=32768)
+    result = await _git(root, "rev-parse", "--verify", f"{tracking}^{{commit}}", output_limit=128)
+    return {"status": "ok", "action": "git_fetch", "repository": repo, "remote": remote,
+            "branch": branch, "fetched_sha": result.stdout.decode().strip(), "checkout_updated": False}
+
+
+async def workflow_dispatch(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    _remote, repo = await _repo(root, binding, action.get("remote", "origin"))
+    workflow = action["workflow"]
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", workflow) is None:
+        raise ProbeError("invalid_input", "workflow must be an ID or a filename")
+    ref = _validate_branch(action["ref"])
+    args = ["api", "--method", "POST", f"repos/{repo}/actions/workflows/{workflow}/dispatches",
+            "-H", "X-GitHub-Api-Version: 2026-03-10", "-f", f"ref={ref}"]
+    for key, value in (action.get("inputs") or {}).items():
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,79}", key) is None:
+            raise ProbeError("invalid_input", "invalid workflow input name")
+        if isinstance(value, str):
+            args.extend(["-f", f"inputs[{key}]={value}"])
+        else:
+            args.extend(["-F", f"inputs[{key}]={json.dumps(value, allow_nan=False)}"])
+    # Never retry a dispatch automatically: a lost receipt may still have started a run.
+    text = await _gh(binding, args)
+    try:
+        receipt = json.loads(text) if text.strip() else {}
+    except ValueError:
+        receipt = {}
+    run_id = receipt.get("workflow_run_id") if isinstance(receipt, dict) else None
+    run_id = run_id if isinstance(run_id, int) and not isinstance(run_id, bool) and run_id > 0 else None
+    return {"status": "accepted", "action": "github_workflow_dispatch", "repository": repo,
+            "workflow": workflow, "requested_ref": ref, "run_id": run_id,
+            "url": f"https://github.com/{repo}/actions/runs/{run_id}" if run_id else None,
+            "receipt_complete": run_id is not None, "automatic_retry_safe": False}
+
+
+async def run_cancel(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    _remote, repo = await _repo(root, binding, action.get("remote", "origin"))
+    run_id = int(action["run_id"])
+    endpoint = f"repos/{repo}/actions/runs/{run_id}"
+    data = json.loads(await _gh(binding, ["api", endpoint]))
+    if not isinstance(data, dict) or data.get("head_sha") != action["expected_head_sha"]:
+        raise ProbeError("run_moved", "workflow run does not match expected head SHA", status="denied")
+    if data.get("status") == "completed":
+        return {"status": "terminal", "action": "github_run_cancel", "run_id": run_id,
+                "repository": repo, "conclusion": data.get("conclusion")}
+    await _gh(binding, ["api", "--method", "POST", endpoint + "/cancel"])
+    return {"status": "cancelling", "action": "github_run_cancel", "repository": repo,
+            "run_id": run_id, "head_sha": data["head_sha"],
+            "url": f"https://github.com/{repo}/actions/runs/{run_id}"}

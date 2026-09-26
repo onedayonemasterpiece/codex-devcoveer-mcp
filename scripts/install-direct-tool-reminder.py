@@ -32,6 +32,7 @@ DESCRIPTION_NEW = (
     '            "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, "\n'
     '            "use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "\n'
     '            "Use project_action for registered project test/build/deploy profiles (including Playwright runners) and host_action for registered restarts; use GitHub Actions for CI-specific workflows. "\n'
+    '            "Long deterministic tests/builds use direct job_start/job_status, not an agent. For current operation names and parameter schemas use direct_ops_v2 with operation=describe; use its documented compatibility carrier when the client catalogue is stale. "\n'
     '            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to "\n'
     '            "OpenCode: ChatGPT should author the exact code/docs change itself and use stage_source_handoff "\n'
     '            "when direct repository writing is unavailable. Use project_action on the handoff for registered tests and direct commit/push; use an agent only when the work actually requires reasoning beyond typed operations. start_task is for work that "\n'
