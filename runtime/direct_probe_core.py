@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fcntl
 import datetime as dt
 import hashlib
 import http.client
@@ -20,11 +21,13 @@ from urllib.parse import quote, urlsplit
 
 INSTALL_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = INSTALL_DIR / "direct_probe_config.json"
+DIRECT_RECEIPT_LOG = Path.home() / ".local" / "state" / "openai-codex-mcp" / "direct-ops-receipts.jsonl"
+MAX_DIRECT_RECEIPT_LOG_BYTES = 1024 * 1024
 MAX_CHECKS = 20
 BATCH_DEADLINE_SECONDS = 60.0
 CHECK_TIMEOUT_SECONDS: dict[str, float] = {
     # Cheap local facts remain short; network/status and bounded scans get room to finish.
-    "git_state": 15.0, "remote_head": 25.0, "git_log": 15.0, "tree": 15.0,
+    "git_state": 15.0, "recent_direct_ops": 5.0, "remote_head": 25.0, "git_log": 15.0, "tree": 15.0,
     "worktree_list": 10.0, "diff": 25.0, "read_text": 25.0, "search": 35.0,
     "file_list": 25.0, "file_stat": 12.0, "file_sha256": 35.0, "github_status": 50.0,
     "inventory": 5.0, "service": 12.0, "listeners": 15.0, "logs": 25.0,
@@ -97,6 +100,9 @@ _LIMIT_SCHEMA = {"type": "integer", "minimum": 1, "maximum": MAX_LIST_ENTRIES}
 
 PROJECT_CHECK_SCHEMAS = [
     _check_schema("git_state"),
+    _check_schema("recent_direct_ops", {
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+    }),
     _check_schema("remote_head", {
         "remote": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},
         "branch": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._/-]*$"},
@@ -525,6 +531,107 @@ async def _git(root: Path, *args: str, timeout: float = 4.0, output_limit: int =
         category = "not_found" if result.exit_code in (1, 128) and ("unknown revision" in text.lower() or "not a valid object" in text.lower() or "bad object" in text.lower()) else "git"
         raise ProbeError(category, text.strip() or f"git exited {result.exit_code}", status="not_found" if category == "not_found" else "error", exit_code=result.exit_code)
     return result
+
+
+async def _tracked_workspace_digest(root: Path) -> str:
+    """Digest HEAD + Git index + tracked working-tree changes; untracked files are excluded."""
+    head_res = await _git(root, "rev-parse", "--verify", "HEAD", ok_codes=(0, 128), output_limit=256)
+    head = head_res.stdout.strip() if head_res.exit_code == 0 else b"<unborn>"
+    index = await _git(root, "ls-files", "-s", "-z", output_limit=8 * 1024 * 1024)
+    names = await _git(
+        root, "diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--",
+        output_limit=4 * 1024 * 1024,
+    )
+    raw = await _git(
+        root, "diff", "--raw", "-z", "--no-ext-diff", "--no-textconv", "--",
+        output_limit=8 * 1024 * 1024,
+    )
+    if index.truncated or names.truncated or raw.truncated:
+        raise ProbeError(
+            "workspace_digest",
+            "tracked workspace state exceeds the bounded digest input; refusing an incomplete digest",
+            status="denied",
+        )
+
+    digest = hashlib.sha256()
+    digest.update(b"head\0" + head + b"\0index\0" + index.stdout + b"\0worktree-raw\0" + raw.stdout)
+    changed_paths = sorted({item for item in names.stdout.split(b"\0") if item})
+    for raw_path in changed_paths:
+        digest.update(b"\0path\0" + raw_path)
+        path = root / os.fsdecode(raw_path)
+        try:
+            st = path.lstat()
+        except FileNotFoundError:
+            digest.update(b"\0deleted")
+            continue
+        digest.update(f"\0mode:{st.st_mode & 0o170777:o}\0".encode("ascii"))
+        if statmod.S_ISLNK(st.st_mode):
+            digest.update(b"symlink\0" + os.fsencode(os.readlink(path)))
+        elif statmod.S_ISREG(st.st_mode):
+            digest.update(b"file-sha256\0" + _sha256_path(path).encode("ascii"))
+        elif statmod.S_ISDIR(st.st_mode):
+            digest.update(b"directory")
+        else:
+            digest.update(b"special")
+    return digest.hexdigest()
+
+
+def _append_direct_receipt(entry: dict[str, Any]) -> None:
+    """Best-effort bounded observability; receipt failure must never block the requested operation."""
+    try:
+        path = DIRECT_RECEIPT_LOG
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        payload = dict(entry)
+        payload.setdefault("observed_at", dt.datetime.now(dt.timezone.utc).isoformat())
+        line = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "r+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            handle.seek(0, 2)
+            handle.write(line)
+            handle.flush()
+            size = handle.tell()
+            if size > MAX_DIRECT_RECEIPT_LOG_BYTES:
+                keep = MAX_DIRECT_RECEIPT_LOG_BYTES // 2
+                handle.seek(max(0, size - keep))
+                tail = handle.read()
+                tail = tail.partition("\n")[2]
+                handle.seek(0)
+                handle.write(tail)
+                handle.truncate()
+    except (OSError, ValueError, TypeError):
+        return
+
+
+def _recent_direct_receipts(root: Path, *, limit: int = 20) -> dict[str, Any]:
+    limit = max(1, min(int(limit), 100))
+    path = DIRECT_RECEIPT_LOG
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return {"entries": [], "limit": limit, "complete": True}
+    except OSError:
+        return {"entries": [], "limit": limit, "complete": False}
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            text = handle.read(MAX_DIRECT_RECEIPT_LOG_BYTES + 1)
+    except OSError:
+        return {"entries": [], "limit": limit, "complete": False}
+    complete = len(text) <= MAX_DIRECT_RECEIPT_LOG_BYTES
+    target = str(root.resolve())
+    entries: list[dict[str, Any]] = []
+    for line in reversed(text[-MAX_DIRECT_RECEIPT_LOG_BYTES:].splitlines()):
+        try:
+            item = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(item, dict) or item.get("cwd") != target:
+            continue
+        entries.append(item)
+        if len(entries) >= limit:
+            break
+    return {"entries": entries, "limit": limit, "complete": complete}
 
 
 async def _resolve_commit(root: Path, ref: str) -> str:
