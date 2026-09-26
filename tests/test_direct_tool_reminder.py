@@ -52,6 +52,10 @@ def test_transform_adds_pre_call_and_post_call_reminders():
     assert "stage_source_handoff" in transformed
     assert "registered tests and direct commit/push" in transformed
     assert "reasoning beyond typed operations" in transformed
+    assert "git_switch_ff" in transformed
+    assert "apply_source_patch" in transformed
+    assert "artifact_fetch" in transformed
+    assert "full-power reasoning escape hatch" in transformed
 
 
 def test_transform_is_idempotent_after_marker_is_present():
@@ -94,3 +98,5 @@ def test_helper_policy_has_strong_and_soft_signals():
     assert "stage_source_handoff" in helper
     assert "source-handoff commit/push" in helper
     assert "genuinely non-deterministic investigation" in helper
+    assert "full-power reasoning escape hatch" in helper
+    assert "git_switch_ff" in helper and "artifact_fetch" in helper

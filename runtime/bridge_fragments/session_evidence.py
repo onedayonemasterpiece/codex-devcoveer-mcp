@@ -1,3 +1,5 @@
+import re
+
 # Included by the canonical runtime builder, after the base task reader.
 _BASE_READ_OPENCODE_TASK = _read_opencode_task
 _EVIDENCE_WATCHERS: dict[str, asyncio.Task[Any]] = {}
@@ -88,6 +90,64 @@ def _watch_opencode_evidence(task_id: str) -> None:
     _EVIDENCE_WATCHERS[task_id] = asyncio.create_task(watch(), name=f'evidence-{task_id}')
 
 
+def _evidence_findings(document: dict[str, Any], index: dict[str, Any]) -> list[str]:
+    """Classify risky-looking execution patterns without changing or blocking execution."""
+    findings: list[str] = []
+    if index.get('redacted'):
+        findings.append('secret_redaction:potential_secrets_were_redacted')
+    messages = document.get('messages') if isinstance(document, dict) else []
+    if not isinstance(messages, list):
+        return findings
+    prompt_text = []
+    tool_parts = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        info = message.get('info') or {}
+        role = info.get('role')
+        for part in message.get('parts') or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get('type') == 'text' and role == 'user':
+                prompt_text.append(str(part.get('text') or ''))
+            if part.get('type') == 'tool':
+                tool_parts.append(part)
+    prompt = ' '.join(prompt_text).casefold()
+    shell_forbidden = any(marker in prompt for marker in (
+        'do not run shell commands',
+        'shell commands are not allowed',
+        'write is limited to file edit tools',
+    ))
+    for part in tool_parts:
+        tool = str(part.get('tool') or '').casefold()
+        state = part.get('state') or {}
+        raw_input = state.get('input') if isinstance(state, dict) else {}
+        if isinstance(raw_input, dict):
+            command = str(raw_input.get('command') or raw_input.get('cmd') or '')
+        else:
+            command = str(raw_input or '')
+        command_cf = command.casefold()
+        is_shell = tool in {'bash', 'shell', 'terminal'}
+        if is_shell and shell_forbidden:
+            findings.append('policy_mismatch:shell_used_while_prompt_forbids_shell')
+        if is_shell and re.search(r'\bgit\s+(?:fetch|checkout|switch|merge|status|rev-parse|branch|pull|push)\b', command_cf):
+            findings.append('untyped_git_shell:semantic_git_operation_used_via_shell')
+        if is_shell and (
+            re.search(r'\bfind\s+(?:/home|~)(?:\s|$)', command_cf)
+            or re.search(r'\b(?:grep|rg)\b[^\n]*(?:/home|~)', command_cf)
+        ):
+            findings.append('broad_home_scan:recursive_or_broad_home_enumeration')
+        if is_shell and re.search(r'(?:^|[\s/])\.env(?:[\s/]|$)|/home/[^/\s]+/\.env', command_cf):
+            findings.append('credential_discovery:direct_env_file_access')
+        if is_shell and (
+            re.search(r'\b(?:curl|wget)\b', command_cf)
+            or 'raw.githubusercontent.com' in command_cf
+            or 'urllib.request' in command_cf
+        ):
+            findings.append('external_download_shell:download_performed_inside_agent_shell')
+    return list(dict.fromkeys(findings))
+
+
 async def _evidence_tool(name: str, arguments: dict, project: ProjectEntry | None) -> dict:
     record = _registry_task(arguments['task'], project)
     if record is None:
@@ -122,5 +182,5 @@ async def _evidence_tool(name: str, arguments: dict, project: ProjectEntry | Non
               'executionStatus': record['executionStatus'], 'acceptanceStatus': record['acceptanceStatus']}
     if arguments.get('scope') == 'full_safe': result['session'] = document
     if arguments.get('scope') == 'suspicious':
-        result['findings'] = ['Potential secrets were redacted.'] if index['redacted'] else []
+        result['findings'] = _evidence_findings(document, index)
     return result

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
 import re
+import stat as statmod
+import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +31,7 @@ from direct_probe_core import (
 )
 from direct_probe_host_services import _host_section, _systemd_env
 from direct_ops2 import (
-    capture_handoff, chmod_executable, delete_file, git_commit_push, git_create_branch,
+    _mutation_path, capture_handoff, chmod_executable, delete_file, git_commit_push, git_create_branch,
     git_stage, mkdir, move_path, resolve_github_remote, runner_argv, service_action,
     write_registered_file, write_text,
 )
@@ -43,6 +49,9 @@ MAX_ACTION_TIMEOUT = 3600.0
 ARG_RE = re.compile(r"^[^\x00\r\n]{0,500}$")
 NPM_SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,79}$")
 DIRECT_OPS_COMPAT_PATH = "@direct_ops_v2"
+MAX_SOURCE_PATCH_BYTES = 16 * 1024 * 1024
+DEFAULT_ARTIFACT_MAX_BYTES = 1024 * 1024 * 1024
+MAX_ARTIFACT_MAX_BYTES = 8 * 1024 * 1024 * 1024
 
 _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
     "oneOf": [
@@ -152,7 +161,8 @@ _EXPECTED_WORKSPACE_DIGEST_SCHEMA = {
     ),
 }
 _HEAD_GUARDED_KINDS = {
-    "sync_ff", "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
+    "sync_ff", "git_switch_ff", "apply_source_patch", "artifact_fetch",
+    "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
     "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "capture_handoff", "job_start",
 }
 for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
@@ -174,6 +184,25 @@ for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
     if _kind == "job_status":
         _variant["properties"]["tail_lines"] = {"type": "integer", "minimum": 0, "maximum": 200}
 _PROJECT_ACTION_SCHEMA["oneOf"].extend([
+    {"type": "object", "properties": {"kind": {"const": "git_switch_ff"},
+        "remote": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+        "branch": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._/-]*$"},
+        "expected_sha": {"type": "string", "pattern": r"^[0-9a-f]{40}$"}},
+        "required": ["kind", "remote", "branch", "expected_sha"], "additionalProperties": False},
+    {"type": "object", "properties": {"kind": {"const": "apply_source_patch"},
+        "base_sha": {"type": "string", "pattern": r"^[0-9a-f]{40}$"},
+        "patch": {"type": "string", "minLength": 1, "maxLength": 16777216},
+        "patch_sha256": {"type": "string", "pattern": r"^[0-9a-f]{64}$"}},
+        "required": ["kind", "base_sha", "patch", "patch_sha256"], "additionalProperties": False},
+    {"type": "object", "properties": {"kind": {"const": "artifact_fetch"},
+        "url": {"type": "string", "minLength": 8, "maxLength": 4096},
+        "path": {"type": "string", "minLength": 1, "maxLength": 500},
+        "expected_sha256": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "expected_target_sha256": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "replace": {"type": "boolean"}, "create_parents": {"type": "boolean"},
+        "max_bytes": {"type": "integer", "minimum": 1, "maximum": 8589934592},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600}},
+        "required": ["kind", "url", "path"], "additionalProperties": False},
     {"type": "object", "properties": {"kind": {"const": "job_list"},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         "before": {"type": "string", "maxLength": 80}}, "required": ["kind"], "additionalProperties": False},
@@ -195,6 +224,12 @@ _PROJECT_ACTION_SCHEMA["oneOf"].extend([
         "expected_head_sha": {"type": "string", "pattern": r"^[0-9a-f]{40}$"}},
         "required": ["kind", "run_id", "expected_head_sha"], "additionalProperties": False},
 ])
+# Variants appended after the initial guard pass receive the same optimistic-concurrency guards.
+for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
+    _kind = _variant["properties"]["kind"]["const"]
+    if _kind in _HEAD_GUARDED_KINDS:
+        _variant["properties"].setdefault("expected_head", _EXPECTED_HEAD_SCHEMA)
+        _variant["properties"].setdefault("expected_workspace_digest", _EXPECTED_WORKSPACE_DIGEST_SCHEMA)
 
 
 _BATCH_STEP_SCHEMA = {"oneOf": list(_PROJECT_ACTION_SCHEMA["oneOf"])}
@@ -383,6 +418,266 @@ async def _sync_ff(root: Path, binding: dict[str, Any], action: dict[str, Any], 
         "changed": changed,
         "untracked_preserved_count": untracked_count,
     }
+
+
+async def _git_switch_ff(root: Path, binding: dict[str, Any], action: dict[str, Any], *, handoff: bool) -> dict[str, Any]:
+    """Switch to an existing local branch and fast-forward it to one exact remote SHA."""
+    if handoff:
+        raise ProbeError("handoff_denied", "git_switch_ff is only allowed on a canonical checkout", status="denied")
+    remote = _validate_alias(action["remote"])
+    branch = _validate_branch(action["branch"])
+    expected = str(action["expected_sha"]).lower()
+    if HEX40_RE.fullmatch(expected) is None:
+        raise ProbeError("invalid_input", "expected_sha must be exact 40-hex")
+
+    if binding.get("remotes"):
+        registered_repo = _registered_remote(binding, remote)
+        remote_url = await _git(root, "remote", "get-url", remote, timeout=15)
+        if remote_url.exit_code != 0 or _remote_repo(remote_url.stdout.decode("utf-8", "replace")) != registered_repo:
+            raise ProbeError("remote_mismatch", "configured Git remote does not match trusted repository", status="denied")
+    else:
+        await resolve_github_remote(root, binding, remote)
+
+    dirty = await _git(root, "status", "--porcelain=v1", "--untracked-files=no", timeout=15)
+    if dirty.exit_code != 0:
+        raise ProbeError("git_state", "could not inspect tracked working-tree state", exit_code=dirty.exit_code)
+    if dirty.stdout.strip():
+        raise ProbeError(
+            "dirty_tracked",
+            "tracked/staged changes block the typed branch switch; use the full-power reasoning/shell path when a deliberate dirty-worktree operation is required",
+            status="denied",
+        )
+
+    old_head_result = await _git(root, "rev-parse", "HEAD", timeout=10)
+    if old_head_result.exit_code != 0:
+        raise ProbeError("git_state", "could not resolve current HEAD", exit_code=old_head_result.exit_code)
+    old_head = old_head_result.stdout.decode().strip()
+    old_branch_result = await _git(root, "symbolic-ref", "--quiet", "--short", "HEAD", timeout=10)
+    old_branch = old_branch_result.stdout.decode().strip() if old_branch_result.exit_code == 0 else None
+
+    existing = await _git(root, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", timeout=10)
+    if existing.exit_code != 0:
+        raise ProbeError(
+            "branch_not_found",
+            "git_switch_ff requires an existing local branch; branch creation remains available through git_create_branch or the reasoning/shell escape hatch",
+            status="not_found",
+        )
+    local_ref = await _git(root, "rev-parse", f"refs/heads/{branch}", timeout=10)
+    local_sha = local_ref.stdout.decode().strip() if local_ref.exit_code == 0 else ""
+    if HEX40_RE.fullmatch(local_sha) is None:
+        raise ProbeError("git_state", "could not resolve existing local target branch")
+
+    fetched = await _git(root, "fetch", "--no-tags", remote, f"refs/heads/{branch}", timeout=120)
+    if fetched.exit_code != 0:
+        err, _ = _decode(fetched, "stderr")
+        raise ProbeError("fetch_failed", err[-1200:] or "git fetch failed", exit_code=fetched.exit_code)
+    observed = await _git(root, "rev-parse", "FETCH_HEAD", timeout=10)
+    observed_sha = observed.stdout.decode().strip() if observed.exit_code == 0 else ""
+    if observed_sha != expected:
+        raise ProbeError(
+            "remote_moved",
+            f"fetched remote SHA {observed_sha or '<unknown>'} differs from expected {expected}",
+            status="denied",
+        )
+    ancestor = await _git(root, "merge-base", "--is-ancestor", local_sha, expected, timeout=15)
+    if ancestor.exit_code != 0:
+        raise ProbeError("non_fast_forward", "remote target is not a fast-forward of the existing local branch", status="denied")
+
+    if old_branch != branch:
+        switched = await _git(root, "switch", branch, timeout=30)
+        if switched.exit_code != 0:
+            err, _ = _decode(switched, "stderr")
+            raise ProbeError("branch_switch_failed", err[-1200:] or "git switch failed", exit_code=switched.exit_code)
+    if local_sha != expected:
+        merged = await _git(root, "merge", "--ff-only", expected, timeout=60)
+        if merged.exit_code != 0:
+            err, _ = _decode(merged, "stderr")
+            raise ProbeError("fast_forward_failed", err[-1200:] or "git fast-forward failed", exit_code=merged.exit_code)
+
+    untracked = await _git(root, "ls-files", "--others", "--exclude-standard", "-z", timeout=15)
+    untracked_count = 0 if not untracked.stdout else len([x for x in untracked.stdout.split(b"\0") if x])
+    return {
+        "status": "ok", "action": "git_switch_ff", "remote": remote, "branch": branch,
+        "old_branch": old_branch, "old_head": old_head, "local_branch_sha": local_sha,
+        "new_sha": expected, "changed": old_branch != branch or local_sha != expected,
+        "untracked_preserved_count": untracked_count,
+    }
+
+
+async def _apply_source_patch(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    """Apply an inert Git patch as source data; never execute patch contents."""
+    patch = action["patch"]
+    data = patch.encode("utf-8")
+    if len(data) > MAX_SOURCE_PATCH_BYTES:
+        raise ProbeError("patch_too_large", "source patch exceeds 16 MiB", status="denied")
+    expected_digest = str(action["patch_sha256"]).lower()
+    observed_digest = hashlib.sha256(data).hexdigest()
+    if observed_digest != expected_digest:
+        raise ProbeError("precondition_failed", "source patch SHA-256 does not match patch_sha256", status="denied")
+    base_sha = str(action["base_sha"]).lower()
+    head = await _git(root, "rev-parse", "HEAD", timeout=15)
+    observed_head = head.stdout.decode("utf-8", "replace").strip() if head.exit_code == 0 else ""
+    if observed_head != base_sha:
+        raise ProbeError(
+            "workspace_drift",
+            f"source patch base {base_sha} does not match current HEAD {observed_head or '<unknown>'}",
+            status="denied",
+        )
+
+    fd, patch_path = tempfile.mkstemp(prefix="devcoveer-source-", suffix=".patch")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        checked = await _git(root, "apply", "--check", "--binary", "--whitespace=nowarn", patch_path, timeout=60)
+        if checked.exit_code != 0:
+            err, _ = _decode(checked, "stderr")
+            raise ProbeError("patch_check", err[-2000:] or "git apply --check failed", status="denied")
+        applied = await _git(root, "apply", "--binary", "--whitespace=nowarn", patch_path, timeout=120)
+        if applied.exit_code != 0:
+            err, _ = _decode(applied, "stderr")
+            raise ProbeError("patch_apply", err[-2000:] or "git apply failed", exit_code=applied.exit_code)
+    finally:
+        try:
+            os.unlink(patch_path)
+        except FileNotFoundError:
+            pass
+    return {
+        "status": "ok", "action": "apply_source_patch", "base_sha": base_sha,
+        "patch_sha256": observed_digest, "bytes": len(data),
+        "note": "patch contents were treated as inert source data and were not executed",
+    }
+
+
+def _validate_artifact_url(raw: str) -> urllib.parse.SplitResult:
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise ProbeError("url_denied", "artifact_fetch accepts arbitrary HTTPS URLs only", status="denied")
+    if parsed.username is not None or parsed.password is not None:
+        raise ProbeError(
+            "url_denied",
+            "URL userinfo is not accepted by artifact_fetch; signed HTTPS query parameters remain supported",
+            status="denied",
+        )
+    return parsed
+
+
+class _HttpsOnlyRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_artifact_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _artifact_file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb", buffering=0) as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_fetch_sync(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    source = _validate_artifact_url(action["url"])
+    max_bytes = int(action.get("max_bytes", DEFAULT_ARTIFACT_MAX_BYTES))
+    if not (1 <= max_bytes <= MAX_ARTIFACT_MAX_BYTES):
+        raise ProbeError("invalid_input", "artifact max_bytes is out of bounds")
+    timeout = int(action.get("timeout_seconds", 300))
+    if not (1 <= timeout <= 3600):
+        raise ProbeError("invalid_input", "artifact timeout_seconds is out of bounds")
+
+    raw_path = action["path"]
+    parent_raw = str(Path(raw_path).parent).replace("\\", "/")
+    if action.get("create_parents", True) and parent_raw not in {"", "."}:
+        mkdir(root, {"path": parent_raw, "parents": True})
+    path = _mutation_path(root, raw_path)
+    old_sha = None
+    old_mode = 0o644
+    if path.exists():
+        if not path.is_file() or path.is_symlink():
+            raise ProbeError("file_type", "artifact target must be a regular file", status="denied")
+        old_sha = _artifact_file_sha256(path)
+        expected_target = action.get("expected_target_sha256")
+        if expected_target is not None and old_sha != expected_target:
+            raise ProbeError("precondition_failed", "artifact target SHA-256 does not match expected_target_sha256", status="denied")
+        if action.get("replace") is not True:
+            raise ProbeError("precondition_failed", "artifact target exists; set replace=true to replace it", status="denied")
+        old_mode = path.stat().st_mode & 0o777
+    elif action.get("expected_target_sha256") is not None:
+        raise ProbeError("precondition_failed", "expected artifact target is absent", status="denied")
+
+    request = urllib.request.Request(action["url"], headers={"User-Agent": "DevCoveer-artifact-fetch/1"})
+    opener = urllib.request.build_opener(_HttpsOnlyRedirect())
+    fd, temp_name = tempfile.mkstemp(prefix=".devcoveer-fetch-", dir=path.parent)
+    bytes_written = 0
+    digest = hashlib.sha256()
+    final_url = action["url"]
+    content_type = None
+    try:
+        os.fchmod(fd, old_mode)
+        try:
+            response = opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            raise ProbeError("artifact_http", f"artifact HTTPS request failed with HTTP {exc.code}", exit_code=exc.code) from exc
+        except urllib.error.URLError as exc:
+            raise ProbeError("artifact_network", f"artifact HTTPS request failed for host {source.hostname}") from exc
+        with response:
+            final_url = response.geturl()
+            final = _validate_artifact_url(final_url)
+            content_type = response.headers.get("Content-Type")
+            content_length = response.headers.get("Content-Length")
+            if content_length:
+                try:
+                    announced = int(content_length)
+                except ValueError:
+                    announced = None
+                if announced is not None and announced > max_bytes:
+                    raise ProbeError("artifact_too_large", "artifact exceeds max_bytes", status="denied")
+            with os.fdopen(fd, "wb", closefd=False) as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if bytes_written > max_bytes:
+                        raise ProbeError("artifact_too_large", "artifact exceeds max_bytes", status="denied")
+                    digest.update(chunk)
+                    handle.write(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+        observed = digest.hexdigest()
+        expected = action.get("expected_sha256")
+        if expected is not None and observed != expected:
+            raise ProbeError("artifact_hash_mismatch", "downloaded artifact SHA-256 does not match expected_sha256", status="denied")
+        os.replace(temp_name, path)
+        final = _validate_artifact_url(final_url)
+        return {
+            "status": "ok", "action": "artifact_fetch", "path": raw_path,
+            "bytes": bytes_written, "sha256": observed, "old_sha256": old_sha,
+            "source_host": source.hostname, "source_path": source.path,
+            "final_host": final.hostname, "final_path": final.path,
+            "source_url_sha256": hashlib.sha256(action["url"].encode("utf-8")).hexdigest(),
+            "content_type": content_type,
+            "replaced": old_sha is not None,
+            "note": "query strings and credentials are not returned in the result",
+        }
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+
+
+async def _artifact_fetch(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    return await asyncio.to_thread(_artifact_fetch_sync, root, action)
 
 
 def _project_cwd(root: Path, raw: str | None) -> Path:
@@ -787,6 +1082,12 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
         return cleanup_job(root, action["job_id"])
     if kind == "sync_ff":
         return await _sync_ff(root, binding, action, handoff=handoff)
+    if kind == "git_switch_ff":
+        return await _git_switch_ff(root, binding, action, handoff=handoff)
+    if kind == "apply_source_patch":
+        return await _apply_source_patch(root, action)
+    if kind == "artifact_fetch":
+        return await _artifact_fetch(root, action)
     if kind == "run_tool":
         if action.get("tool") == "python_script" and action.get("path") == DIRECT_OPS_COMPAT_PATH:
             return await _run_direct_ops_compat(root, project_id, action)

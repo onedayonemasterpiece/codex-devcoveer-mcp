@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -280,4 +281,125 @@ def test_restart_service_is_deferred_and_allowlisted(tmp_path: Path, monkeypatch
         run(da.run_host_action(
             str(repo), "p", {"kind": "restart_service", "service": "other"},
             config_path=cfg,
+        ))
+
+
+def test_liberal_fast_paths_preserve_existing_shell_capability():
+    variants = {item["properties"]["kind"]["const"]: item for item in da.PROJECT_ACTION_INPUT_SCHEMA["properties"]["action"]["oneOf"]}
+    for legacy in {
+        "sync_ff", "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
+        "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "capture_handoff",
+        "worktree_capture_handoff", "worktree_reconcile", "owned_service_action", "github_pr_create",
+        "github_pr_update", "github_pr_merge", "github_branch_delete", "job_start", "job_status",
+        "job_cancel", "job_cleanup", "job_list", "git_fetch", "github_workflow_dispatch",
+        "github_run_cancel", "batch", "handoff_commit_push",
+    }:
+        assert legacy in variants
+    assert {"git_switch_ff", "apply_source_patch", "artifact_fetch"} <= set(variants)
+    run_tool = variants["run_tool"]
+    assert "bash_script" in run_tool["properties"]["tool"]["enum"]
+    assert "python_script" in run_tool["properties"]["tool"]["enum"]
+
+
+def test_apply_source_patch_treats_executable_looking_text_as_inert_source(tmp_path: Path):
+    repo = init_repo(tmp_path / "repo")
+    cfg = write_cfg(tmp_path / "cfg.json", repo)
+    base = git(repo, "rev-parse", "HEAD")
+    patch = (
+        "diff --git a/a.txt b/a.txt\n"
+        "--- a/a.txt\n"
+        "+++ b/a.txt\n"
+        "@@ -1 +1 @@\n"
+        "-one\n"
+        "+subprocess.run(['echo', 'still source data'])\n"
+    )
+    digest = hashlib.sha256(patch.encode()).hexdigest()
+    result = run(da.run_project_action(
+        str(repo), "p",
+        {"kind": "apply_source_patch", "base_sha": base, "patch": patch, "patch_sha256": digest,
+         "expected_head": base},
+        config_path=cfg,
+    ))
+    assert result["status"] == "ok"
+    assert result["note"].startswith("patch contents were treated as inert source data")
+    assert (repo / "a.txt").read_text() == "subprocess.run(['echo', 'still source data'])\n"
+
+
+def test_git_switch_ff_switches_existing_branch_and_preserves_untracked(tmp_path: Path, monkeypatch):
+    seed = init_repo(tmp_path / "seed")
+    bare = tmp_path / "remote.git"
+    subprocess.check_call(["/usr/bin/git", "init", "-q", "--bare", str(bare)])
+    git(seed, "remote", "add", "origin", str(bare))
+    git(seed, "push", "-q", "-u", "origin", "main")
+    git(seed, "checkout", "-q", "-b", "feature")
+    (seed / "a.txt").write_text("feature-one\n")
+    git(seed, "add", "a.txt")
+    git(seed, "commit", "-q", "-m", "feature")
+    git(seed, "push", "-q", "-u", "origin", "feature")
+    git(seed, "checkout", "-q", "main")
+
+    work = tmp_path / "work"
+    subprocess.check_call(["/usr/bin/git", "clone", "-q", "--branch", "main", str(bare), str(work)])
+    git(work, "config", "user.name", "T")
+    git(work, "config", "user.email", "t@example.invalid")
+    git(work, "branch", "feature", "origin/feature")
+    old_head = git(work, "rev-parse", "HEAD")
+    (work / "keep.untracked").write_text("keep\n")
+
+    git(seed, "checkout", "-q", "feature")
+    (seed / "a.txt").write_text("feature-two\n")
+    git(seed, "add", "a.txt")
+    git(seed, "commit", "-q", "-m", "feature two")
+    expected = git(seed, "rev-parse", "HEAD")
+    git(seed, "push", "-q", "origin", "feature")
+
+    cfg = write_cfg(tmp_path / "cfg.json", work)
+    monkeypatch.setattr(da, "_remote_repo", lambda _url: "o/r")
+    result = run(da.run_project_action(
+        str(work), "p",
+        {"kind": "git_switch_ff", "remote": "origin", "branch": "feature",
+         "expected_sha": expected, "expected_head": old_head},
+        config_path=cfg,
+    ))
+    assert result["status"] == "ok"
+    assert result["old_branch"] == "main"
+    assert git(work, "branch", "--show-current") == "feature"
+    assert git(work, "rev-parse", "HEAD") == expected
+    assert (work / "keep.untracked").read_text() == "keep\n"
+
+
+def test_artifact_fetch_streams_https_without_returning_query_credentials(tmp_path: Path, monkeypatch):
+    repo = init_repo(tmp_path / "repo")
+    cfg = write_cfg(tmp_path / "cfg.json", repo)
+    payload = b"model-bytes"
+    class FakeResponse:
+        status = 200
+        headers = {"Content-Length": str(len(payload)), "Content-Type": "application/octet-stream"}
+        def __init__(self): self.offset = 0
+        def read(self, size):
+            if self.offset >= len(payload): return b""
+            chunk = payload[self.offset:self.offset + size]
+            self.offset += len(chunk)
+            return chunk
+        def geturl(self): return "https://cdn.example.invalid/model.bin?signature=secret"
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+    class FakeOpener:
+        def open(self, _request, timeout):  # noqa: ARG002
+            return FakeResponse()
+    monkeypatch.setattr(da.urllib.request, "build_opener", lambda *_args: FakeOpener())
+    expected = hashlib.sha256(payload).hexdigest()
+    result = run(da.run_project_action(
+        str(repo), "p",
+        {"kind": "artifact_fetch", "url": "https://example.invalid/model.bin?signature=secret",
+         "path": "vendor/model.bin", "expected_sha256": expected, "create_parents": True},
+        config_path=cfg,
+    ))
+    assert result["status"] == "ok" and result["sha256"] == expected
+    assert (repo / "vendor" / "model.bin").read_bytes() == payload
+    assert "signature" not in json.dumps(result)
+    with pytest.raises(da.ProbeError, match="HTTPS"):
+        run(da.run_project_action(
+            str(repo), "p", {"kind": "artifact_fetch", "url": "http://example.invalid/x",
+            "path": "vendor/x"}, config_path=cfg,
         ))
