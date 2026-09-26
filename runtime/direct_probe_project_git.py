@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import quote
 
 from direct_ops2 import resolve_github_remote
+from workspace_selection import addressable_project_name
 from direct_probe_core import (
     MAX_DIFF_BYTES, MAX_FILE_BYTES, MAX_LIST_ENTRIES, MAX_PROCESS_OUTPUT, MAX_SEARCH_BYTES,
     MAX_SEARCH_FILES, MAX_SEARCH_MATCHES, MAX_TEXT_BYTES, MAX_TREE_ENTRIES, HEX40_RE, ProcessResult, ProbeError,
@@ -189,6 +190,7 @@ async def _worktree_list(root: Path) -> dict[str, Any]:
     result = await _git(root, "worktree", "list", "--porcelain", "-z", output_limit=16 * 1024)
     chunks = [x for x in result.stdout.decode("utf-8", "replace").split("\0\0") if x.strip()]
     worktrees = []
+    root_real = root.resolve(strict=True)
     for chunk in chunks[:30]:
         row: dict[str, Any] = {}
         for line in chunk.split("\0"):
@@ -199,6 +201,16 @@ async def _worktree_list(root: Path) -> dict[str, Any]:
             elif key == "HEAD": row["head"] = value
             elif key == "branch": row["branch"] = value.removeprefix("refs/heads/")
             elif key in {"detached", "bare", "locked", "prunable"}: row[key] = value or True
+        path = row.get("path")
+        if isinstance(path, str):
+            try:
+                row["current"] = Path(path).resolve(strict=True) == root_real
+            except OSError:
+                row["current"] = False
+            project = addressable_project_name(path)
+            if project is not None:
+                row["project"] = project
+                row["tool_addressable"] = True
         if row:
             worktrees.append(row)
     return {"worktrees": worktrees, "complete": not result.truncated and len(chunks) <= 30}
