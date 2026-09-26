@@ -103,7 +103,10 @@ PROJECT_CHECK_SCHEMAS = [
     }, ["remote", "branch"]),
     _check_schema("git_log", {"ref": _REF_SCHEMA, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}, ["ref"]),
     _check_schema("tree", {"ref": _REF_SCHEMA, "path": {"type": "string", "maxLength": 500}, "limit": _LIMIT_SCHEMA}, ["ref"]),
-    _check_schema("worktree_list"),
+    {**_check_schema("worktree_list"), "description": (
+        "List Git worktrees for the resolved repository. Direct-child checkouts under /home/dev/projects "
+        "include a tool-addressable project hint and current marker; use them to select the physical workspace."
+    )},
     _check_schema("worktree_compare", {
         "worktree": {"type":"string","minLength":1,"maxLength":1000},
         "target_ref": _REF_SCHEMA,
