@@ -9,7 +9,7 @@ from typing import Any
 from direct_probe_core import (
     BATCH_DEADLINE_SECONDS, CHECK_TIMEOUT_SECONDS, DEFAULT_CONFIG_PATH, HOST_PROBE_INPUT_SCHEMA,
     MAX_CHECKS, MAX_RESPONSE_BYTES, PROJECT_PROBE_INPUT_SCHEMA, ProcessResult, ProbeError,
-    _binding, _load_config, _now_iso, _redact_text, _run_process, _safe_worktree_path,
+    _binding, _load_config, _now_iso, _recent_direct_receipts, _redact_text, _run_process, _safe_worktree_path,
     _validate_alias, _validate_ref,
 )
 from direct_probe_project import (
@@ -90,6 +90,7 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
     if kind == "instructions": return read_instructions(root, check), "exact-instruction-file"
     if kind == "web_preflight": return await web_preflight(root, check), "project-local-web-runtime"
     if kind == "git_state": return await _git_state(root), "git-local"
+    if kind == "recent_direct_ops": return _recent_direct_receipts(root, limit=int(check.get("limit", 20))), "local-direct-receipts"
     if kind == "remote_head": return await _remote_head(root, binding, check["remote"], check["branch"]), "github-remote+git-tracking"
     if kind == "git_log": return await _git_log(root, check), "git-local-object"
     if kind == "tree": return await _tree(root, check), "git-local-object"
