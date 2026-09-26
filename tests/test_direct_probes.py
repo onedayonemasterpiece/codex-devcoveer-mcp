@@ -315,3 +315,22 @@ def test_slow_checks_have_more_than_twenty_seconds_and_batch_is_parallel(tmp_pat
     monkeypatch.setattr(dp, "_one_project", fake_one_project); monkeypatch.setitem(dp.CHECK_TIMEOUT_SECONDS, "git_state", 1.0); monkeypatch.setattr(dp, "BATCH_DEADLINE_SECONDS", 1.0)
     started = time.monotonic(); payload = run(dp.run_project_probe(str(repo), "p", [{"id":"a", "kind":"git_state"},{"id":"b", "kind":"git_state"},{"id":"c", "kind":"git_state"}], config_path=cfg)); elapsed = time.monotonic() - started
     assert elapsed < 0.35 and [row["status"] for row in payload["results"]] == ["ok", "ok", "ok"]
+
+
+def test_project_probe_records_typed_receipts_without_payload(tmp_path: Path, monkeypatch):
+    repo = init_repo(tmp_path / "receipts")
+    cfg = write_cfg(tmp_path / "cfg-receipts.json", "p", repo)
+    seen = []
+    monkeypatch.setattr(dp, "_append_direct_receipt", seen.append)
+    payload = run(dp.run_project_probe(
+        str(repo), "p", [{"id":"s","kind":"git_state"}], config_path=cfg
+    ))
+    assert payload["results"][0]["status"] == "ok"
+    assert len(seen) == 1
+    receipt = seen[0]
+    assert receipt["surface"] == "typed"
+    assert receipt["plane"] == "project_probe"
+    assert receipt["operation"] == "git_state"
+    assert receipt["project"] == "p"
+    assert receipt["status"] == "ok"
+    assert "payload" not in receipt and "args" not in receipt and "output" not in receipt
