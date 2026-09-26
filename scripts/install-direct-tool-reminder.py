@@ -27,7 +27,7 @@ DESCRIPTION_V1 = (
     '            "obtain the result."),\n'
 )
 DESCRIPTION_NEW = (
-    '            "creation, and updates. Before start_task, route deterministic work to typed/direct tools: "\n'
+    '            "creation, and updates. Before start_task for deterministic Git/host/runtime/model/task-state checks and other deterministic work, route to typed/direct tools: "\n'
     '            "project_probe for Git/source/read/search/diff/remote/CI facts; host_probe for service/log/listener/resource/runtime facts; direct_ops_v2, project_action, and host_action for deterministic mutations, tests, builds, Git, GitHub, and registered host actions. "\n'
     '            "If a current direct operation name or parameter schema is unknown, call direct_ops_v2 with operation=describe before choosing an agent. "\n'
     '            "Use project_action for registered project test/build/deploy profiles. Known short deterministic tests/builds use run_tool; known long-running deterministic tests/builds use job_start then job_status, with python_env=auto to reuse the existing project environment rather than create a venv. "\n'
@@ -94,7 +94,7 @@ HELPER_POLICY_V2 = '''_CHATGPT_OPERATING_REMINDER_V2 = True
 _DIRECT_TOOL_REMINDER_TEXT = (
     "Direct DevCoveer tools should be used first: project_probe for Git/read/search/diff/remote/CI facts; "
     "host_probe for services/logs/listeners/resources/runtime; direct_ops_v2/project_action/host_action for deterministic "
-    "mutations, tests, builds, Git, GitHub and registered host actions. If an operation name or parameters are unknown, "
+    "mutations, tests, builds, Git, GitHub and registered host actions, including source-handoff commit/push through project_action. If an operation name or parameters are unknown, "
     "use direct_ops_v2 operation=describe. Use run_tool for known short tests/builds and job_start then job_status for long "
     "deterministic tests/builds, with python_env=auto to reuse the project environment. Use git_fetch for fetch without checkout "
     "and typed github_workflow_dispatch/github_run_cancel for applicable workflow operations; list_models and list_tasks/read_task "
