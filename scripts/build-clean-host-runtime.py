@@ -217,7 +217,9 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
             idempotent_hint=False, open_world_hint=True)),
     types.Tool(name="project_probe", title="Read deterministic project facts",
         description=("Read bounded deterministic project facts without starting an agent task. "
-            "Use this for Git state, files, hashes, searches, and narrowly scoped CI status. Use instructions for exact home/project AGENTS.md reads and web_preflight for local pinned Playwright readiness before web tests."),
+            "Use this for Git state, files, hashes, searches, worktree discovery, and narrowly scoped CI status. "
+            "worktree_list includes tool-addressable project names for existing physical checkouts. "
+            "Use instructions for exact home/project AGENTS.md reads and web_preflight for local pinned Playwright readiness before web tests."),
         input_schema=PROJECT_PROBE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=True, destructive_hint=False,
             idempotent_hint=True, open_world_hint=True)),
@@ -230,8 +232,9 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     types.Tool(name="project_action", title="Run registered project operation",
         description=("Execute typed deterministic project operations without an agent: "
             "direct tools and durable jobs, fetch, GitHub Actions control, registered profiles, "
-            "and source-handoff commit/push. Direct tools accept a project cwd and bounded "
-            "nonsecret environment flags; executables remain server selected."),
+            "and source-handoff commit/push. Checkout-sensitive actions accept optional expected_head "
+            "to fail before side effects when the resolved physical worktree is not the task checkpoint. "
+            "Direct tools accept a project cwd and bounded nonsecret environment flags; executables remain server selected."),
         input_schema=PROJECT_ACTION_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
             idempotent_hint=False, open_world_hint=True)),
