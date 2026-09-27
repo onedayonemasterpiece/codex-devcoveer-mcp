@@ -115,7 +115,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.25.0-direct-ops2"' in bridge
+        assert 'BRIDGE_VERSION = "3.26.0-incident-observability"' in bridge
         assert 'name="stage_source_handoff"' in bridge
         assert 'name="cleanup_source_handoff"' in bridge
         assert 'name="street_story_materialize_release"' in bridge

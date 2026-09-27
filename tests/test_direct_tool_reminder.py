@@ -56,6 +56,9 @@ def test_transform_adds_pre_call_and_post_call_reminders():
     assert "apply_source_patch" in transformed
     assert "artifact_fetch" in transformed
     assert "full-power reasoning escape hatch" in transformed
+    assert "incident_search/incident_get" in transformed
+    assert "host_probe inventory plus logs/log_search/health" in transformed
+    assert "Ordinary local/unit-test failures do not require an incident" in transformed
 
 
 def test_transform_is_idempotent_after_marker_is_present():

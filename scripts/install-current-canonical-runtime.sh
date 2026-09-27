@@ -137,6 +137,9 @@ else
   die "unsupported wrapper type"
 fi
 
+echo "=== incident observability preflight ==="
+"$BRIDGE_PY" "$SRC/scripts/install-incident-observability.py"
+
 echo "=== canonical wrapper acceptance ==="
 "$BRIDGE_PY" - "$WRAP" <<'PY'
 import asyncio, sys
@@ -156,6 +159,8 @@ PY
 echo "bridge=$BRIDGE_SHA"
 echo "backend=$BACKEND_SHA"
 echo "wrapper_canonical=PASS"
+"$BRIDGE_PY" "$SRC/scripts/install-incident-observability.py" --apply
+echo "incident_observability=INSTALLED"
 if [ "$SKIP_TUNNEL_RESTART" = "1" ]; then
   # Return the deployment receipt before the caller explicitly restarts the
   # registered MCP tunnel through host_action. Do not schedule a self-restart

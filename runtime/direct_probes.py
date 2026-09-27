@@ -9,7 +9,7 @@ from typing import Any
 from direct_probe_core import (
     BATCH_DEADLINE_SECONDS, CHECK_TIMEOUT_SECONDS, DEFAULT_CONFIG_PATH, HOST_PROBE_INPUT_SCHEMA,
     MAX_CHECKS, MAX_RESPONSE_BYTES, PROJECT_PROBE_INPUT_SCHEMA, ProcessResult, ProbeError,
-    _append_direct_receipt, _binding, _load_config, _now_iso, _recent_direct_receipts, _redact_text, _run_process, _safe_worktree_path,
+    _append_direct_receipt, _binding, _binding_for_root, _load_config, _now_iso, _recent_direct_receipts, _redact_text, _run_process, _safe_worktree_path,
     _validate_alias, _validate_ref,
 )
 from direct_probe_project import (
@@ -19,11 +19,12 @@ from direct_probe_project import (
 from direct_ops2 import project_capabilities, workspace_compare
 from direct_ops2_worktrees import worktree_compare
 from direct_web_context import read_instructions, web_preflight
+from incident_registry import get_incident, search_incidents
 from direct_ops2_host import (
     mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
 )
 from direct_probe_host import (
-    _config_presence, _health, _host_section, _inventory, _journal_unit, _listeners, _logs,
+    _config_presence, _health, _host_section, _inventory, _journal_unit, _listeners, _logs, _log_search,
     _network_listeners, _resources, _runtime, _runtime_file, _service_list, _system_info,
     _systemctl_show,
 )
@@ -105,6 +106,9 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
     if kind == "file_stat": return await _file_stat(root, check["path"]), "worktree-metadata+git-index"
     if kind == "file_sha256": return await _file_sha(root, check["path"]), "worktree-file"
     if kind == "github_status": return await _github_status(binding, check), "github-read-api"
+    incident_project = str(binding.get("_devcoveer_project_scope") or binding.get("github_repo") or "unbound")
+    if kind == "incident_search": return search_incidents(incident_project, query=check.get("query"), status=check.get("status"), severity=check.get("severity"), limit=int(check.get("limit", 20))), "incident-registry"
+    if kind == "incident_get": return get_incident(incident_project, check["incident_id"]), "incident-registry"
     raise ProbeError("invalid_input", f"unknown project probe kind {kind!r}")
 
 
@@ -129,6 +133,7 @@ async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dic
         if not isinstance(cfg, dict): raise ProbeError("target_denied", "service is not registered", status="denied")
         data = await _listeners(cfg); data["alias"] = alias; return data, "systemd+/proc-sockets"
     if kind == "logs": return await _logs(binding, check), "journal-or-operational-log"
+    if kind == "log_search": return await _log_search(binding, check), "journal-or-operational-log-search"
     if kind == "resources": return await _resources(binding, check), "statvfs+/proc+du-metadata"
     if kind == "health": return await _health(binding, check), "registered-loopback-http"
     if kind == "runtime": return await _runtime(binding, check), "trusted-runtime"
@@ -185,7 +190,9 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
     observed = _now_iso()
     root = Path(project_root).resolve(strict=True)
     config = _load_config(config_path or DEFAULT_CONFIG_PATH)
-    binding = _binding(config, project_id)
+    binding_id, binding, binding_inherited = await _binding_for_root(config, project_id, root)
+    binding = dict(binding)
+    binding["_devcoveer_project_scope"] = str(binding.get("github_repo") or binding_id)
     slots: list[dict[str, Any] | asyncio.Task[dict[str, Any]]] = []
     tasks: list[asyncio.Task[dict[str, Any]]] = []
     seen_ids: set[str] = set()
@@ -230,7 +237,7 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
 
     payload = {
         "execution": "direct", "observed_at": observed,
-        "target": {"project": project_id, "cwd": str(root), "host_binding": bool(project_id in config["projects"])},
+        "target": {"project": project_id, "cwd": str(root), "host_binding": bool(binding_id in config["projects"]), "binding_project": binding_id, "binding_inherited": binding_inherited},
         "duration_ms": int((time.monotonic() - request_started) * 1000),
         "batch_deadline_seconds": BATCH_DEADLINE_SECONDS,
         "atomic": False, "results": results, "response_truncated": False,

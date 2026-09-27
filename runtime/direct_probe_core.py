@@ -30,7 +30,8 @@ CHECK_TIMEOUT_SECONDS: dict[str, float] = {
     "git_state": 15.0, "recent_direct_ops": 5.0, "remote_head": 25.0, "git_log": 15.0, "tree": 15.0,
     "worktree_list": 10.0, "diff": 25.0, "read_text": 25.0, "search": 35.0,
     "file_list": 25.0, "file_stat": 12.0, "file_sha256": 35.0, "github_status": 50.0,
-    "inventory": 5.0, "service": 12.0, "listeners": 15.0, "logs": 25.0,
+    "incident_search": 5.0, "incident_get": 5.0,
+    "inventory": 5.0, "service": 12.0, "listeners": 15.0, "logs": 25.0, "log_search": 25.0,
     "resources": 50.0, "health": 15.0, "runtime": 20.0, "runtime_file": 35.0,
     "config_presence": 15.0,
     "system_info": 10.0, "service_list": 20.0, "journal": 25.0,
@@ -163,6 +164,15 @@ PROJECT_CHECK_SCHEMAS = [
         "failed_log_lines": {"type": "integer", "minimum": 0, "maximum": 500},
         "include_runners": {"type": "boolean", "default": False},
     }),
+    _check_schema("incident_search", {
+        "query": {"type": "string", "maxLength": 512},
+        "status": {"type": "string", "enum": ["open", "mitigated", "closed"]},
+        "severity": {"type": "string", "enum": ["sev1", "sev2", "sev3", "sev4", "unknown"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+    }),
+    _check_schema("incident_get", {
+        "incident_id": {"type": "string", "pattern": r"^inc_[0-9a-f]{24}$"},
+    }, ["incident_id"]),
 ]
 
 HOST_CHECK_SCHEMAS = [
@@ -188,6 +198,15 @@ HOST_CHECK_SCHEMAS = [
         "lines": {"type": "integer", "minimum": 1, "maximum": MAX_LOG_LINES},
         "since_seconds": {"type": "integer", "minimum": 0, "maximum": 604800},
     }, ["log"]),
+    _check_schema("log_search", {
+        "log": {"type": "string", "minLength": 1, "maxLength": 64},
+        "query": {"type": "string", "minLength": 1, "maxLength": 512},
+        "regex": {"type": "boolean", "default": False},
+        "case_sensitive": {"type": "boolean", "default": False},
+        "since_seconds": {"type": "integer", "minimum": 0, "maximum": 2592000, "default": 3600},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "context_lines": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0},
+    }, ["log", "query"]),
     _check_schema("resources", {
         "root": {"type": "string", "minLength": 1, "maxLength": 64},
         "largest": {"type": "integer", "minimum": 0, "maximum": 30},
@@ -299,6 +318,39 @@ def _binding(config: dict[str, Any], project_id: str) -> dict[str, Any]:
     if not isinstance(binding, dict):
         raise ProbeError("config", "project binding is invalid")
     return binding
+
+
+
+_GITHUB_REMOTE_URL_RE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+    r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$"
+)
+
+
+async def _binding_for_root(config: dict[str, Any], project_id: str, root: Path) -> tuple[str, dict[str, Any], bool]:
+    """Resolve host/project binding by exact project id, then inherit by GitHub repository for worktrees."""
+    direct = _binding(config, project_id)
+    if project_id in config["projects"]:
+        return project_id, direct, False
+    try:
+        remote = await _git(root, "remote", "get-url", "origin", output_limit=4096)
+    except Exception:
+        return project_id, direct, False
+    if remote.exit_code != 0:
+        return project_id, direct, False
+    match = _GITHUB_REMOTE_URL_RE.fullmatch(remote.stdout.decode("utf-8", "replace").strip())
+    if match is None:
+        return project_id, direct, False
+    repository = match.group(1)
+    candidates = [
+        (candidate_id, candidate)
+        for candidate_id, candidate in config["projects"].items()
+        if isinstance(candidate, dict) and candidate.get("github_repo") == repository
+    ]
+    if len(candidates) != 1:
+        return project_id, direct, False
+    binding_id, binding = candidates[0]
+    return binding_id, binding, True
 
 
 def _validate_alias(value: str) -> str:

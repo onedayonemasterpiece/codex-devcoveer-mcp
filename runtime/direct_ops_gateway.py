@@ -74,6 +74,8 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
                   "paths": "path is project-root-relative even with cwd. Web tests may pass nonsecret CHECK_BASE and CHECK_OUTPUT through env. Prefer configured secret bindings/config_presence over broad .env discovery; explicit secret workflows remain separate and are not disabled by Direct Ops.",
                   "escape_hatch": "Typed operations are preferred semantic fast paths, not a capability boundary. If a legitimate operation is absent from the typed surface, start_task remains available for full-power reasoning and unforeseen operations.",
                   "browser": "Interactive DOM/console/network/visual review uses my-browser-bridge; repository browser tests use existing scripts. A binary on disk, HTTP 200 or a successful build is not UI acceptance.",
+                  "observability": "For runtime failures, production regressions and incident work, inspect registered logs with host_probe logs/log_search and health/service state before concluding root cause. Prefer targeted time-bounded log_search over broad shell grep.",
+                  "incidents": "For production incidents/recovery, search related incidents before remediation, open/link an incident, record evidence and mitigation in its timeline, verify against live logs/health, then close with root cause/resolution/follow-ups. Ordinary unit-test or feature work does not require an incident.",
               }}
     if operation is not None:
         if operation not in operations:

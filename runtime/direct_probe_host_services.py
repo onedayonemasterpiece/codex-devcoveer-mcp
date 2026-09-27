@@ -220,10 +220,10 @@ async def _listeners(service_cfg: dict[str, Any]) -> dict[str, Any]:
         ),
     }
 
-def _tail_file(path: Path, lines: int, max_bytes: int = MAX_TEXT_BYTES) -> tuple[str,bool]:
+def _tail_file(path: Path, lines: int, max_bytes: int = MAX_TEXT_BYTES, read_limit: int = 256*1024) -> tuple[str,bool]:
     st=path.lstat()
     if not statmod.S_ISREG(st.st_mode) or statmod.S_ISLNK(st.st_mode): raise ProbeError("file_type","operational log must be a regular file",status="denied")
-    read_bytes=min(st.st_size,256*1024)
+    read_bytes=min(st.st_size,read_limit)
     with path.open("rb") as f:
         if st.st_size>read_bytes: f.seek(st.st_size-read_bytes)
         data=f.read(read_bytes)
@@ -253,3 +253,117 @@ async def _logs(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any
     else: raise ProbeError("config","unknown log target type")
     text,red=_redact_text(text)
     return {"source":source,"text":text,"complete":not truncated,"truncated":truncated,"redacted":red}
+
+
+def _search_log_text(text: str, *, query: str, use_regex: bool, case_sensitive: bool,
+                     limit: int, context_lines: int) -> dict[str, Any]:
+    flags = 0 if case_sensitive else re.IGNORECASE
+    if use_regex:
+        try:
+            pattern = re.compile(query, flags)
+        except re.error as exc:
+            raise ProbeError("invalid_input", f"invalid log search regex: {exc}") from exc
+        matches_line = lambda line: pattern.search(line) is not None
+    else:
+        needle = query if case_sensitive else query.casefold()
+        matches_line = lambda line: needle in (line if case_sensitive else line.casefold())
+    lines = text.splitlines()
+    hits: list[dict[str, Any]] = []
+    seen_ranges: set[tuple[int, int]] = set()
+    total_matches = 0
+    for index, line in enumerate(lines):
+        if not matches_line(line):
+            continue
+        total_matches += 1
+        if len(hits) >= limit:
+            continue
+        start = max(0, index - context_lines)
+        end = min(len(lines), index + context_lines + 1)
+        key = (start, end)
+        if key in seen_ranges:
+            continue
+        seen_ranges.add(key)
+        excerpt = "\n".join(lines[start:end])
+        excerpt, redacted = _redact_text(excerpt)
+        hits.append({
+            "line": index + 1,
+            "text": excerpt,
+            "redacted": redacted,
+        })
+    return {
+        "matches": hits,
+        "match_count": total_matches,
+        "returned": len(hits),
+        "truncated_matches": total_matches > len(hits),
+    }
+
+
+async def _log_search(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
+    alias = _validate_alias(check["log"])
+    cfg = _host_section(binding, "logs").get(alias)
+    if not isinstance(cfg, dict):
+        raise ProbeError("target_denied", "log target is not registered", status="denied")
+    query = str(check["query"])
+    limit = max(1, min(int(check.get("limit", 50)), 200))
+    context_lines = max(0, min(int(check.get("context_lines", 0)), 5))
+    since_seconds = int(check.get("since_seconds", 3600))
+    # Scan substantially more than we return, while keeping memory/output bounded.
+    scan_lines = min(5000, max(1000, limit * 25))
+    source = ""
+    source_truncated = False
+    if cfg.get("type") == "journal":
+        unit_alias = cfg.get("service")
+        service_cfg = _host_section(binding, "services").get(unit_alias)
+        if not isinstance(service_cfg, dict):
+            raise ProbeError("config", "journal log refers to unknown service")
+        unit = service_cfg["unit"]
+        scope = service_cfg.get("scope", "user")
+        argv = ["/usr/bin/journalctl"] + (["--user"] if scope == "user" else []) + [
+            "--unit", unit, "--no-pager", "--output=short-iso",
+            "-n", str(scan_lines), "--since", f"-{since_seconds} seconds",
+        ]
+        result = await _run_process(
+            argv, env=_systemd_env(scope), timeout=15, output_limit=2 * 1024 * 1024
+        )
+        if result.exit_code != 0:
+            raise ProbeError("logs", result.stderr.decode("utf-8", "replace")[-1000:],
+                             exit_code=result.exit_code)
+        text = result.stdout.decode("utf-8", "replace")
+        source_truncated = result.truncated or len(text.splitlines()) >= scan_lines
+        source = f"journal:{unit}"
+    elif cfg.get("type") == "file":
+        path = Path(str(cfg.get("path", "")))
+        allowed_roots = [
+            Path(str(v.get("path") if isinstance(v, dict) else v)).resolve()
+            for v in _host_section(binding, "roots").values()
+        ]
+        if not path.is_absolute():
+            raise ProbeError("config", "operational log path must be absolute")
+        resolved = path.resolve(strict=True)
+        if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+            raise ProbeError("target_denied", "operational log is outside registered host roots", status="denied")
+        text, source_truncated = await asyncio.to_thread(
+            _tail_file, resolved, scan_lines, 2 * 1024 * 1024, 2 * 1024 * 1024
+        )
+        source = f"file:{alias}"
+    else:
+        raise ProbeError("config", "unknown log target type")
+    filtered = _search_log_text(
+        text,
+        query=query,
+        use_regex=bool(check.get("regex", False)),
+        case_sensitive=bool(check.get("case_sensitive", False)),
+        limit=limit,
+        context_lines=context_lines,
+    )
+    return {
+        "source": source,
+        "query": query,
+        "regex": bool(check.get("regex", False)),
+        "case_sensitive": bool(check.get("case_sensitive", False)),
+        "since_seconds": since_seconds,
+        **filtered,
+        "complete": not source_truncated and not filtered["truncated_matches"],
+        "source_truncated": source_truncated,
+        "redacted": any(bool(item.get("redacted")) for item in filtered["matches"]),
+    }
