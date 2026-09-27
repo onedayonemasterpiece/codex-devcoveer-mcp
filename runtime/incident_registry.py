@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -176,6 +177,167 @@ def related_incidents(state: dict[str, Any], *, project: str, title: str, summar
     ranked.sort(key=lambda row: (row[0], int(row[1].get("updated_at") or 0)), reverse=True)
     return [_incident_summary(item, relation_score=score) for score, item in ranked[:limit]]
 
+
+
+_GITHUB_REMOTE_RE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+    r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$"
+)
+_INCIDENT_FAILURE_MARKERS = (
+    "incident", "outage", "degrad", "regression", "failure", "failed", "broken",
+    "crash", "timeout", "stuck", "safety review", "security review", "safety check",
+    "инцидент", "авари", "деград", "регресс", "ошиб", "слом", "не работает",
+    "упёрся в безопасность", "проверка безопасности", "проверки безопасности",
+)
+_INCIDENT_LIVE_MARKERS = (
+    "production", "prod", "live", "runtime", "service", "deploy", "rollout", "host",
+    "devcoveer", "server", "публикац", "прод", "лайв", "сервис", "рантайм",
+    "деплой", "раскат", "сервер", "безопасност",
+)
+_INCIDENT_ACTION_MARKERS = (
+    "fix", "repair", "recover", "investigat", "diagnos", "root cause", "continue",
+    "resolve", "restore", "remediat", "почин", "исправ", "восстанов", "разбер",
+    "расслед", "продолж", "устран",
+)
+
+
+def looks_like_live_incident(prompt: str) -> bool:
+    text = (prompt or "").casefold()
+    if any(marker in text for marker in (
+        "no production impact", "no prod impact", "no live impact", "local only",
+        "без влияния на прод", "прод не затронут", "только локально",
+    )):
+        return False
+    return (
+        any(marker in text for marker in _INCIDENT_FAILURE_MARKERS)
+        and any(marker in text for marker in _INCIDENT_LIVE_MARKERS)
+        and any(marker in text for marker in _INCIDENT_ACTION_MARKERS)
+    )
+
+
+def incident_project_scope(project_id: str, directory: str) -> str:
+    try:
+        result = subprocess.run(
+            ["/usr/bin/git", "-C", directory, "remote", "get-url", "origin"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            timeout=3, check=False, env={
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+                "HOME": os.environ.get("HOME", "/home/dev"),
+                "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
+                "GIT_TERMINAL_PROMPT": "0",
+            },
+        )
+        if result.returncode == 0:
+            match = _GITHUB_REMOTE_RE.fullmatch(result.stdout.strip())
+            if match is not None:
+                return match.group(1)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return project_id
+
+
+def _preflight_title(title: str, prompt: str) -> str:
+    value = (title or "").strip()
+    if not value:
+        value = next((line.strip() for line in prompt.splitlines() if line.strip()), "Live incident")
+    return value[:300]
+
+
+def _incident_agent_context(incident: dict[str, Any], related: list[dict[str, Any]]) -> str:
+    related_text = ", ".join(
+        f"{row['incident_id']} ({row['status']}: {row['title'][:120]})"
+        for row in related[:5]
+    ) or "none"
+    return (
+        "DEVCOVEER INCIDENT PREFLIGHT (automatic, not an approval gate): "
+        f"incident_id={incident['incident_id']}; project={incident['project']}; "
+        f"related_prior_incidents={related_text}. "
+        "Before remediation, inspect incident history and registered live logs/health. "
+        "Record material observations/mitigation/verification in the incident timeline. "
+        "Missing typed primitives do not remove the full-power shell/agent capability."
+    )
+
+
+def preflight_incident(project_id: str, directory: str, title: str, prompt: str) -> dict[str, Any] | None:
+    if not looks_like_live_incident(prompt):
+        return None
+    project = incident_project_scope(project_id, directory)
+    clean_title = _preflight_title(title, prompt)
+    clean_summary = _clean_text(prompt[:MAX_TEXT], field="summary")
+    tags = ["auto-preflight"]
+    lowered = prompt.casefold()
+    if "safety" in lowered or "security" in lowered or "безопасност" in lowered:
+        tags.append("safety-review")
+    now = _now()
+    with _LockedState() as state:
+        ranked: list[tuple[int, dict[str, Any]]] = []
+        for candidate in state["incidents"]:
+            if candidate.get("project") != project or candidate.get("status") == "closed":
+                continue
+            score = _relation_score(candidate, project, clean_title, clean_summary, [], tags)
+            if score >= 3:
+                ranked.append((score, candidate))
+        ranked.sort(key=lambda row: (row[0], int(row[1].get("updated_at") or 0)), reverse=True)
+        if ranked and ranked[0][0] >= 5:
+            incident = ranked[0][1]
+            incident["updated_at"] = now
+            timeline = incident.setdefault("timeline", [])
+            if len(timeline) < MAX_TIMELINE:
+                timeline.append({
+                    "at": now, "kind": "observation",
+                    "note": "A DevCoveer task was automatically attached to this open incident before remediation.",
+                    "evidence_refs": [],
+                })
+            related = related_incidents(
+                state, project=project, title=clean_title, summary=clean_summary,
+                services=[], tags=tags, exclude_id=incident["incident_id"],
+            )
+            return {
+                "incident": _incident_summary(incident), "related": related, "reused": True,
+                "agent_context": _incident_agent_context(incident, related),
+            }
+
+        automatic = related_incidents(
+            state, project=project, title=clean_title, summary=clean_summary,
+            services=[], tags=tags,
+        )
+        incident = {
+            "incident_id": "inc_" + secrets.token_hex(12),
+            "project": project, "title": clean_title, "summary": clean_summary,
+            "severity": "unknown", "status": "open", "services": [], "tags": tags,
+            "related_incidents": [row["incident_id"] for row in automatic],
+            "created_at": now, "updated_at": now, "closed_at": None,
+            "root_cause": None, "resolution": None, "verification": None,
+            "action_items": [],
+            "timeline": [{
+                "at": now, "kind": "opened",
+                "note": "Incident automatically opened by start_task preflight; prior related incidents must be reviewed before remediation.",
+                "evidence_refs": [],
+            }],
+        }
+        state["incidents"].append(incident)
+        return {
+            "incident": _incident_summary(incident), "related": automatic, "reused": False,
+            "agent_context": _incident_agent_context(incident, automatic),
+        }
+
+
+
+def active_incident_id(project: str) -> str | None:
+    _ensure_state_dir()
+    fd = os.open(INCIDENT_LOCK_PATH, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "r+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+        state = _load_unlocked()
+    open_rows = [
+        incident for incident in state["incidents"]
+        if incident.get("project") == project and incident.get("status") != "closed"
+    ]
+    if not open_rows:
+        return None
+    open_rows.sort(key=lambda row: int(row.get("updated_at") or 0), reverse=True)
+    value = open_rows[0].get("incident_id")
+    return value if isinstance(value, str) and INCIDENT_ID_RE.fullmatch(value) else None
 
 def search_incidents(project: str, *, query: str | None = None, status: str | None = None,
                      severity: str | None = None, limit: int = 20) -> dict[str, Any]:

@@ -446,6 +446,10 @@
           "transport": "loopback_http",
           "endpoints": [
             "http://127.0.0.1:4310"
+          ],
+          "safe_environment_keys": [
+            "WL_GEMINI_PYTHON",
+            "WL_GEMINI_ENV_FILE"
           ]
         }
       },
@@ -625,7 +629,39 @@
       "health": {},
       "runtimes": {},
       "runtime_files": {},
-      "config_presence": {}
+      "config_presence": {
+        "operator_env": {
+          "path": "/home/dev/.env",
+          "keys": [
+            "AI_RESOURCE_CONTROL_FALLBACK_KEY",
+            "AI_RESOURCE_CONTROL_SERVICE_KEY",
+            "AI_RESOURCE_CONTROL_URL",
+            "AI_RESOURCE_LIMITER_DB_PASSWORD",
+            "AI_SUPABASE_DIRECT_CONNECTION",
+            "AI_SUPABASE_DIRECT_CONNECTION_STRING",
+            "AI_SUPABASE_SECRET_KEY",
+            "AI_SUPABASE_URL",
+            "GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY",
+            "GOOGLE_AI_LIMITER_SUPABASE_URL",
+            "GOOGLE_API_KEY",
+            "GOOGLE_API_KEY2",
+            "GOOGLE_API_KEY6",
+            "PERSONALIZATION_DIRECT_CONNECTION_STRING",
+            "PERSONALIZATION_SUPABASE_ACCESS_TOKEN",
+            "PERSONALIZATION_SUPABASE_PROJECT_REF",
+            "SUPABASE_ACCESS_TOKEN",
+            "SUPABASE_DATABASE_URL",
+            "SUPABASE_DB_PASSWORD",
+            "SUPABASE_KEY",
+            "SUPABASE_MANAGEMENT_API_TOKEN",
+            "SUPABASE_MANAGEMENT_TOKEN",
+            "SUPABASE_PAT",
+            "SUPABASE_PERSONAL_ACCESS_TOKEN",
+            "SUPABASE_TOKEN",
+            "SUPABASE_URL"
+          ]
+        }
+      }
     },
     "events-bot-new": {
       "github_repo": "onedayonemasterpiece/events-bot-new",
@@ -643,7 +679,42 @@
       "health": {},
       "runtimes": {},
       "runtime_files": {},
-      "config_presence": {}
+      "config_presence": {
+        "product_env": {
+          "path": "/home/dev/projects/events-bot-new/.env",
+          "keys": [
+            "GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY",
+            "GOOGLE_AI_LIMITER_SUPABASE_URL",
+            "PERSONALIZATION_SUPABASE_ACCESS_TOKEN",
+            "PERSONALIZATION_SUPABASE_PROJECT_REF",
+            "PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY",
+            "PERSONALIZATION_SUPABASE_RELAY_URL",
+            "PERSONALIZATION_SUPABASE_SECRET_KEY",
+            "PERSONALIZATION_SUPABASE_SERVICE_ROLE_KEY",
+            "PERSONALIZATION_SUPABASE_URL",
+            "PUBLIC_PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY",
+            "PUBLIC_PERSONALIZATION_SUPABASE_RELAY_URL",
+            "PUBLIC_PERSONALIZATION_SUPABASE_URL",
+            "STATIC_SITE_PUBLIC_PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY",
+            "STATIC_SITE_PUBLIC_PERSONALIZATION_SUPABASE_RELAY_URL",
+            "STATIC_SITE_PUBLIC_PERSONALIZATION_SUPABASE_URL",
+            "SUPABASE_ACCESS_TOKEN",
+            "SUPABASE_KEY",
+            "SUPABASE_SERVICE_KEY",
+            "SUPABASE_URL"
+          ]
+        },
+        "operator_env": {
+          "path": "/home/dev/.env",
+          "keys": [
+            "GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY",
+            "GOOGLE_AI_LIMITER_SUPABASE_URL",
+            "GOOGLE_API_KEY",
+            "GOOGLE_API_KEY2",
+            "GOOGLE_API_KEY6"
+          ]
+        }
+      }
     },
     "projects-hub": {
       "github_repo": "onedayonemasterpiece/projects-hub",

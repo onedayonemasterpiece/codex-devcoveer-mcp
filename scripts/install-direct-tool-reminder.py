@@ -36,7 +36,7 @@ DESCRIPTION_NEW = (
     '            "For continuation work that names or implies a checkpoint, branch, SHA or prior worktree, first inspect find_projects workspaceContext and project_probe worktree_list; exact repository-name resolution identifies only one physical checkout. Address the matching project before read/write/test/build and pass expected_head on guarded direct actions when a checkpoint SHA is known. When project_probe git_state provides tracked_workspace_digest, pass expected_workspace_digest on guarded local actions when the exact tracked workspace must be preserved across parallel work. stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree. "\n'
     '            "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "\n'
     '            "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. Browser suites and unknown-duration checks use job_start then job_status; pass nonsecret CHECK_BASE/CHECK_OUTPUT through env, with path relative to project root even when cwd is set. Prefer exact probes over broad HOME enumeration; use broader agent investigation only when it is actually required, and do not borrow browser binaries from other checkouts. "\n'
-    '            "For a production/live incident, material regression, failed recovery/deploy, repeated live failure, or unreproduced production bug: before remediation use incident_search/incident_get for prior history, incident_open to create or resume the record, and host_probe inventory plus logs/log_search/health for runtime evidence. Record evidence/mitigation with incident_note and close only after live verification. Ordinary local/unit-test failures do not require an incident. "\n'
+    '            "For a clear production/live incident, material regression, failed recovery/deploy, repeated live failure, or unreproduced production bug, start_task automatically opens or reuses an incident, injects related history into agent context, and returns incidentId; this is fail-open and never an approval gate. Use incident_search/incident_get, host_probe inventory plus logs/log_search/health, safe service/config metadata probes, and registered-root Git facts before remediation. Direct Ops receipts correlate to the active incident. Ordinary local/unit-test failures do not require an incident. "\n'
     '            "When changing failure-prone live behavior, ensure concise structured diagnostic logging exists at external boundaries, decisions, retries, state transitions, failures and successful outcomes; include correlation/release/component context when useful and never log secrets. "\n'
     '            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to OpenCode. ChatGPT should author the exact code/docs change itself, use direct project_action writes when available, and use stage_source_handoff when direct repository writing is unavailable; use the supplied patch for verification/commit/push rather than rewrite source/docs. "\n'
     '            "Use start_task only when the work requires reasoning beyond typed operations or an unforeseen operation absent from the typed surface. Use read_task later to check status and obtain the result."),\n'
@@ -185,6 +185,15 @@ START_RETURN_NEW = '''                payload = {
                     "content": "OpenCode task started in the background. Use read_task with "
                                "the returned taskId to obtain the result.",
                 }
+                if isinstance(incident_preflight, dict):
+                    incident = incident_preflight.get("incident")
+                    if isinstance(incident, dict):
+                        payload["incidentId"] = incident.get("incident_id")
+                        payload["incidentReused"] = bool(incident_preflight.get("reused"))
+                        payload["relatedIncidents"] = [
+                            row.get("incident_id") for row in incident_preflight.get("related", [])
+                            if isinstance(row, dict) and row.get("incident_id")
+                        ]
                 direct_tools_hint = _direct_tool_reminder(arguments["prompt"], access)
                 if direct_tools_hint is not None:
                     payload["directToolsHint"] = direct_tools_hint
@@ -192,6 +201,48 @@ START_RETURN_NEW = '''                payload = {
                 return _tool_result(payload)
 '''
 
+
+START_PREFLIGHT_OLD = """            task_name = _task_title(project, arguments["prompt"])
+            if route["backend"] == "opencode":
+"""
+START_PREFLIGHT_NEW = """            task_name = _task_title(project, arguments["prompt"])
+            incident_preflight = None
+            task_prompt = arguments["prompt"]
+            try:
+                incident_preflight = _preflight_incident(
+                    project.canonical, project.path, task_name, arguments["prompt"]
+                )
+            except Exception as exc:
+                log.error("incident preflight failed open (%s)", type(exc).__name__)
+            if isinstance(incident_preflight, dict) and incident_preflight.get("agent_context"):
+                task_prompt = str(incident_preflight["agent_context"]) + "\\n\\n" + task_prompt
+            if route["backend"] == "opencode":
+"""
+OPENCODE_PROMPT_OLD = """                        prompt=arguments["prompt"], access=access,
+"""
+OPENCODE_PROMPT_NEW = """                        prompt=task_prompt, access=access,
+"""
+NATIVE_PROMPT_OLD = """                    "text": _first_prompt(project.canonical, arguments["prompt"], access),
+"""
+NATIVE_PROMPT_NEW = """                    "text": _first_prompt(project.canonical, task_prompt, access),
+"""
+NATIVE_INCIDENT_RESULT_OLD = """            if naming_warning is not None:
+                payload["warning"] = naming_warning
+            return _tool_result(payload)
+"""
+NATIVE_INCIDENT_RESULT_NEW = """            if isinstance(incident_preflight, dict):
+                incident = incident_preflight.get("incident")
+                if isinstance(incident, dict):
+                    payload["incidentId"] = incident.get("incident_id")
+                    payload["incidentReused"] = bool(incident_preflight.get("reused"))
+                    payload["relatedIncidents"] = [
+                        row.get("incident_id") for row in incident_preflight.get("related", [])
+                        if isinstance(row, dict) and row.get("incident_id")
+                    ]
+            if naming_warning is not None:
+                payload["warning"] = naming_warning
+            return _tool_result(payload)
+"""
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -216,6 +267,10 @@ def transform_bridge(source: str) -> str:
         source, TOOL_RESULT_ANCHOR, HELPER_BLOCK + TOOL_RESULT_ANCHOR, "tool result helper anchor"
     )
     source = replace_once(source, START_RETURN_OLD, START_RETURN_NEW, "OpenCode start_task result")
+    source = replace_once(source, START_PREFLIGHT_OLD, START_PREFLIGHT_NEW, "incident task preflight")
+    source = replace_once(source, OPENCODE_PROMPT_OLD, OPENCODE_PROMPT_NEW, "OpenCode incident prompt context")
+    source = replace_once(source, NATIVE_PROMPT_OLD, NATIVE_PROMPT_NEW, "native incident prompt context")
+    source = replace_once(source, NATIVE_INCIDENT_RESULT_OLD, NATIVE_INCIDENT_RESULT_NEW, "native incident result")
     return source
 
 

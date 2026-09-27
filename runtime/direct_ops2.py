@@ -100,7 +100,7 @@ async def project_capabilities(root: Path, binding: dict[str, Any]) -> dict[str,
         ],
         "direct_host_actions": [
             "restart_service", "service_action", "run_profile", "write_registered_file",
-            "delete_registered_file", "daemon_reload",
+            "delete_registered_file", "daemon_reload", "root_git_sync_exact",
         ],
         "runners": [
             "pytest", "bash_script", "python_script", "node_script", "npm_script",

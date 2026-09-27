@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from direct_probe_core import (
     ProbeError,
+    _git,
     _redact_text,
     _run_process,
     _sha256_path,
@@ -338,6 +339,103 @@ async def network_probe(check: dict[str, Any]) -> dict[str, Any]:
         return {"mode": mode, **await _tls(host, port)}
     raise ProbeError("invalid_input", "unknown network probe mode")
 
+
+
+
+_GITHUB_REPO_URL_RE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+    r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$"
+)
+
+
+async def root_git_state(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
+    root = _registered_root(binding, check["root"])
+    inside = await _git(root, "rev-parse", "--is-inside-work-tree", timeout=10, output_limit=128)
+    if inside.exit_code != 0 or inside.stdout.decode("utf-8", "replace").strip() != "true":
+        raise ProbeError("git_state", "registered root is not a Git worktree", status="denied")
+    head_result = await _git(root, "rev-parse", "HEAD", timeout=10, output_limit=128)
+    head = head_result.stdout.decode("utf-8", "replace").strip() if head_result.exit_code == 0 else None
+    branch_result = await _git(root, "symbolic-ref", "--quiet", "--short", "HEAD", timeout=10, output_limit=512, ok_codes=(0, 1))
+    branch = branch_result.stdout.decode("utf-8", "replace").strip() if branch_result.exit_code == 0 else None
+    tracked = await _git(root, "status", "--porcelain=v1", "--untracked-files=no", timeout=15, output_limit=64 * 1024)
+    if tracked.exit_code != 0:
+        raise ProbeError("git_state", "could not inspect registered-root tracked state", exit_code=tracked.exit_code)
+    untracked = await _git(root, "ls-files", "--others", "--exclude-standard", "-z", timeout=15, output_limit=256 * 1024)
+    if untracked.exit_code != 0:
+        raise ProbeError("git_state", "could not inspect registered-root untracked state", exit_code=untracked.exit_code)
+    untracked_count = len([item for item in untracked.stdout.split(b"\0") if item])
+    tracked_lines = [line for line in tracked.stdout.decode("utf-8", "replace").splitlines() if line]
+    return {
+        "root": check["root"], "head": head, "branch": branch,
+        "tracked_clean": not tracked_lines,
+        "tracked_changes": tracked_lines[:200],
+        "untracked_count": untracked_count,
+        "complete": not tracked.truncated and not untracked.truncated,
+    }
+
+
+def _registered_repo_from_url(url: str) -> str | None:
+    match = _GITHUB_REPO_URL_RE.fullmatch(url.strip())
+    return match.group(1) if match else None
+
+
+async def root_git_sync_exact(binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    root = _registered_root(binding, action["root"])
+    remote = _validate_alias(action.get("remote", "origin"))
+    branch = str(action["branch"])
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", branch) is None or ".." in branch:
+        raise ProbeError("invalid_ref", "invalid root Git branch")
+    expected = str(action["expected_sha"]).lower()
+    if re.fullmatch(r"[0-9a-f]{40}", expected) is None:
+        raise ProbeError("invalid_input", "expected_sha must be exact 40-hex")
+
+    state = await root_git_state(binding, {"root": action["root"]})
+    if not state["tracked_clean"]:
+        raise ProbeError(
+            "dirty_tracked",
+            "registered runtime root has tracked/staged edits; refusing exact sync without resetting them",
+            status="denied",
+        )
+    expected_head = action.get("expected_head")
+    if expected_head is not None and state.get("head") != expected_head:
+        raise ProbeError(
+            "workspace_drift",
+            f"registered runtime HEAD {state.get('head') or '<unknown>'} differs from expected {expected_head}",
+            status="denied",
+        )
+
+    remote_url = await _git(root, "remote", "get-url", remote, timeout=10, output_limit=4096)
+    if remote_url.exit_code != 0:
+        raise ProbeError("remote_denied", "registered runtime remote is unavailable", status="denied")
+    configured_repo = binding.get("github_repo")
+    observed_repo = _registered_repo_from_url(remote_url.stdout.decode("utf-8", "replace"))
+    if isinstance(configured_repo, str) and configured_repo and observed_repo != configured_repo:
+        raise ProbeError("remote_mismatch", "registered runtime Git remote does not match project repository", status="denied")
+
+    fetched = await _git(root, "fetch", "--no-tags", "--no-recurse-submodules", remote,
+                         f"refs/heads/{branch}", timeout=120, output_limit=64 * 1024)
+    if fetched.exit_code != 0:
+        err, _ = _redact_text(fetched.stderr.decode("utf-8", "replace"))
+        raise ProbeError("fetch_failed", err[-1600:] or "registered runtime fetch failed",
+                         exit_code=fetched.exit_code)
+    observed = await _git(root, "rev-parse", "FETCH_HEAD", timeout=10, output_limit=128)
+    fetched_sha = observed.stdout.decode("utf-8", "replace").strip() if observed.exit_code == 0 else ""
+    if fetched_sha != expected:
+        raise ProbeError("remote_moved", f"fetched SHA {fetched_sha or '<unknown>'} differs from expected {expected}",
+                         status="denied")
+    checkout = await _git(root, "checkout", "--detach", expected, timeout=60, output_limit=64 * 1024)
+    if checkout.exit_code != 0:
+        err, _ = _redact_text(checkout.stderr.decode("utf-8", "replace"))
+        raise ProbeError("checkout_failed", err[-1600:] or "registered runtime checkout failed",
+                         exit_code=checkout.exit_code)
+    after = await root_git_state(binding, {"root": action["root"]})
+    if after.get("head") != expected or not after.get("tracked_clean"):
+        raise ProbeError("readback_failed", "registered runtime exact sync failed readback")
+    return {
+        "status": "ok", "action": "root_git_sync_exact", "root": action["root"],
+        "remote": remote, "branch": branch, "old_head": state.get("head"),
+        "new_head": expected, "untracked_preserved_count": after.get("untracked_count", 0),
+    }
 
 def mcp_manifest(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
     from direct_ops_gateway import describe_plane

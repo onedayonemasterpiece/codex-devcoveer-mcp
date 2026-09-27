@@ -8,6 +8,12 @@ Create or resume an incident for production/live outage, material degradation, d
 
 Do **not** create an incident for an ordinary unit-test failure, local implementation mistake, expected experiment failure, or routine feature work with no live impact.
 
+## Automatic preflight and correlation
+
+For a prompt that clearly combines a live/production failure with investigation or remediation, start_task automatically opens or reuses the repository incident before the agent starts. The agent receives the incident ID and related-history context. This is not an approval gate: registry/preflight failure is fail-open and does not remove agent/shell capability.
+
+While an incident is open, Direct Ops receipts for the same repository/worktree automatically carry the current incident_id, so retrospective analysis can correlate model actions with application logs.
+
 ## Required incident sequence
 
 1. **Open or resume.** Use `incident_search` before remediation. Then `incident_open`; the registry automatically links similar earlier incidents. Read relevant linked incidents with `incident_get`.
@@ -48,10 +54,15 @@ Use:
 - `host_probe log_search(log=..., query=..., since_seconds=..., limit=..., context_lines=...)` for targeted investigation;
 - `host_probe logs` for bounded recent tails;
 - `host_probe service`, `listeners` and `health` for runtime state;
+- host_probe service_config for explicitly registered non-secret environment paths/configuration without dumping the service environment;
+- host_probe config_metadata / config_compare for allowlisted config aliases without returning raw values or hashes;
+- host_probe root_git_state and host_action root_git_sync_exact for exact registered production-runtime Git readback/sync;
 - `project_probe recent_direct_ops` for DevCoveer action history;
 - `get_task_evidence` for terminal OpenCode session evidence.
 
 Start with a narrow time range and exact identifiers/error text, then widen only when necessary.
+
+For GitHub workflow dispatches, supply a stable request_key. Reusing the same key after a timeout or lost response performs reconciliation and never issues a second dispatch; use a new key only for an intentional rerun.
 
 ## Correlation and future telemetry
 

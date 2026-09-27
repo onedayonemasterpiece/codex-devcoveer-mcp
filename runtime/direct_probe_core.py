@@ -31,11 +31,11 @@ CHECK_TIMEOUT_SECONDS: dict[str, float] = {
     "worktree_list": 10.0, "diff": 25.0, "read_text": 25.0, "search": 35.0,
     "file_list": 25.0, "file_stat": 12.0, "file_sha256": 35.0, "github_status": 50.0,
     "incident_search": 5.0, "incident_get": 5.0,
-    "inventory": 5.0, "service": 12.0, "listeners": 15.0, "logs": 25.0, "log_search": 25.0,
+    "inventory": 5.0, "service": 12.0, "service_config": 12.0, "listeners": 15.0, "logs": 25.0, "log_search": 25.0,
     "resources": 50.0, "health": 15.0, "runtime": 20.0, "runtime_file": 35.0,
-    "config_presence": 15.0,
+    "config_presence": 15.0, "config_metadata": 15.0, "config_compare": 15.0,
     "system_info": 10.0, "service_list": 20.0, "journal": 25.0,
-    "network_listeners": 15.0,
+    "network_listeners": 15.0, "root_git_state": 25.0,
 }
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_TEXT_BYTES = 64 * 1024
@@ -184,6 +184,7 @@ HOST_CHECK_SCHEMAS = [
         "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 200},
     }),
     _check_schema("service", {"service": {"type": "string", "minLength": 1, "maxLength": 64}}, ["service"]),
+    _check_schema("service_config", {"service": {"type": "string", "minLength": 1, "maxLength": 64}}, ["service"]),
     _check_schema("journal", {
         "unit": {"type": "string", "minLength": 1, "maxLength": 200,
                  "pattern": r"^[A-Za-z0-9_.@:-]+\.service$"},
@@ -231,6 +232,9 @@ HOST_CHECK_SCHEMAS = [
         "start_line": {"type":"integer","minimum":1,"maximum":1000000},
         "end_line": {"type":"integer","minimum":1,"maximum":1000000},
     }, ["root","path"]),
+    _check_schema("root_git_state", {
+        "root": {"type":"string","minLength":1,"maxLength":64},
+    }, ["root"]),
     _check_schema("process_tree", {
         "service": {"type":"string","minLength":1,"maxLength":64},
         "limit": {"type":"integer","minimum":1,"maximum":128},
@@ -248,6 +252,16 @@ HOST_CHECK_SCHEMAS = [
     _check_schema("config_presence", {
         "source": {"type": "string", "minLength": 1, "maxLength": 64},
         "keys": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": True,
+                 "items": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z_][A-Za-z0-9_]*$"}},
+    }, ["source", "keys"]),
+    _check_schema("config_metadata", {
+        "source": {"type": "string", "minLength": 1, "maxLength": 64},
+        "keys": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": True,
+                 "items": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z_][A-Za-z0-9_]*$"}},
+    }, ["source", "keys"]),
+    _check_schema("config_compare", {
+        "source": {"type": "string", "minLength": 1, "maxLength": 64},
+        "keys": {"type": "array", "minItems": 2, "maxItems": 32, "uniqueItems": True,
                  "items": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z_][A-Za-z0-9_]*$"}},
     }, ["source", "keys"]),
 ]

@@ -9,8 +9,10 @@ Use this workflow for real live incidents. Ordinary local/unit-test failures do 
 
 ## 1. Establish incident context before remediation
 
-- Search the registry with `project_probe incident_search`.
-- Open/resume with `project_action incident_open`. Read the automatically linked earlier incidents with `incident_get`.
+For clear live/production incident prompts, start_task automatically opens or reuses an incident and injects its ID plus related incident history before the agent starts. This is fail-open and is not an approval gate.
+
+- Search the registry with project_probe incident_search.
+- Open/resume with project_action incident_open when working directly without start_task. Read the automatically linked earlier incidents with incident_get.
 - Treat earlier root causes and mitigations as evidence to check, not instructions to copy blindly.
 - If this is a recurrence, explicitly note how it matches or differs from the earlier incident.
 
@@ -23,6 +25,9 @@ First call `host_probe inventory` for the target project/worktree. Worktrees inh
 Then collect the smallest useful evidence set:
 
 - `service` + `health`/listeners where registered;
+- service_config for registered non-secret runtime paths/settings without dumping all environment variables;
+- config_metadata / config_compare for allowlisted credential/config relationships without exposing raw values or hashes;
+- root_git_state for registered production runtime checkouts; use root_git_sync_exact for guarded exact-SHA sync when appropriate;
 - `log_search` for the relevant error, request/session/job ID, provider/model, endpoint or time window;
 - `logs` only for a recent tail;
 - `recent_direct_ops` when DevCoveer actions might be causal;
@@ -47,6 +52,8 @@ Attach safe evidence references where useful. Preserve substantial evidence unde
 Prefer an exact typed operation when available because it produces better receipts. This is a preference, not a capability restriction: use the full-power agent/shell path when a legitimate operation is absent from the typed surface.
 
 Protect parallel worktrees with HEAD/workspace guards. Do not reset, clean, stash or overwrite unrelated work.
+
+For GitHub workflow dispatches use a stable request_key; retry the same key to reconcile a lost response without dispatching twice.
 
 ## 5. Verify the live symptom
 
