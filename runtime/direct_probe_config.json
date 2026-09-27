@@ -724,15 +724,81 @@
       "executables": {
         "gh": "/usr/bin/gh"
       },
-      "services": {},
-      "logs": {},
-      "roots": {
-        "source": "/home/dev/projects/projects-hub"
+      "services": {
+        "backend": {
+          "unit": "projects-hub.service",
+          "scope": "user",
+          "ports": [
+            8196
+          ],
+          "executable": "/home/dev/.local/share/projects-hub/current/venv/bin/python",
+          "working_directory": "/home/dev/.local/share/projects-hub/current/source",
+          "transport": "loopback_http",
+          "endpoints": [
+            "http://127.0.0.1:8196"
+          ]
+        }
       },
-      "health": {},
-      "runtimes": {},
-      "runtime_files": {},
-      "config_presence": {}
+      "logs": {
+        "backend": {
+          "type": "journal",
+          "service": "backend"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/projects-hub",
+        "releases": "/home/dev/.local/share/projects-hub/releases",
+        "runtime_state": "/home/dev/.local/state/projects-hub"
+      },
+      "health": {
+        "backend": {
+          "url": "http://127.0.0.1:8196/healthz",
+          "methods": [
+            "GET",
+            "HEAD"
+          ],
+          "timeout_seconds": 3,
+          "body_bytes": 4096
+        }
+      },
+      "runtimes": {
+        "python": {
+          "type": "cli",
+          "argv": [
+            "/home/dev/.local/share/projects-hub/current/venv/bin/python",
+            "--version"
+          ]
+        }
+      },
+      "runtime_files": {
+        "app": "/home/dev/.local/share/projects-hub/current/source/src/projects_hub/app.py"
+      },
+      "config_presence": {
+        "service_env": {
+          "path": "/home/dev/.local/state/projects-hub/service.env",
+          "keys": [
+            "PROJECTS_HUB_DATA_DIR",
+            "PROJECTS_HUB_STATIC_DIR",
+            "PROJECTS_HUB_SESSION_SECRET_FILE",
+            "PROJECTS_HUB_DEV_AUTH",
+            "PROJECTS_HUB_DEPLOY_SHA",
+            "PROJECTS_HUB_PORT"
+          ]
+        },
+        "provider_env": {
+          "path": "/home/dev/.local/state/projects-hub/providers.env",
+          "keys": [
+            "AI_RESOURCE_CONTROL_URL",
+            "AI_RESOURCE_CONTROL_SERVICE_KEY",
+            "AI_SUPABASE_URL",
+            "AI_SUPABASE_SECRET_KEY",
+            "GOOGLE_AI_LIMITER_SUPABASE_URL",
+            "GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY",
+            "AI_RESOURCE_LEDGER_ID",
+            "GOOGLE_API_KEY4"
+          ]
+        }
+      }
     }
   }
 }
