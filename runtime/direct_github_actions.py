@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import fcntl
+import hashlib
 import json
 import os
 import re
+import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +16,9 @@ from direct_ops2 import resolve_github_remote
 
 HEX40_RE=re.compile(r"^[0-9a-f]{40}$")
 CHATGPT_BRANCH_RE=re.compile(r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$")
+REQUEST_KEY_RE=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
+DISPATCH_STATE_PATH=Path.home()/".local"/"state"/"openai-codex-mcp"/"github-workflow-dispatches.json"
+DISPATCH_LOCK_PATH=DISPATCH_STATE_PATH.with_suffix(".lock")
 
 
 def _env() -> dict[str,str]:
@@ -187,33 +195,289 @@ async def git_fetch(root: Path, binding: dict[str, Any], action: dict[str, Any])
             "branch": branch, "fetched_sha": result.stdout.decode().strip(), "checkout_updated": False}
 
 
+
+
+def _dispatch_spec_sha(repo: str, workflow: str, ref: str, inputs: dict[str, Any]) -> str:
+    payload = json.dumps(
+        {"repository": repo, "workflow": workflow, "ref": ref, "inputs": inputs},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _dispatch_state_load() -> dict[str, Any]:
+    if not DISPATCH_STATE_PATH.exists():
+        return {"version": 1, "receipts": {}}
+    if DISPATCH_STATE_PATH.is_symlink():
+        raise ProbeError("dispatch_receipt", "dispatch receipt store may not be a symlink")
+    try:
+        data = json.loads(DISPATCH_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise ProbeError("dispatch_receipt", "dispatch receipt store is unreadable") from exc
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("receipts"), dict):
+        raise ProbeError("dispatch_receipt", "dispatch receipt store has unsupported shape")
+    return data
+
+
+def _dispatch_state_save(data: dict[str, Any]) -> None:
+    DISPATCH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp = tempfile.mkstemp(prefix=".workflow-dispatch-", dir=DISPATCH_STATE_PATH.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, DISPATCH_STATE_PATH)
+        os.chmod(DISPATCH_STATE_PATH, 0o600)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
+class _DispatchLock:
+    def __enter__(self):
+        DISPATCH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(DISPATCH_LOCK_PATH, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        self.handle = os.fdopen(fd, "r+")
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        self.data = _dispatch_state_load()
+        return self.data
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                _dispatch_state_save(self.data)
+        finally:
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+            self.handle.close()
+
+
+async def _workflow_run_rows(binding: dict[str, Any], repo: str, workflow: str, ref: str) -> list[dict[str, Any]]:
+    text = await _gh(
+        binding,
+        ["api", "--method", "GET", f"repos/{repo}/actions/workflows/{workflow}/runs",
+         "-f", "event=workflow_dispatch", "-f", "per_page=50"],
+        timeout=30,
+    )
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise ProbeError("github", "workflow runs response was not valid JSON") from exc
+    rows = data.get("workflow_runs") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ProbeError("github", "workflow runs response has no workflow_runs list")
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        run_id = row.get("id")
+        if not isinstance(run_id, int) or isinstance(run_id, bool):
+            continue
+        head_branch = row.get("head_branch")
+        if isinstance(head_branch, str) and head_branch != ref:
+            continue
+        out.append({
+            "id": run_id,
+            "status": row.get("status"),
+            "conclusion": row.get("conclusion"),
+            "head_sha": row.get("head_sha"),
+            "head_branch": head_branch,
+            "created_at": row.get("created_at"),
+            "html_url": row.get("html_url"),
+        })
+    return out
+
+
+async def _reconcile_dispatch(binding: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
+    rows = await _workflow_run_rows(
+        binding, receipt["repository"], receipt["workflow"], receipt["ref"]
+    )
+    baseline = set(int(x) for x in receipt.get("baseline_run_ids", []) if isinstance(x, int))
+    candidates = [row for row in rows if row["id"] not in baseline]
+    if len(candidates) == 1:
+        return {"state": "found", "run": candidates[0]}
+    if len(candidates) > 1:
+        return {"state": "ambiguous", "runs": candidates[:10]}
+    return {"state": "not_found", "runs": []}
+
+
+def _dispatch_public(receipt: dict[str, Any], *, reused: bool) -> dict[str, Any]:
+    run_id = receipt.get("run_id")
+    return {
+        "status": receipt.get("status", "accepted_unknown"),
+        "action": "github_workflow_dispatch",
+        "repository": receipt["repository"],
+        "workflow": receipt["workflow"],
+        "requested_ref": receipt["ref"],
+        "request_key": receipt["request_key"],
+        "run_id": run_id,
+        "url": receipt.get("url"),
+        "receipt_complete": isinstance(run_id, int),
+        "automatic_retry_safe": True,
+        "reused": reused,
+        "note": (
+            "Same request_key never performs a second dispatch; use a new key for an intentional rerun."
+        ),
+    }
+
 async def workflow_dispatch(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
     _remote, repo = await _repo(root, binding, action.get("remote", "origin"))
     workflow = action["workflow"]
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", workflow) is None:
         raise ProbeError("invalid_input", "workflow must be an ID or a filename")
     ref = _validate_branch(action["ref"])
-    args = ["api", "--method", "POST", f"repos/{repo}/actions/workflows/{workflow}/dispatches",
-            "-H", "X-GitHub-Api-Version: 2026-03-10", "-f", f"ref={ref}"]
-    for key, value in (action.get("inputs") or {}).items():
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,79}", key) is None:
-            raise ProbeError("invalid_input", "invalid workflow input name")
-        if isinstance(value, str):
-            args.extend(["-f", f"inputs[{key}]={value}"])
-        else:
-            args.extend(["-F", f"inputs[{key}]={json.dumps(value, allow_nan=False)}"])
-    # Never retry a dispatch automatically: a lost receipt may still have started a run.
-    text = await _gh(binding, args)
-    try:
-        receipt = json.loads(text) if text.strip() else {}
-    except ValueError:
-        receipt = {}
-    run_id = receipt.get("workflow_run_id") if isinstance(receipt, dict) else None
-    run_id = run_id if isinstance(run_id, int) and not isinstance(run_id, bool) and run_id > 0 else None
-    return {"status": "accepted", "action": "github_workflow_dispatch", "repository": repo,
-            "workflow": workflow, "requested_ref": ref, "run_id": run_id,
+    inputs = action.get("inputs") or {}
+    request_key = action.get("request_key")
+
+    async def post_dispatch() -> None:
+        args = ["api", "--method", "POST", f"repos/{repo}/actions/workflows/{workflow}/dispatches",
+                "-H", "X-GitHub-Api-Version: 2026-03-10", "-f", f"ref={ref}"]
+        for key, value in inputs.items():
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,79}", key) is None:
+                raise ProbeError("invalid_input", "invalid workflow input name")
+            if isinstance(value, str):
+                args.extend(["-f", f"inputs[{key}]={value}"])
+            else:
+                args.extend(["-F", f"inputs[{key}]={json.dumps(value, allow_nan=False)}"])
+        await _gh(binding, args, timeout=45)
+
+    if request_key is None:
+        args = ["api", "--method", "POST", f"repos/{repo}/actions/workflows/{workflow}/dispatches",
+                "-H", "X-GitHub-Api-Version: 2026-03-10", "-f", f"ref={ref}"]
+        for key, value in inputs.items():
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,79}", key) is None:
+                raise ProbeError("invalid_input", "invalid workflow input name")
+            if isinstance(value, str):
+                args.extend(["-f", f"inputs[{key}]={value}"])
+            else:
+                args.extend(["-F", f"inputs[{key}]={json.dumps(value, allow_nan=False)}"])
+        text = await _gh(binding, args, timeout=45)
+        try:
+            legacy = json.loads(text) if text.strip() else {}
+        except ValueError:
+            legacy = {}
+        run_id = legacy.get("workflow_run_id") if isinstance(legacy, dict) else None
+        run_id = run_id if isinstance(run_id, int) and not isinstance(run_id, bool) and run_id > 0 else None
+        return {
+            "status": "accepted" if run_id is not None else "accepted_unknown",
+            "action": "github_workflow_dispatch",
+            "repository": repo, "workflow": workflow, "requested_ref": ref,
+            "run_id": run_id,
             "url": f"https://github.com/{repo}/actions/runs/{run_id}" if run_id else None,
-            "receipt_complete": run_id is not None, "automatic_retry_safe": False}
+            "receipt_complete": run_id is not None,
+            "automatic_retry_safe": False,
+            "note": "No request_key was supplied; do not automatically retry after a lost response.",
+        }
+    if REQUEST_KEY_RE.fullmatch(request_key) is None:
+        raise ProbeError("invalid_input", "invalid workflow dispatch request_key")
+
+    spec_sha = _dispatch_spec_sha(repo, workflow, ref, inputs)
+    created_new = False
+    with _DispatchLock() as state:
+        existing = state["receipts"].get(request_key)
+        if existing is not None:
+            if existing.get("spec_sha256") != spec_sha:
+                raise ProbeError(
+                    "request_key_conflict",
+                    "workflow dispatch request_key is already bound to different arguments",
+                    status="denied",
+                )
+            receipt = dict(existing)
+        else:
+            receipt = {
+                "request_key": request_key, "spec_sha256": spec_sha,
+                "repository": repo, "workflow": workflow, "ref": ref,
+                "input_names": sorted(inputs), "baseline_run_ids": [],
+                "created_at": int(time.time()), "updated_at": int(time.time()),
+                "status": "reserving", "run_id": None, "url": None,
+            }
+            state["receipts"][request_key] = receipt
+            created_new = True
+
+    if not created_new:
+        if isinstance(receipt.get("run_id"), int):
+            return _dispatch_public(receipt, reused=True)
+        if receipt.get("status") == "reserving":
+            result = _dispatch_public(receipt, reused=True)
+            result["status"] = "pending_reconciliation"
+            result["note"] = (
+                "The first caller reserved this request_key and is establishing its baseline; "
+                "this caller did not dispatch."
+            )
+            return result
+        reconciled = await _reconcile_dispatch(binding, receipt)
+        if reconciled["state"] == "found":
+            run = reconciled["run"]
+            receipt["run_id"] = run["id"]
+            receipt["url"] = run.get("html_url") or f"https://github.com/{repo}/actions/runs/{run['id']}"
+            receipt["status"] = "accepted"
+            receipt["updated_at"] = int(time.time())
+            with _DispatchLock() as state:
+                state["receipts"][request_key] = receipt
+            return _dispatch_public(receipt, reused=True)
+        receipt["status"] = "ambiguous" if reconciled["state"] == "ambiguous" else "pending_reconciliation"
+        receipt["updated_at"] = int(time.time())
+        with _DispatchLock() as state:
+            state["receipts"][request_key] = receipt
+        result = _dispatch_public(receipt, reused=True)
+        if reconciled["state"] == "ambiguous":
+            result["candidate_run_ids"] = [row["id"] for row in reconciled["runs"]]
+        return result
+
+    # The reservation is durable before any network mutation. Establish a baseline
+    # outside the file lock so another caller cannot block the event loop.
+    rows = await _workflow_run_rows(binding, repo, workflow, ref)
+    receipt["baseline_run_ids"] = [row["id"] for row in rows]
+    receipt["status"] = "prepared"
+    receipt["updated_at"] = int(time.time())
+    with _DispatchLock() as state:
+        current = state["receipts"].get(request_key)
+        if not isinstance(current, dict) or current.get("spec_sha256") != spec_sha:
+            raise ProbeError("dispatch_receipt", "workflow dispatch reservation changed unexpectedly")
+        state["receipts"][request_key] = receipt
+
+    try:
+        await post_dispatch()
+    except ProbeError:
+        receipt["status"] = "unknown_after_error"
+        receipt["updated_at"] = int(time.time())
+        with _DispatchLock() as state:
+            state["receipts"][request_key] = receipt
+        raise
+
+    receipt["status"] = "submitted"
+    receipt["updated_at"] = int(time.time())
+    with _DispatchLock() as state:
+        state["receipts"][request_key] = receipt
+
+    for _ in range(5):
+        reconciled = await _reconcile_dispatch(binding, receipt)
+        if reconciled["state"] == "found":
+            run = reconciled["run"]
+            receipt["run_id"] = run["id"]
+            receipt["url"] = run.get("html_url") or f"https://github.com/{repo}/actions/runs/{run['id']}"
+            receipt["status"] = "accepted"
+            break
+        if reconciled["state"] == "ambiguous":
+            receipt["status"] = "ambiguous"
+            break
+        await asyncio.sleep(1)
+    else:
+        receipt["status"] = "accepted_unknown"
+
+    receipt["updated_at"] = int(time.time())
+    with _DispatchLock() as state:
+        state["receipts"][request_key] = receipt
+    result = _dispatch_public(receipt, reused=False)
+    if receipt["status"] == "ambiguous":
+        result["note"] = (
+            "Dispatch was submitted but multiple new runs appeared; same request_key will not dispatch again."
+        )
+    return result
 
 
 async def run_cancel(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:

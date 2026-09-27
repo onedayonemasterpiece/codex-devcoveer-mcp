@@ -19,12 +19,13 @@ from direct_probe_project import (
 from direct_ops2 import project_capabilities, workspace_compare
 from direct_ops2_worktrees import worktree_compare
 from direct_web_context import read_instructions, web_preflight
-from incident_registry import get_incident, search_incidents
+from incident_registry import active_incident_id, get_incident, search_incidents
 from direct_ops2_host import (
     mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
+    root_git_state,
 )
 from direct_probe_host import (
-    _config_presence, _health, _host_section, _inventory, _journal_unit, _listeners, _logs, _log_search,
+    _config_compare, _config_metadata, _config_presence, _health, _host_section, _inventory, _journal_unit, _listeners, _logs, _log_search, _service_config,
     _network_listeners, _resources, _runtime, _runtime_file, _service_list, _system_info,
     _systemctl_show,
 )
@@ -128,6 +129,10 @@ async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dic
         alias = _validate_alias(check["service"]); cfg = _host_section(binding, "services").get(alias)
         if not isinstance(cfg, dict): raise ProbeError("target_denied", "service is not registered", status="denied")
         data = await _systemctl_show(cfg); data["alias"] = alias; return data, "systemd"
+    if kind == "service_config":
+        alias = _validate_alias(check["service"]); cfg = _host_section(binding, "services").get(alias)
+        if not isinstance(cfg, dict): raise ProbeError("target_denied", "service is not registered", status="denied")
+        data = await _service_config(cfg); data["alias"] = alias; return data, "systemd-safe-config"
     if kind == "listeners":
         alias = _validate_alias(check["service"]); cfg = _host_section(binding, "services").get(alias)
         if not isinstance(cfg, dict): raise ProbeError("target_denied", "service is not registered", status="denied")
@@ -141,10 +146,13 @@ async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dic
     if kind == "root_file_stat": return root_file_stat(binding, check), "registered-root"
     if kind == "root_file_sha256": return root_file_sha256(binding, check), "registered-root"
     if kind == "root_read_text": return root_read_text(binding, check), "registered-root"
+    if kind == "root_git_state": return await root_git_state(binding, check), "registered-root-git"
     if kind == "process_tree": return await process_tree(binding, check), "systemd+/proc"
     if kind == "network": return await network_probe(check), "dns+socket+tls/http"
     if kind == "mcp_manifest": return mcp_manifest(binding, check), "installed-runtime-catalog"
     if kind == "config_presence": return await _config_presence(binding, check), "registered-config-presence"
+    if kind == "config_metadata": return await _config_metadata(binding, check), "registered-config-metadata"
+    if kind == "config_compare": return await _config_compare(binding, check), "registered-config-compare"
     raise ProbeError("invalid_input", f"unknown host probe kind {kind!r}")
 
 
@@ -193,6 +201,7 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
     binding_id, binding, binding_inherited = await _binding_for_root(config, project_id, root)
     binding = dict(binding)
     binding["_devcoveer_project_scope"] = str(binding.get("github_repo") or binding_id)
+    incident_id = active_incident_id(binding["_devcoveer_project_scope"])
     slots: list[dict[str, Any] | asyncio.Task[dict[str, Any]]] = []
     tasks: list[asyncio.Task[dict[str, Any]]] = []
     seen_ids: set[str] = set()
@@ -254,6 +263,7 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
             "status": str(result.get("status") or "ok") if isinstance(result, dict) else "ok",
             "error_category": error.get("type") if isinstance(error, dict) else None,
             "duration_ms": int(result.get("duration_ms") or 0) if isinstance(result, dict) else 0,
+            "incident_id": incident_id,
         })
     return _fit_response(payload)
 

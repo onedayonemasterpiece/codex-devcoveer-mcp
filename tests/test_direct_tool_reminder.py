@@ -32,6 +32,10 @@ def synthetic_bridge(mod) -> str:
         '            route = {"reason": "x", "provider": "groq", "selection": "groq/model"}\n'
         '            project = type("P", (), {"canonical": "p", "path": "/tmp/p"})()\n'
         + mod.START_RETURN_OLD
+        + "\n" + mod.START_PREFLIGHT_OLD
+        + "\n" + mod.OPENCODE_PROMPT_OLD
+        + "\n" + mod.NATIVE_PROMPT_OLD
+        + "\n" + mod.NATIVE_INCIDENT_RESULT_OLD
     )
 
 

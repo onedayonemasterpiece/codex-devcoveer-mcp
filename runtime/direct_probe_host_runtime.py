@@ -256,6 +256,114 @@ def _config_presence_file(path: Path, allowed_keys: set[str], requested: list[st
                 value=value.strip(); found[key]=bool(value and value not in {"''",'""'})
     return {"keys":[{"key":key,"present_nonempty":found[key]} for key in requested]}
 
+
+
+def _config_values_file(path: Path, allowed_keys: set[str], requested: list[str]) -> dict[str, str | None]:
+    st = path.lstat()
+    if statmod.S_ISLNK(st.st_mode) or not statmod.S_ISREG(st.st_mode):
+        raise ProbeError("file_type", "config source must be a regular non-symlink file", status="denied")
+    requested_set = set(requested)
+    if not requested_set <= allowed_keys:
+        raise ProbeError("target_denied", "one or more config keys are not allowlisted", status="denied")
+    found: dict[str, str | None] = {key: None for key in requested}
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key not in requested_set:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            found[key] = value
+    return found
+
+
+def _safe_config_metadata(key: str, value: str | None) -> dict[str, Any]:
+    if value is None or value == '':
+        return {'key': key, 'present_nonempty': False, 'kind': 'missing'}
+    row: dict[str, Any] = {'key': key, 'present_nonempty': True, 'kind': 'opaque'}
+    try:
+        parsed = urlsplit(value)
+        scheme = (parsed.scheme or '').lower()
+        hostname = parsed.hostname
+        port = parsed.port
+        username = parsed.username
+        password_present = parsed.password is not None
+    except ValueError:
+        return row
+    if scheme in {'http', 'https'} and hostname:
+        row.update({
+            'kind': 'http_url', 'scheme': scheme, 'hostname': hostname, 'port': port,
+            'path_present': bool(parsed.path and parsed.path != '/'),
+            'query_present': bool(parsed.query),
+        })
+        if hostname.endswith('.supabase.co'):
+            row['project_ref'] = hostname.split('.', 1)[0]
+        return row
+    if scheme in {'postgres', 'postgresql'} and hostname:
+        row.update({
+            'kind': 'postgres_dsn', 'scheme': scheme, 'hostname': hostname, 'port': port,
+            'database': parsed.path.lstrip('/') or None, 'username': username,
+            'password_present': password_present, 'query_present': bool(parsed.query),
+        })
+    return row
+
+
+async def _config_metadata(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
+    alias = _validate_alias(check["source"])
+    cfg = _host_section(binding, "config_presence").get(alias)
+    if not isinstance(cfg, dict):
+        raise ProbeError("target_denied", "config metadata source is not registered", status="denied")
+    path = Path(str(cfg.get("path", "")))
+    if not path.is_absolute():
+        raise ProbeError("config", "config metadata path must be absolute")
+    allowed = {str(item) for item in cfg.get("keys", [])}
+    requested = list(check["keys"])
+    values = await asyncio.to_thread(_config_values_file, path, allowed, requested)
+    return {
+        "source": alias,
+        "keys": [_safe_config_metadata(key, values.get(key)) for key in requested],
+        "values_returned": False,
+        "hashes_returned": False,
+    }
+
+
+async def _config_compare(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
+    alias = _validate_alias(check["source"])
+    cfg = _host_section(binding, "config_presence").get(alias)
+    if not isinstance(cfg, dict):
+        raise ProbeError("target_denied", "config compare source is not registered", status="denied")
+    path = Path(str(cfg.get("path", "")))
+    if not path.is_absolute():
+        raise ProbeError("config", "config compare path must be absolute")
+    allowed = {str(item) for item in cfg.get("keys", [])}
+    requested = list(check["keys"])
+    values = await asyncio.to_thread(_config_values_file, path, allowed, requested)
+    missing = [key for key in requested if not values.get(key)]
+    groups: list[list[str]] = []
+    used: set[str] = set()
+    for key in requested:
+        value = values.get(key)
+        if not value or key in used:
+            continue
+        group = [other for other in requested if values.get(other) == value]
+        used.update(group)
+        groups.append(group)
+    nonempty_count = len(requested) - len(missing)
+    return {
+        "source": alias,
+        "groups": groups,
+        "missing": missing,
+        "nonempty_count": nonempty_count,
+        "all_present_equal": bool(nonempty_count == len(requested) and len(groups) == 1),
+        "values_returned": False,
+        "hashes_returned": False,
+    }
+
 async def _config_presence(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
     alias = _validate_alias(check["source"]); cfg = _host_section(binding,"config_presence").get(alias)
     if not isinstance(cfg,dict): raise ProbeError("target_denied","config presence source is not registered",status="denied")

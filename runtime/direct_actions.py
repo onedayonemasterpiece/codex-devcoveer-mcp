@@ -36,11 +36,11 @@ from direct_ops2 import (
     git_stage, mkdir, move_path, resolve_github_remote, runner_argv, service_action,
     write_registered_file, write_text,
 )
-from direct_ops2_host import daemon_reload, delete_registered_file
+from direct_ops2_host import daemon_reload, delete_registered_file, root_git_sync_exact
 from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
 from direct_jobs import cancel_job, cleanup_job, job_status, start_job, list_jobs
 from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update, git_fetch, workflow_dispatch, run_cancel
-from incident_registry import close_incident, note_incident, open_incident
+from incident_registry import active_incident_id, close_incident, incident_project_scope, note_incident, open_incident
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -239,7 +239,9 @@ _PROJECT_ACTION_SCHEMA["oneOf"].extend([
         "ref": {"type": "string", "minLength": 1, "maxLength": 200},
         "inputs": {"type": "object", "maxProperties": 25,
             "propertyNames": {"pattern": r"^[A-Za-z_][A-Za-z0-9_-]{0,79}$"},
-            "additionalProperties": {"type": ["string", "boolean", "number"], "maxLength": 500}}},
+            "additionalProperties": {"type": ["string", "boolean", "number"], "maxLength": 500}},
+        "request_key": {"type": "string", "minLength": 8, "maxLength": 128,
+                        "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"}},
         "required": ["kind", "workflow", "ref"], "additionalProperties": False},
     {"type": "object", "properties": {"kind": {"const": "github_run_cancel"},
         "remote": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -308,6 +310,7 @@ HOST_ACTION_INPUT_SCHEMA: dict[str, Any] = {
                 {"type":"object","properties":{"kind":{"const":"write_registered_file"},"file":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"content":{"type":"string","maxLength":2097152},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","file","content"],"additionalProperties":False},
                 {"type":"object","properties":{"kind":{"const":"delete_registered_file"},"file":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","file"],"additionalProperties":False},
                 {"type":"object","properties":{"kind":{"const":"daemon_reload"}},"required":["kind"],"additionalProperties":False},
+                {"type":"object","properties":{"kind":{"const":"root_git_sync_exact"},"root":{"type":"string","minLength":1,"maxLength":64},"remote":{"type":"string","minLength":1,"maxLength":64},"branch":{"type":"string","minLength":1,"maxLength":200},"expected_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"expected_head":{"type":"string","pattern":r"^[0-9a-f]{40}$"}},"required":["kind","root","branch","expected_sha"],"additionalProperties":False},
             ]
         },
     },
@@ -1167,6 +1170,8 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
     root = Path(project_root).resolve(strict=True)
     started = time.monotonic()
     head_before = await _action_receipt_head(root)
+    incident_scope = incident_project_scope(project_id, str(root))
+    incident_id = active_incident_id(incident_scope)
     receipt = {
         "project": project_id,
         "cwd": str(root),
@@ -1176,6 +1181,7 @@ async def run_project_action(project_root: str, project_id: str, action: dict[st
         "head": head_before,
         "expected_head": action.get("expected_head"),
         "expected_workspace_digest": action.get("expected_workspace_digest"),
+        "incident_id": incident_id,
     }
     try:
         result = await _run_project_action_inner(project_root, project_id, action, config_path=config_path)
@@ -1240,6 +1246,7 @@ async def _run_host_action_inner(project_root: str, project_id: str, action: dic
     if kind == "write_registered_file": return write_registered_file(binding, action)
     if kind == "delete_registered_file": return delete_registered_file(binding, action)
     if kind == "daemon_reload": return await daemon_reload(binding)
+    if kind == "root_git_sync_exact": return await root_git_sync_exact(binding, action)
     raise ProbeError("invalid_input", f"unknown host action kind {kind!r}")
 
 
@@ -1247,11 +1254,14 @@ async def run_host_action(project_root: str, project_id: str, action: dict[str, 
                           config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
     started = time.monotonic()
+    incident_scope = incident_project_scope(project_id, str(root))
+    incident_id = active_incident_id(incident_scope)
     receipt = {
         "project": project_id,
         "cwd": str(root),
         "surface": receipt_surface,
         "plane": "host_action",
+        "incident_id": incident_id,
         "operation": action.get("kind"),
     }
     try:

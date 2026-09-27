@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shlex
 import stat as statmod
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,65 @@ async def _systemctl_show(service: dict[str, Any]) -> dict[str, Any]:
     if service.get("executable"): props["executable"] = service["executable"]
     if service.get("working_directory"): props["configured_working_directory"] = service["working_directory"]
     return props
+
+
+
+_SAFE_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_SECRETISH_ENV_NAME_RE = re.compile(r"(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|COOKIE|AUTH)", re.I)
+
+
+async def _service_config(service: dict[str, Any]) -> dict[str, Any]:
+    unit = service.get("unit")
+    scope = service.get("scope", "user")
+    if not isinstance(unit, str) or not UNIT_RE.fullmatch(unit) or scope not in {"user", "system"}:
+        raise ProbeError("config", "service binding is invalid")
+    raw_safe = service.get("safe_environment_keys", [])
+    if (
+        not isinstance(raw_safe, list)
+        or not all(isinstance(item, str) and _SAFE_ENV_NAME_RE.fullmatch(item) for item in raw_safe)
+        or any(_SECRETISH_ENV_NAME_RE.search(item) for item in raw_safe)
+    ):
+        raise ProbeError("config", "safe_environment_keys contains an unsafe name")
+    safe_keys = set(raw_safe)
+    argv = ["/usr/bin/systemctl"] + (["--user"] if scope == "user" else []) + [
+        "show", unit, "--no-pager",
+        "--property=ExecStart,WorkingDirectory,EnvironmentFiles,Environment",
+    ]
+    result = await _run_process(
+        argv, env=_systemd_env(scope), timeout=5, output_limit=64 * 1024
+    )
+    if result.exit_code != 0:
+        err, _ = _redact_text(result.stderr.decode("utf-8", "replace"))
+        raise ProbeError("service", err[-1000:] or "systemctl show failed", exit_code=result.exit_code)
+    props: dict[str, str] = {}
+    for line in result.stdout.decode("utf-8", "replace").splitlines():
+        key, _, value = line.partition("=")
+        props[key] = value
+    safe_env: dict[str, str | None] = {key: None for key in safe_keys}
+    raw_env = props.get("Environment", "")
+    try:
+        fields = shlex.split(raw_env)
+    except ValueError:
+        fields = []
+    for field in fields:
+        key, sep, value = field.partition("=")
+        if sep and key in safe_keys:
+            cleaned, _ = _redact_text(value)
+            safe_env[key] = cleaned[:2000]
+    env_files, env_files_redacted = _redact_text(props.get("EnvironmentFiles", ""))
+    exec_start, exec_redacted = _redact_text(props.get("ExecStart", ""))
+    working, working_redacted = _redact_text(props.get("WorkingDirectory", ""))
+    return {
+        "unit": unit,
+        "scope": scope,
+        "safe_environment": safe_env,
+        "environment_files": env_files[:4000],
+        "exec_start": exec_start[:4000],
+        "working_directory": working[:2000],
+        "redacted": env_files_redacted or exec_redacted or working_redacted,
+        "complete": True,
+        "note": "Only explicitly registered non-secret environment keys are returned.",
+    }
 
 async def _service_list(scope: str, pattern: str | None, limit: int) -> dict[str, Any]:
     scopes = ("user", "system") if scope == "all" else (scope,)
