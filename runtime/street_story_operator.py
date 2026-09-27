@@ -450,34 +450,9 @@ class StreetStoryOperator:
                 os.unlink(temp)
 
     def _provider_env(self) -> Path:
-        host = self._read_host_env()
-        refs: list[str] = []
-        for ordinal in range(1, 33):
-            name = "GOOGLE_API_KEY" if ordinal == 1 else f"GOOGLE_API_KEY{ordinal}"
-            if host.get(name):
-                refs.append(name)
-        if not refs:
-            raise OperatorError("registered Google API key pool is unavailable")
-        quota_url = host.get("GOOGLE_AI_LIMITER_SUPABASE_URL") or host.get("SUPABASE_URL")
-        quota_key = (
-            host.get("GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY")
-            or host.get("SUPABASE_SERVICE_KEY")
-            or host.get("SUPABASE_KEY")
+        raise OperatorError(
+            "Street Story provider environment is owned by the repository installer"
         )
-        if not quota_url or not quota_key:
-            raise OperatorError("shared Google AI limiter credentials are unavailable")
-        values = {name: host[name] for name in refs}
-        values.update(
-            {
-                "GEMINI_API_KEY_REFS": json.dumps(refs, separators=(",", ":")),
-                "GEMINI_MODEL": "gemini-3.1-flash-lite",
-                "GEMINI_QUOTA_SUPABASE_URL": quota_url,
-                "GEMINI_QUOTA_SUPABASE_KEY": quota_key,
-            }
-        )
-        path = self.app_state_root / "providers.env"
-        self._write_private_env(path, values)
-        return path
 
     def _choose_vibe_principal(self, base: str) -> str:
         db = sqlite3.connect(f"file:{self.vibe_db}?mode=ro", uri=True)
@@ -790,121 +765,103 @@ class StreetStoryOperator:
 
         def action() -> Mapping[str, Any]:
             self._verify_approved_source(sha)
-            release = self._release(sha)
-            source = release / "source"
-            requirements = source / "backend" / "requirements.txt"
-            if not requirements.is_file():
-                raise OperatorError("Street Story backend requirements are missing")
-            live_token = self._ensure_live_token()
-            self.app_state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(self.app_state_root, 0o700)
-            providers_env = self._provider_env()
+            self._release(sha)
+            installer = self.project_root / "backend" / "deploy" / "devcoveer_install.py"
+            if not installer.is_file():
+                raise OperatorError("Street Story repository installer is unavailable")
 
-            py = self._python312()
-            venv = release / "venv"
-            if not venv.is_dir():
-                self._call([py, "-m", "venv", str(venv)], timeout=180)
-                self._call(
-                    [
-                        str(venv / "bin/pip"),
-                        "install",
-                        "--disable-pip-version-check",
-                        "-r",
-                        str(requirements),
-                    ],
-                    timeout=900,
-                )
-                self._call([str(venv / "bin/python"), "-m", "compileall", "-q", str(source / "backend/street_story")], timeout=120)
-
-            vibe_token_file, _principal_file = self._vibe_principal(sha)
-            vibe_token = vibe_token_file.read_text(encoding="utf-8").strip()
-            if len(vibe_token) < 20:
-                raise OperatorError("Street Story Vibe token is invalid")
-            vibe_preflight = self._vibe_preview_preflight(vibe_token, sha, idempotency_key)
-            data_dir = self.app_state_root / "data"
-            data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(data_dir, 0o700)
-            service_env = self.app_state_root / "service.env"
-            self._write_private_env(
-                service_env,
-                {
-                    "DATA_DIR": str(data_dir),
-                    "STREET_STORY_DEVICE_TOKEN": live_token,
-                    "VIBEPUBLISH_BASE_URL": VIBE_BASE_URL,
-                    "VIBEPUBLISH_BEARER_TOKEN": vibe_token,
-                    "STREET_STORY_DEPLOY_SHA": sha,
-                    "STREET_STORY_OSM_USER_AGENT": "StreetStory/0.1 (+https://github.com/onedayonemasterpiece/street-story)",
-                    "WORKER_POLL_SECONDS": "1",
-                    "PROCESSING_DELAYED_AFTER_SECONDS": "1800",
-                },
+            result = self._call(
+                [self._python312(), str(installer), "--expected-sha", sha],
+                cwd=self.project_root,
+                timeout=1800,
             )
-
-            unit_dir = self.user_unit_root
-            unit_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            unit = unit_dir / TARGET_SERVICE
-            unit_text = "\n".join(
-                (
-                    "[Unit]",
-                    "Description=Street Story backend (allowlisted DevCoveer release)",
-                    "After=network-online.target vibepublish.service",
-                    "Wants=network-online.target",
-                    "Requires=vibepublish.service",
-                    "",
-                    "[Service]",
-                    "Type=simple",
-                    f"WorkingDirectory={source}",
-                    f"EnvironmentFile={providers_env}",
-                    f"EnvironmentFile={service_env}",
-                    f"ExecStart={venv}/bin/uvicorn street_story.app:app --app-dir {source}/backend --host 127.0.0.1 --port {TARGET_PORT} --workers 1",
-                    "Restart=on-failure",
-                    "RestartSec=3",
-                    "TimeoutStopSec=30",
-                    "NoNewPrivileges=true",
-                    "PrivateTmp=true",
-                    "ProtectSystem=strict",
-                    "ProtectHome=read-only",
-                    f"ReadWritePaths={self.app_state_root}",
-                    "UMask=0077",
-                    "",
-                    "[Install]",
-                    "WantedBy=default.target",
-                    "",
-                )
-            )
-            fd, temp = tempfile.mkstemp(prefix=".street-story-unit-", dir=unit_dir)
             try:
-                os.fchmod(fd, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    handle.write(unit_text)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temp, unit)
-            finally:
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(temp)
+                receipt = json.loads(result.output.strip())
+            except (TypeError, ValueError) as exc:
+                raise OperatorError("Street Story installer returned invalid JSON") from exc
+            if not isinstance(receipt, dict):
+                raise OperatorError("Street Story installer returned invalid receipt")
+            if receipt.get("secrets_disclosed") is not False:
+                raise OperatorError("Street Story installer secrecy receipt is invalid")
+            if receipt.get("release_sha") != sha:
+                raise OperatorError("Street Story installer release SHA mismatch")
+            if receipt.get("listener") != f"127.0.0.1:{TARGET_PORT}":
+                raise OperatorError("Street Story installer listener mismatch")
 
-            self.current_link.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if self.current_link.exists() or self.current_link.is_symlink():
-                self.current_link.unlink()
-            self.current_link.symlink_to(release)
-            systemd_env = self._user_systemd_environment()
-            self._call(["systemctl", "--user", "daemon-reload"], env=systemd_env, timeout=30)
-            self._call(["systemctl", "--user", "enable", TARGET_SERVICE], env=systemd_env, timeout=30)
-            self._call(["systemctl", "--user", "restart", TARGET_SERVICE], env=systemd_env, timeout=180)
-            status = self._service_status()
-            if status["active"] != "active":
-                raise OperatorError("Street Story user service did not become active")
-            local = self._wait_local_health(sha)
-            destinations = self._local_capabilities(live_token)
+            local = receipt.get("local_health")
+            if (
+                not isinstance(local, dict)
+                or local.get("ok") is not True
+                or local.get("source_sha") != sha
+            ):
+                raise OperatorError("Street Story installer exact-SHA health receipt is invalid")
+
+            service = receipt.get("service")
+            if not isinstance(service, dict) or service.get("active") != "active":
+                raise OperatorError("Street Story installer service receipt is invalid")
+
+            resource = receipt.get("live_resource_control")
+            if (
+                not isinstance(resource, dict)
+                or resource.get("contract") != "ai_resource_leases_v1"
+                or not isinstance(resource.get("ledger_id"), str)
+                or len(resource["ledger_id"]) < 16
+                or not isinstance(resource.get("candidate_count"), int)
+                or resource["candidate_count"] < 1
+            ):
+                raise OperatorError("Street Story shared resource preflight receipt is invalid")
+
+            capabilities = receipt.get("capabilities")
+            rows = capabilities.get("destinations") if isinstance(capabilities, dict) else None
+            if not isinstance(rows, list):
+                raise OperatorError("Street Story installer capabilities receipt is invalid")
+            destinations = [
+                {
+                    "alias": str(row.get("alias") or ""),
+                    "provider": str(row.get("provider") or ""),
+                    "status": str(row.get("status") or ""),
+                }
+                for row in rows
+                if isinstance(row, dict)
+            ]
+            if destinations != [
+                {"alias": "lovekenig_tg", "provider": "telegram", "status": "supported"}
+            ]:
+                raise OperatorError("Street Story installer destination receipt is invalid")
+
+            vibe = receipt.get("vibepublish")
+            preflight = vibe.get("preflight") if isinstance(vibe, dict) else None
+            if (
+                not isinstance(preflight, dict)
+                or preflight.get("alias") != "lovekenig_tg"
+                or preflight.get("status") != "supported"
+            ):
+                raise OperatorError("Street Story VibePublish preflight receipt is invalid")
+            if receipt.get("github_live_token_synchronized") is not True:
+                raise OperatorError("Street Story GitHub live-token receipt is invalid")
+
             return {
                 "release_sha": sha,
                 "listener": f"127.0.0.1:{TARGET_PORT}",
-                "service": status,
-                "local_health": local,
+                "service": {
+                    key: service.get(key)
+                    for key in ("active", "substate", "main_pid", "exec_status")
+                },
+                "local_health": {"ok": True, "source_sha": sha},
                 "destinations": destinations,
-                "vibepublish_preflight": vibe_preflight,
+                "vibepublish_preflight": {
+                    "alias": "lovekenig_tg",
+                    "status": "supported",
+                    "reason": str(preflight.get("reason") or "")[:300],
+                },
+                "live_resource_control": {
+                    "contract": "ai_resource_leases_v1",
+                    "ledger_id": resource["ledger_id"],
+                    "candidate_count": resource["candidate_count"],
+                },
                 "safe_alias_configured": False,
                 "github_live_token_synced": True,
+                "delegated_installer": True,
                 "secrets_disclosed": False,
             }
 
