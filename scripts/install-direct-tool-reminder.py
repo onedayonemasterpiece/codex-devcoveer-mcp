@@ -36,6 +36,8 @@ DESCRIPTION_NEW = (
     '            "For continuation work that names or implies a checkpoint, branch, SHA or prior worktree, first inspect find_projects workspaceContext and project_probe worktree_list; exact repository-name resolution identifies only one physical checkout. Address the matching project before read/write/test/build and pass expected_head on guarded direct actions when a checkpoint SHA is known. When project_probe git_state provides tracked_workspace_digest, pass expected_workspace_digest on guarded local actions when the exact tracked workspace must be preserved across parallel work. stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree. "\n'
     '            "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "\n'
     '            "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. Browser suites and unknown-duration checks use job_start then job_status; pass nonsecret CHECK_BASE/CHECK_OUTPUT through env, with path relative to project root even when cwd is set. Prefer exact probes over broad HOME enumeration; use broader agent investigation only when it is actually required, and do not borrow browser binaries from other checkouts. "\n'
+    '            "For a production/live incident, material regression, failed recovery/deploy, repeated live failure, or unreproduced production bug: before remediation use incident_search/incident_get for prior history, incident_open to create or resume the record, and host_probe inventory plus logs/log_search/health for runtime evidence. Record evidence/mitigation with incident_note and close only after live verification. Ordinary local/unit-test failures do not require an incident. "\n'
+    '            "When changing failure-prone live behavior, ensure concise structured diagnostic logging exists at external boundaries, decisions, retries, state transitions, failures and successful outcomes; include correlation/release/component context when useful and never log secrets. "\n'
     '            "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to OpenCode. ChatGPT should author the exact code/docs change itself, use direct project_action writes when available, and use stage_source_handoff when direct repository writing is unavailable; use the supplied patch for verification/commit/push rather than rewrite source/docs. "\n'
     '            "Use start_task only when the work requires reasoning beyond typed operations or an unforeseen operation absent from the typed surface. Use read_task later to check status and obtain the result."),\n'
 )
@@ -120,6 +122,16 @@ _BROWSER_TOOL_REMINDER_TEXT = (
     "browser suites use job_start then job_status. CHECK_BASE/CHECK_OUTPUT are supported nonsecret env flags. "
     "Use instructions scope=home/project for exact AGENTS.md reads; prefer exact probes over broad filesystem scans, while retaining agent investigation when broader discovery is genuinely required."
 )
+_INCIDENT_REMINDER_STRONG = (
+    "incident", "outage", "production regression", "production recovery", "failed recovery",
+    "live failure", "postmortem", "root cause", "инцидент", "авария", "продакшен", "корневая причина",
+)
+_INCIDENT_REMINDER_TEXT = (
+    "For real production/live incident work, do not jump straight to code: search/get related incidents, open or resume "
+    "the incident, inspect registered service health and targeted logs with host_probe log_search, preserve evidence, "
+    "record observations/hypotheses/mitigation, and verify live logs/health before incident_close. Ordinary local/unit-test "
+    "failures do not need an incident."
+)
 _SOURCE_AUTHORSHIP_REMINDER_TEXT = (
     "Repository code and documentation should normally be authored by ChatGPT itself, not delegated to weaker "
     "OpenCode models. If ChatGPT cannot write the repository directly, author the exact code/docs patch here and "
@@ -140,6 +152,8 @@ def _direct_tool_reminder(prompt: str, access: str) -> str | None:
             hints.append(_DIRECT_TOOL_REMINDER_TEXT)
     if any(marker in text for marker in _BROWSER_TOOL_REMINDER_STRONG):
         hints.append(_BROWSER_TOOL_REMINDER_TEXT)
+    if any(marker in text for marker in _INCIDENT_REMINDER_STRONG):
+        hints.append(_INCIDENT_REMINDER_TEXT)
     if access == "write":
         hints.append(_SOURCE_AUTHORSHIP_REMINDER_TEXT)
     return " ".join(hints) if hints else None

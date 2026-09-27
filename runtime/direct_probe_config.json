@@ -516,6 +516,152 @@
           }
         }
       }
+    },
+    "mailru-mcp-bridge": {
+      "github_repo": "onedayonemasterpiece/mailru-mcp-bridge",
+      "remotes": {
+        "origin": "onedayonemasterpiece/mailru-mcp-bridge"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {
+        "bridge": {
+          "unit": "mail-mcp-bridge.service",
+          "scope": "user"
+        }
+      },
+      "logs": {
+        "bridge": {
+          "type": "journal",
+          "service": "bridge"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/mailru-mcp-bridge"
+      },
+      "health": {},
+      "runtimes": {},
+      "runtime_files": {},
+      "config_presence": {}
+    },
+    "my-data-hub": {
+      "github_repo": "onedayonemasterpiece/my-data-hub",
+      "remotes": {
+        "origin": "onedayonemasterpiece/my-data-hub"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {
+        "control_plane": {
+          "unit": "my-data-hub-control-plane.service",
+          "scope": "user"
+        }
+      },
+      "logs": {
+        "control_plane": {
+          "type": "journal",
+          "service": "control_plane"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/my-data-hub"
+      },
+      "health": {},
+      "runtimes": {},
+      "runtime_files": {},
+      "config_presence": {}
+    },
+    "record-idea-hub": {
+      "github_repo": "onedayonemasterpiece/record-idea-hub",
+      "remotes": {
+        "origin": "onedayonemasterpiece/record-idea-hub"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {
+        "edge": {
+          "unit": "record-idea-hub-edge.service",
+          "scope": "user"
+        },
+        "cert_renew": {
+          "unit": "record-idea-hub-cert-renew.service",
+          "scope": "user"
+        }
+      },
+      "logs": {
+        "edge": {
+          "type": "journal",
+          "service": "edge"
+        },
+        "cert_renew": {
+          "type": "journal",
+          "service": "cert_renew"
+        }
+      },
+      "roots": {
+        "source": "/home/dev/projects/record-idea-hub"
+      },
+      "health": {},
+      "runtimes": {},
+      "runtime_files": {},
+      "config_presence": {}
+    },
+    "ai-resource-control": {
+      "github_repo": "onedayonemasterpiece/ai-resource-control",
+      "remotes": {
+        "origin": "onedayonemasterpiece/ai-resource-control"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {},
+      "logs": {},
+      "roots": {
+        "source": "/home/dev/projects/ai-resource-control"
+      },
+      "health": {},
+      "runtimes": {},
+      "runtime_files": {},
+      "config_presence": {}
+    },
+    "events-bot-new": {
+      "github_repo": "onedayonemasterpiece/events-bot-new",
+      "remotes": {
+        "origin": "onedayonemasterpiece/events-bot-new"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {},
+      "logs": {},
+      "roots": {
+        "source": "/home/dev/projects/events-bot-new"
+      },
+      "health": {},
+      "runtimes": {},
+      "runtime_files": {},
+      "config_presence": {}
+    },
+    "projects-hub": {
+      "github_repo": "onedayonemasterpiece/projects-hub",
+      "remotes": {
+        "origin": "onedayonemasterpiece/projects-hub"
+      },
+      "executables": {
+        "gh": "/usr/bin/gh"
+      },
+      "services": {},
+      "logs": {},
+      "roots": {
+        "source": "/home/dev/projects/projects-hub"
+      },
+      "health": {},
+      "runtimes": {},
+      "runtime_files": {},
+      "config_presence": {}
     }
   }
 }

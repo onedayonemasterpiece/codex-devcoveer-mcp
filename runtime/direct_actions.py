@@ -20,6 +20,7 @@ from direct_probe_core import (
     _append_direct_receipt,
     _git,
     _binding,
+    _binding_for_root,
     _git_env,
     _load_config,
     _redact_text,
@@ -39,6 +40,7 @@ from direct_ops2_host import daemon_reload, delete_registered_file
 from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
 from direct_jobs import cancel_job, cleanup_job, job_status, start_job, list_jobs
 from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update, git_fetch, workflow_dispatch, run_cancel
+from incident_registry import close_incident, note_incident, open_incident
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -184,6 +186,27 @@ for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
     if _kind == "job_status":
         _variant["properties"]["tail_lines"] = {"type": "integer", "minimum": 0, "maximum": 200}
 _PROJECT_ACTION_SCHEMA["oneOf"].extend([
+    {"type": "object", "properties": {"kind": {"const": "incident_open"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 300},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 12000},
+        "severity": {"type": "string", "enum": ["sev1", "sev2", "sev3", "sev4", "unknown"]},
+        "services": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 100}},
+        "tags": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 100}},
+        "related_incidents": {"type": "array", "maxItems": 32, "items": {"type": "string", "pattern": r"^inc_[0-9a-f]{24}$"}}},
+        "required": ["kind", "title", "summary"], "additionalProperties": False},
+    {"type": "object", "properties": {"kind": {"const": "incident_note"},
+        "incident_id": {"type": "string", "pattern": r"^inc_[0-9a-f]{24}$"},
+        "note": {"type": "string", "minLength": 1, "maxLength": 12000},
+        "note_kind": {"type": "string", "enum": ["observation", "hypothesis", "mitigation", "verification", "decision", "followup"]},
+        "evidence_refs": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 500}}},
+        "required": ["kind", "incident_id", "note"], "additionalProperties": False},
+    {"type": "object", "properties": {"kind": {"const": "incident_close"},
+        "incident_id": {"type": "string", "pattern": r"^inc_[0-9a-f]{24}$"},
+        "root_cause": {"type": "string", "minLength": 1, "maxLength": 12000},
+        "resolution": {"type": "string", "minLength": 1, "maxLength": 12000},
+        "verification": {"type": "string", "minLength": 1, "maxLength": 12000},
+        "action_items": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 1000}}},
+        "required": ["kind", "incident_id", "root_cause", "resolution", "verification"], "additionalProperties": False},
     {"type": "object", "properties": {"kind": {"const": "git_switch_ff"},
         "remote": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},
         "branch": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": r"^[A-Za-z0-9][A-Za-z0-9._/-]*$"},
@@ -1051,11 +1074,20 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
                                     config_path: Path | None = None) -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
     binding_id, handoff, meta = _handoff_binding(root, project_id)
-    binding = _binding(_load_config(config_path or DEFAULT_CONFIG_PATH), binding_id)
+    config = _load_config(config_path or DEFAULT_CONFIG_PATH)
+    if handoff:
+        binding = _binding(config, binding_id)
+        binding_inherited = False
+    else:
+        binding_id, binding, binding_inherited = await _binding_for_root(config, binding_id, root)
     kind = action["kind"]
     await _guard_expected_head(root, action)
     if kind == "batch":
         return await _run_batch(project_root, project_id, action, config_path=config_path)
+    incident_project = str(binding.get("github_repo") or binding_id)
+    if kind == "incident_open": return open_incident(incident_project, action)
+    if kind == "incident_note": return note_incident(incident_project, action)
+    if kind == "incident_close": return close_incident(incident_project, action)
     if kind == "github_pr_create":
         return await pr_create(root, binding, action)
     if kind == "github_pr_update":
@@ -1197,7 +1229,8 @@ async def _run_host_action_inner(project_root: str, project_id: str, action: dic
     binding_id, handoff, _meta = _handoff_binding(root, project_id)
     if handoff:
         raise ProbeError("handoff_denied", "host actions are unavailable for handoff projects", status="denied")
-    binding = _binding(_load_config(config_path or DEFAULT_CONFIG_PATH), binding_id)
+    config = _load_config(config_path or DEFAULT_CONFIG_PATH)
+    binding_id, binding, _binding_inherited = await _binding_for_root(config, binding_id, root)
     kind = action["kind"]
     if kind == "restart_service":
         return await _restart_service(binding, action["service"])

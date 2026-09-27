@@ -41,7 +41,7 @@ The verifier creates an ephemeral `uv run` environment using Python 3.12.3, runs
 
 The canonical development modes, model resource classes, live-stall diagnostics, short-term model-health memory and adaptive failover policy are defined in [`docs/operating-model-and-adaptive-routing.md`](docs/operating-model-and-adaptive-routing.md).
 
-Source-handoff behavior is defined in [`docs/source-handoff-p0.md`](docs/source-handoff-p0.md), and direct diagnostics in [`docs/direct-probes.md`](docs/direct-probes.md).
+Source-handoff behavior is defined in [`docs/source-handoff-p0.md`](docs/source-handoff-p0.md), direct diagnostics in [`docs/direct-probes.md`](docs/direct-probes.md), and the evidence-first incident/logging workflow in [`docs/incident-observability.md`](docs/incident-observability.md).
 
 ## DevCoveer2 recovery sequence
 
