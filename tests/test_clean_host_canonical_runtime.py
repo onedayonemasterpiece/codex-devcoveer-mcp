@@ -48,8 +48,8 @@ def test_clean_host_installer_accepts_probes_before_tunnel_switch() -> None:
         "list_models", "start_task", "read_task",
         "stage_source_handoff", "cleanup_source_handoff",
         "street_story_materialize_release", "street_story_deploy_user_service",
-        "street_story_publish_edge_route", "street_story_service",
-        "street_story_deployment_receipt",
+        "street_story_publish_edge_route", "projects_hub_publish_edge_route",
+        "street_story_service", "street_story_deployment_receipt",
     )
     for name in required_tools:
         assert name in source
@@ -121,6 +121,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'name="street_story_materialize_release"' in bridge
         assert 'name="street_story_deploy_user_service"' in bridge
         assert 'name="street_story_publish_edge_route"' in bridge
+        assert 'name="projects_hub_publish_edge_route"' in bridge
         assert 'name="street_story_service"' in bridge
         assert 'name="street_story_deployment_receipt"' in bridge
         assert "_CHATGPT_OPERATING_REMINDER_V2" in bridge
@@ -143,7 +144,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         for name in (
             "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py",
             "direct_probe_config.json", "opencode_backend.py",
-            "source_handoff.py", "street_story_operator.py",
+            "source_handoff.py", "street_story_operator.py", "projects_hub_edge_operator.py",
         ):
             assert (out / name).is_file()
 
@@ -225,3 +226,16 @@ def test_installer_supports_isolated_checkout_without_mutating_common_main() -> 
     assert 'git -C "$WORK_REPO" archive "$SOURCE_SHA"' in source
     for forbidden in ('git reset', 'git stash', 'git checkout', 'git clean'):
         assert forbidden not in source
+
+
+def test_clean_host_builder_projects_hub_edge_contract() -> None:
+    source = BUILDER.read_text(encoding="utf-8")
+    assert "projects_hub_publish_edge_route" in source
+    assert 'ROOT / "runtime" / "projects_hub_edge_operator.py"' not in source
+    operator = (ROOT / "runtime" / "projects_hub_edge_operator.py").read_text(encoding="utf-8")
+    assert 'TARGET_HOSTNAME = "projects-hub.kenigevents.ru"' in operator
+    assert "TARGET_PORT = 8196" in operator
+    assert 'TARGET_SERVICE = "projects-hub.service"' in operator
+    assert "public_yandex+loopback_dev" in operator
+    assert "LOCAL_MCP_EDGE_PROJECTS_HUB_ENABLED" in operator
+    assert "renderer would remove an existing SNI route" in operator
