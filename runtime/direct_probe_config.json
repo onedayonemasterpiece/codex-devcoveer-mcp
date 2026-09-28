@@ -782,7 +782,13 @@
             "PROJECTS_HUB_SESSION_SECRET_FILE",
             "PROJECTS_HUB_DEV_AUTH",
             "PROJECTS_HUB_DEPLOY_SHA",
-            "PROJECTS_HUB_PORT"
+            "PROJECTS_HUB_PORT",
+            "PROJECTS_HUB_COOKIE_SECURE",
+            "PROJECTS_HUB_PUBLIC_ORIGIN",
+            "PROJECTS_HUB_AUTH_SUPABASE_URL",
+            "PROJECTS_HUB_AUTH_SUPABASE_PUBLISHABLE_KEY",
+            "PROJECTS_HUB_AUTH_PROVIDER",
+            "PROJECTS_HUB_LOG_FILE"
           ]
         },
         "provider_env": {
