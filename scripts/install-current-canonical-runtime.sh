@@ -56,7 +56,7 @@ PYTHONPATH="$CAND" "$BRIDGE_PY" - "$CAND/codex-chatgpt-bridge.py" <<'PY'
 import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-required={"direct_ops_v2","project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
+required={"direct_ops_v2","project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","projects_hub_publish_edge_route","street_story_service","street_story_deployment_receipt"}
 async def main():
     async with stdio_client(StdioServerParameters(command=sys.executable,args=[sys.argv[1]])) as (r,w):
         async with ClientSession(r,w) as s:
@@ -145,7 +145,7 @@ echo "=== canonical wrapper acceptance ==="
 import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-required={"direct_ops_v2","project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","street_story_service","street_story_deployment_receipt"}
+required={"direct_ops_v2","project_probe","host_probe","project_action","host_action","list_models","start_task","read_task","stage_source_handoff","cleanup_source_handoff","get_task_evidence","record_task_review","street_story_materialize_release","street_story_deploy_user_service","street_story_publish_edge_route","projects_hub_publish_edge_route","street_story_service","street_story_deployment_receipt"}
 async def main():
     async with stdio_client(StdioServerParameters(command=sys.argv[1],args=[])) as (r,w):
         async with ClientSession(r,w) as s:

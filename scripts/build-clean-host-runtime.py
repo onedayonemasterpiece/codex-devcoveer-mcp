@@ -20,7 +20,7 @@ DIRECT_FILES = (
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
-    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py",
+    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "projects_hub_edge_operator.py",
 )
 
 def sha(path: Path) -> str:
@@ -65,6 +65,10 @@ from source_handoff import (
 from street_story_operator import (
     OperatorError as StreetStoryOperatorError,
     StreetStoryOperator,
+)
+from projects_hub_edge_operator import (
+    OperatorError as ProjectsHubEdgeOperatorError,
+    ProjectsHubEdgeOperator,
 )
 from direct_ops_gateway import (
     DIRECT_OPS_V2_INPUT_SCHEMA,
@@ -152,6 +156,14 @@ def _street_story_operator() -> StreetStoryOperator:
         _STREET_STORY_OPERATOR = StreetStoryOperator()
     return _STREET_STORY_OPERATOR
 
+_PROJECTS_HUB_EDGE_OPERATOR: ProjectsHubEdgeOperator | None = None
+
+def _projects_hub_edge_operator() -> ProjectsHubEdgeOperator:
+    global _PROJECTS_HUB_EDGE_OPERATOR
+    if _PROJECTS_HUB_EDGE_OPERATOR is None:
+        _PROJECTS_HUB_EDGE_OPERATOR = ProjectsHubEdgeOperator()
+    return _PROJECTS_HUB_EDGE_OPERATOR
+
 _STREET_SHA = r"^[0-9a-f]{40}$"
 _STREET_HANDOFF = r"^src_[0-9a-f]{24}$"
 _STREET_KEY = r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
@@ -180,6 +192,16 @@ STREET_STORY_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA: dict[str, Any] = {
     "properties": {
         "hostname": {"type": "string", "const": "street-story.kenigevents.ru"},
         "loopback_port": {"type": "integer", "const": 8188},
+        "idempotency_key": {"type": "string", "pattern": _STREET_KEY},
+    },
+    "required": ["hostname", "loopback_port", "idempotency_key"],
+    "additionalProperties": False,
+}
+PROJECTS_HUB_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "hostname": {"type": "string", "const": "projects-hub.kenigevents.ru"},
+        "loopback_port": {"type": "integer", "const": 8196},
         "idempotency_key": {"type": "string", "pattern": _STREET_KEY},
     },
     "required": ["hostname", "loopback_port", "idempotency_key"],
@@ -279,6 +301,13 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
         input_schema=STREET_STORY_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
             idempotent_hint=True, open_world_hint=True)),
+    types.Tool(name="projects_hub_publish_edge_route", title="Publish Projects Hub edge route",
+        description=("Publish only projects-hub.kenigevents.ru to fixed loopback port 8196 through "
+            "the existing DevCoveer VPN/DNS/TLS renderer, only after the exact deployed release "
+            "reports public Yandex auth ready on local health."),
+        input_schema=PROJECTS_HUB_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+            idempotent_hint=True, open_world_hint=True)),
     types.Tool(name="street_story_service", title="Read or restart Street Story service",
         description="Read status or restart only the allowlisted street-story.service user unit.",
         input_schema=STREET_STORY_SERVICE_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
@@ -303,6 +332,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                   '    "street_story_materialize_release": Draft202012Validator(STREET_STORY_MATERIALIZE_RELEASE_INPUT_SCHEMA),\n'
                   '    "street_story_deploy_user_service": Draft202012Validator(STREET_STORY_DEPLOY_USER_SERVICE_INPUT_SCHEMA),\n'
                   '    "street_story_publish_edge_route": Draft202012Validator(STREET_STORY_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA),\n'
+                  '    "projects_hub_publish_edge_route": Draft202012Validator(PROJECTS_HUB_PUBLISH_EDGE_ROUTE_INPUT_SCHEMA),\n'
                   '    "street_story_service": Draft202012Validator(STREET_STORY_SERVICE_INPUT_SCHEMA),\n'
                   '    "street_story_deployment_receipt": Draft202012Validator(STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA),\n'
 )
@@ -472,6 +502,14 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                     idempotency_key=arguments["idempotency_key"]))
             except StreetStoryOperatorError as exc:
                 return _tool_result({"status":"failed","errorCategory":"street_story_operator","content":str(exc)}, error=True)
+
+        if name == "projects_hub_publish_edge_route":
+            try:
+                return _tool_result(_projects_hub_edge_operator().publish_edge_route(
+                    hostname=arguments["hostname"], loopback_port=arguments["loopback_port"],
+                    idempotency_key=arguments["idempotency_key"]))
+            except ProjectsHubEdgeOperatorError as exc:
+                return _tool_result({"status":"failed","errorCategory":"projects_hub_edge_operator","content":str(exc)}, error=True)
 
         if name == "street_story_service":
             try:
