@@ -115,7 +115,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.28.2-process-recovery"' in bridge
+        assert 'BRIDGE_VERSION = "3.28.3-process-recovery"' in bridge
         assert 'include_messages=(detail != "summary")' in bridge
         assert '"inspectionStatus":"metadata_only"' in bridge
         assert "Task is running. No message history was fetched" in bridge

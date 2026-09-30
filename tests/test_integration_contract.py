@@ -58,6 +58,25 @@ def test_new_turn_does_not_reuse_old_success_or_error(monkeypatch, tmp_path):
     assert result['finalResponse'] is None and result['error'] is None
 
 
+def test_routing_inspect_forwards_metadata_only_hints(monkeypatch, tmp_path):
+    b = RoutingBackend.__new__(RoutingBackend); b.health_store = ModelHealthStore(tmp_path/'health')
+    base_inspect = AsyncMock(return_value={'messages':[]})
+    monkeypatch.setattr(backend.OpenCodeBackend, 'inspect', base_inspect)
+    b.request = AsyncMock(return_value={'ses_test': {'type': 'busy'}})
+    result = asyncio.run(b.inspect(
+        session_id='ses_test', directory='/repo', include_messages=False,
+        provider_hint='opencode', model_hint='nemotron-3-ultra-free',
+        selection_hint='opencode/nemotron-3-ultra-free',
+    ))
+    base_inspect.assert_awaited_once_with(
+        session_id='ses_test', directory='/repo', include_messages=False,
+        provider_hint='opencode', model_hint='nemotron-3-ultra-free',
+        selection_hint='opencode/nemotron-3-ultra-free',
+    )
+    assert result['status'] == 'running'
+    assert result['providerState']['type'] == 'busy'
+
+
 def test_evidence_redaction_digest_and_tamper(tmp_path):
     task = {'taskId':'dvt_'+'a'*32,'backendSessionId':'ses_test'}
     messages=[{'info':{'role':'assistant'},'parts':[{'type':'text','text':'API_KEY=secret-123 Bearer abcdef123456789'}, {'type':'reasoning','text':'private reasoning'}]}]
