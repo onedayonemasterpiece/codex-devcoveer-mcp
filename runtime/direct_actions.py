@@ -1165,13 +1165,13 @@ async def _action_receipt_head(root: Path) -> str | None:
     return value if HEX40_RE.fullmatch(value) else None
 
 
-async def run_project_action(project_root: str, project_id: str, action: dict[str, Any], *,
+async def _legacy_run_project_action(project_root: str, project_id: str, action: dict[str, Any], *,
                              config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
     started = time.monotonic()
     head_before = await _action_receipt_head(root)
-    incident_scope = incident_project_scope(project_id, str(root))
-    incident_id = active_incident_id(incident_scope)
+    from process_recovery import context_fields
+    incident_id = context_fields().get("incident_id")
     receipt = {
         "project": project_id,
         "cwd": str(root),
@@ -1250,12 +1250,12 @@ async def _run_host_action_inner(project_root: str, project_id: str, action: dic
     raise ProbeError("invalid_input", f"unknown host action kind {kind!r}")
 
 
-async def run_host_action(project_root: str, project_id: str, action: dict[str, Any], *,
+async def _legacy_run_host_action(project_root: str, project_id: str, action: dict[str, Any], *,
                           config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
     started = time.monotonic()
-    incident_scope = incident_project_scope(project_id, str(root))
-    incident_id = active_incident_id(incident_scope)
+    from process_recovery import context_fields
+    incident_id = context_fields().get("incident_id")
     receipt = {
         "project": project_id,
         "cwd": str(root),
@@ -1284,3 +1284,17 @@ async def run_host_action(project_root: str, project_id: str, action: dict[str, 
         "duration_ms": int((time.monotonic() - started) * 1000),
     })
     return result
+
+async def run_project_action(project_root: str, project_id: str, action: dict[str, Any], *,
+                            config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
+    from process_recovery import recorded_call
+    return await recorded_call(project_root, project_id, "project_action", action,
+        lambda: _legacy_run_project_action(project_root, project_id, action,
+            config_path=config_path, receipt_surface=receipt_surface))
+
+async def run_host_action(project_root: str, project_id: str, action: dict[str, Any], *,
+                            config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
+    from process_recovery import recorded_call
+    return await recorded_call(project_root, project_id, "host_action", action,
+        lambda: _legacy_run_host_action(project_root, project_id, action,
+            config_path=config_path, receipt_surface=receipt_surface))

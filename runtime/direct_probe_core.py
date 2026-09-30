@@ -643,61 +643,13 @@ async def _tracked_workspace_digest(root: Path) -> str:
 
 
 def _append_direct_receipt(entry: dict[str, Any]) -> None:
-    """Best-effort bounded observability; receipt failure must never block the requested operation."""
-    try:
-        path = DIRECT_RECEIPT_LOG
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        payload = dict(entry)
-        payload.setdefault("observed_at", dt.datetime.now(dt.timezone.utc).isoformat())
-        line = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
-        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "r+", encoding="utf-8") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            handle.seek(0, 2)
-            handle.write(line)
-            handle.flush()
-            size = handle.tell()
-            if size > MAX_DIRECT_RECEIPT_LOG_BYTES:
-                keep = MAX_DIRECT_RECEIPT_LOG_BYTES // 2
-                handle.seek(max(0, size - keep))
-                tail = handle.read()
-                tail = tail.partition("\n")[2]
-                handle.seek(0)
-                handle.write(tail)
-                handle.truncate()
-    except (OSError, ValueError, TypeError):
-        return
+    from process_recovery import append_receipt, context_fields
+    append_receipt(DIRECT_RECEIPT_LOG, {**entry, **context_fields()}, MAX_DIRECT_RECEIPT_LOG_BYTES)
 
 
 def _recent_direct_receipts(root: Path, *, limit: int = 20) -> dict[str, Any]:
-    limit = max(1, min(int(limit), 100))
-    path = DIRECT_RECEIPT_LOG
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    except FileNotFoundError:
-        return {"entries": [], "limit": limit, "complete": True}
-    except OSError:
-        return {"entries": [], "limit": limit, "complete": False}
-    try:
-        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-            text = handle.read(MAX_DIRECT_RECEIPT_LOG_BYTES + 1)
-    except OSError:
-        return {"entries": [], "limit": limit, "complete": False}
-    complete = len(text) <= MAX_DIRECT_RECEIPT_LOG_BYTES
-    target = str(root.resolve())
-    entries: list[dict[str, Any]] = []
-    for line in reversed(text[-MAX_DIRECT_RECEIPT_LOG_BYTES:].splitlines()):
-        try:
-            item = json.loads(line)
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(item, dict) or item.get("cwd") != target:
-            continue
-        entries.append(item)
-        if len(entries) >= limit:
-            break
-    return {"entries": entries, "limit": limit, "complete": complete}
+    from process_recovery import read_receipts
+    return read_receipts(DIRECT_RECEIPT_LOG, str(root.resolve()), limit=limit)
 
 
 async def _resolve_commit(root: Path, ref: str) -> str:

@@ -66,11 +66,22 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     try:
         inspected = await OPENCODE_BACKEND.inspect(
             session_id=session_id, directory=str(record["cwd"]),
-            include_messages=True,
+            include_messages=(detail != "summary"),
             provider_hint=record.get("provider") if isinstance(record.get("provider"), str) else None,
             model_hint=record.get("model") if isinstance(record.get("model"), str) else None,
             selection_hint=record.get("selection") if isinstance(record.get("selection"), str) else None,
         )
+        if detail == "summary" and inspected.get("status") == "running" and record.get("status") != "cancelling":
+            return {"status":"running", "task":_registry_public(record),
+                "executionStatus":"running", "inspectionStatus":"metadata_only",
+                "providerState":inspected.get("providerState"),
+                "suggestedPollAfterSeconds":5,
+                "content":"Task is running. No message history was fetched; use detail=full only for diagnosis."}
+        if detail == "summary":
+            inspected = await OPENCODE_BACKEND.inspect(
+                session_id=session_id, directory=str(record["cwd"]), include_messages=True,
+                provider_hint=record.get("provider"), model_hint=record.get("model"),
+                selection_hint=record.get("selection"))
     except OpenCodeError as exc:
         # An inability to inspect the localhost OpenCode runtime is not proof that
         # the underlying task itself failed. Preserve the last durable task state
@@ -108,10 +119,9 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     if status == "idle" and inspected.get("finalResponse") is None:
         if record.get("status") == "cancelling":
             status = "interrupted"
-        elif int(time.time() * 1000) - int(record.get("createdAt") or 0) < 900_000:
-            status = "running"
         else:
-            status = "failed"
+            # Age of a session is not evidence of a provider error.
+            status = "idle"
 
     provider_state = inspected.get("providerState")
     provider_state_type = provider_state.get("type") if isinstance(provider_state, dict) else None
@@ -132,7 +142,7 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     )
     changes: dict[str, Any] = {"status": durable_status}
     if status in {"completed", "failed", "interrupted"}:
-        changes["finishedAt"] = int(time.time() * 1000)
+        changes["finishedAt"] = record.get("finishedAt") or inspected.get("updatedAt") or int(time.time() * 1000)
     if status == "failed":
         changes["errorCategory"] = inspected.get("providerErrorCategory") or "model_error"
 
@@ -236,7 +246,8 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     if detail == "full":
         if record.get("backend") == "opencode":
             if status == "running":
-                payload["liveSessionSnapshot"] = inspected.get("safeLiveSnapshot", [])
+                from process_recovery import bounded_snapshot
+                payload["liveSessionSnapshot"], payload["liveSnapshotTruncated"] = bounded_snapshot(inspected.get("safeLiveSnapshot", []))
                 payload["historyNote"] = (
                     "This is a bounded redacted live snapshot for progress diagnosis. "
                     "Terminal immutable evidence remains available only through get_task_evidence."
@@ -248,4 +259,7 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
                 )
         else:
             payload["history"] = inspected.get("messages", [])
+    if status == "idle":
+        payload["executionStatus"] = "awaiting_final"
+        payload["suggestedAction"] = "continue_same_task_after_inspection"
     return payload

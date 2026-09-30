@@ -22,6 +22,7 @@ BLOCK = """<!-- DEVCOVEER_INCIDENT_OBSERVABILITY_START -->
 - When changing live failure-prone behavior, add or improve concise structured logging at external boundaries, decisions, retries, state transitions, failures and successful outcomes. Include useful correlation/release/component context; never log credentials or private payloads.
 - Typed operations are preferred when they exactly express the action because they leave clearer evidence. They are not a capability boundary: full-power agent/shell remains available for legitimate operations absent from the typed surface.
 - Detailed workflow: `/home/dev/.local/share/devcoveer/auth/codex/skills/devcoveer-incident-investigation/SKILL.md`.
+- Multi-step DevCoveer work uses direct_ops_v2 work_open/work_resume and stable mutation request_key. Recover saved results after disconnect; do not repeat unknown side effects. Checkpoint milestones, not every read.
 <!-- DEVCOVEER_INCIDENT_OBSERVABILITY_END -->"""
 
 
