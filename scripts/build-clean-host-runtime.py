@@ -49,7 +49,7 @@ def function_block(source: str, name: str) -> tuple[int, int, str]:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.28.6-process-recovery"', "version")
+                          'BRIDGE_VERSION = "3.29.0-handoff-lifecycle"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -285,10 +285,10 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=True,
             idempotent_hint=False, open_world_hint=False)),
     types.Tool(name="stage_source_handoff", title="Stage source handoff",
-        description=("Materialize an exact-base Git binary patch in an isolated detached "
-            "worktree without modifying the canonical checkout. Returns handoff:<id> for "
-            "direct project_action test/commit/push or, only when real reasoning is needed, "
-            "start_task/continue_task. Patch bytes are consumed through stdin and not persisted."),
+        description=("Temporary source transport: materialize an exact-base Git binary patch in an isolated "
+            "detached worktree without modifying the canonical checkout. Identical input reuses the same handoff. "
+            "Prefer an already selected worktree/direct writes when possible. Staging opportunistically reclaims stale cleanup-safe handoffs; "
+            "unique dirty work is never age-deleted. Use direct_ops_v2 source_handoff_list/source_handoff_gc only when lifecycle inspection is useful."),
         input_schema=STAGE_SOURCE_HANDOFF_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
             idempotent_hint=True, open_world_hint=False)),

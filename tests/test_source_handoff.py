@@ -10,6 +10,8 @@ import pytest
 from runtime.source_handoff import (
     SourceHandoffError,
     cleanup_source_handoff,
+    gc_source_handoffs,
+    list_source_handoffs,
     resolve_source_handoff,
     stage_source_handoff,
 )
@@ -166,3 +168,86 @@ def test_invalid_handoff_id_is_rejected(tmp_path: Path) -> None:
         resolve_source_handoff("../escape", root=root)
     with pytest.raises(SourceHandoffError, match="invalid source handoff id"):
         cleanup_source_handoff("/tmp/anything", root=root)
+
+
+
+def test_lifecycle_inventory_keeps_unique_dirty_and_reclaims_subsumed(tmp_path: Path) -> None:
+    repo, base = make_repo(tmp_path)
+    root = tmp_path / "handoffs"
+    patch = build_patch(repo, base)
+    result = stage(repo, base, patch, root)
+    workspace = resolve_source_handoff(result["handoffId"], root=root)
+
+    before = list_source_handoffs(repo, root=root)
+    row = next(item for item in before["handoffs"] if item["handoffId"] == result["handoffId"])
+    assert row["cleanupSafe"] is False
+    assert row["cleanupReason"] == "unique_changes"
+
+    git(repo, "apply", "--index", "-", input_bytes=patch)
+    git(repo, "commit", "-m", "accept patch")
+    after = list_source_handoffs(repo, root=root)
+    row = next(item for item in after["handoffs"] if item["handoffId"] == result["handoffId"])
+    assert row["cleanupSafe"] is True
+    assert row["cleanupReason"] == "changes_subsumed_by_default_ref"
+
+    swept = gc_source_handoffs(repo, root=root, older_than_seconds=0, max_remove=8)
+    assert result["handoffId"] in swept["removed"]
+    assert not workspace.exists()
+
+
+def test_lifecycle_clean_referenced_head_is_safe(tmp_path: Path) -> None:
+    repo, base = make_repo(tmp_path)
+    root = tmp_path / "handoffs"
+    patch = build_patch(repo, base)
+    result = stage(repo, base, patch, root)
+    workspace = resolve_source_handoff(result["handoffId"], root=root)
+    git(workspace, "commit", "-m", "handoff commit")
+    head = git(workspace, "rev-parse", "HEAD").decode().strip()
+    git(repo, "branch", "saved-handoff", head)
+
+    inventory = list_source_handoffs(repo, root=root)
+    row = next(item for item in inventory["handoffs"] if item["handoffId"] == result["handoffId"])
+    assert row["clean"] is True
+    assert row["headReferenced"] is True
+    assert row["cleanupSafe"] is True
+    assert row["cleanupReason"] == "clean_head_referenced"
+
+
+def test_cleanup_survives_original_staging_worktree_removal(tmp_path: Path) -> None:
+    repo, base = make_repo(tmp_path)
+    linked = tmp_path / "linked"
+    git(repo, "worktree", "add", "--detach", str(linked), base)
+    root = tmp_path / "handoffs"
+    patch = build_patch(repo, base)
+    digest = hashlib.sha256(patch).hexdigest()
+    result = stage_source_handoff(
+        linked, "proj", base, patch.decode("utf-8"), digest, root=root
+    )
+    workspace = resolve_source_handoff(result["handoffId"], root=root)
+    git(repo, "worktree", "remove", "--force", str(linked))
+
+    removed = cleanup_source_handoff(result["handoffId"], root=root)
+    assert removed["removed"] is True
+    assert not workspace.exists()
+
+
+def test_stage_opportunistically_sweeps_only_safe_handoffs(tmp_path: Path, monkeypatch) -> None:
+    import runtime.source_handoff as sh
+
+    repo, base = make_repo(tmp_path)
+    root = tmp_path / "handoffs"
+    first_patch = build_patch(repo, base)
+    first = stage(repo, base, first_patch, root)
+    git(repo, "apply", "--index", "-", input_bytes=first_patch)
+    git(repo, "commit", "-m", "accept first")
+
+    monkeypatch.setattr(sh, "AUTO_GC_TRIGGER_COUNT", 1)
+    monkeypatch.setattr(sh, "AUTO_GC_STALE_SECONDS", 0)
+
+    current = git(repo, "rev-parse", "HEAD").decode().strip()
+    (repo / "change.txt").write_text("second\n", encoding="utf-8")
+    second_patch = git(repo, "diff", "--binary", current)
+    git(repo, "checkout", "--", "change.txt")
+    second = stage(repo, current, second_patch, root)
+    assert first["handoffId"] in second["autoCleanup"]["removed"]
+    assert (root / second["handoffId"]).is_dir()

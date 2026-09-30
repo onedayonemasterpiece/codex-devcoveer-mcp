@@ -403,3 +403,26 @@ def test_artifact_fetch_streams_https_without_returning_query_credentials(tmp_pa
             str(repo), "p", {"kind": "artifact_fetch", "url": "http://example.invalid/x",
             "path": "vendor/x"}, config_path=cfg,
         ))
+
+
+
+def test_source_handoff_gc_action_is_typed_safe_sweep(tmp_path: Path, monkeypatch):
+    repo = init_repo(tmp_path / "repo")
+    cfg = write_cfg(tmp_path / "cfg.json", repo)
+    observed = {}
+
+    def fake_gc(root, *, older_than_seconds, max_remove):
+        observed.update(root=root, older=older_than_seconds, limit=max_remove)
+        return {"status":"ok","action":"source_handoff_gc","removed":["src_" + "a" * 24]}
+
+    monkeypatch.setattr(da, "gc_source_handoffs", fake_gc)
+    result = run(da.run_project_action(
+        str(repo), "p",
+        {"kind":"source_handoff_gc","older_than_seconds":0,"limit":4},
+        config_path=cfg,
+    ))
+    assert result["status"] == "ok"
+    assert result["action"] == "source_handoff_gc"
+    assert observed["root"] == repo.resolve()
+    assert observed["older"] == 0
+    assert observed["limit"] == 4

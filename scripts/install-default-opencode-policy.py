@@ -146,7 +146,7 @@ NEW_START_TOOL = """    types.Tool(name="start_task", title="Start DevCoveer tas
             "Use git_fetch for fetch without checkout; use typed github_workflow_dispatch/github_run_cancel for applicable GitHub workflow operations. "
             "Use list_models for model state and list_tasks/read_task for task state. "
             "For continuation work that names or implies a checkpoint, branch, SHA or prior worktree, first inspect find_projects workspaceContext and project_probe worktree_list; exact repository-name resolution identifies only one physical checkout. "
-            "Address the matching project before read/write/test/build and pass expected_head on guarded direct actions when a checkpoint SHA is known. stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree. "
+            "Address the matching project before read/write/test/build and pass expected_head on guarded direct actions when a checkpoint SHA is known. stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree and should not be created for work that direct operations can do in the selected checkout. Managed handoffs are temporary and staging performs bounded safe cleanup, so do not add manual cleanup ceremony to every task. "
             "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, "
             "use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "
             "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. "
@@ -181,8 +181,11 @@ NEW_HANDOFF_TOOL = """    types.Tool(name="stage_source_handoff", title="Stage s
             "a handoff:<id> project for start_task, which defaults to OpenCode. The patch is authored "
             "by ChatGPT; the handoff agent should verify/test/commit/push/deploy it, not independently "
             "rewrite repository code or documentation. If verification finds a source defect, return "
-            "evidence to ChatGPT for a revised handoff. After acceptance, call cleanup_source_handoff. "
-            "Do not create an archive, persistent patch storage, or a separate venv for Source Handoff."
+            "evidence to ChatGPT for a revised handoff. Managed handoffs are temporary: identical input reuses "
+            "the same workspace and staging performs bounded cleanup of stale handoffs only when their state is already "
+            "durable. Use source_handoff_list/source_handoff_gc when lifecycle inspection is actually useful; do not add "
+            "cleanup bookkeeping to every task. cleanup_source_handoff remains available for explicit one-off teardown when "
+            "the exact handoff is known. Do not create an archive, persistent patch storage, or a separate venv."
         ),
         input_schema=STAGE_SOURCE_HANDOFF_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
         annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,

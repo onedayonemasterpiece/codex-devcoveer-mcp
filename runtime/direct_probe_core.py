@@ -120,6 +120,13 @@ PROJECT_CHECK_SCHEMAS = [
         "include_untracked": {"type":"boolean","default":True},
         "limit": {"type":"integer","minimum":1,"maximum":1000},
     }, ["worktree","target_ref"]),
+    {**_check_schema("source_handoff_list", {
+        "limit": {"type":"integer","minimum":1,"maximum":100,"default":50},
+        "safe_only": {"type":"boolean","default":False},
+    }), "description": (
+        "List managed Source Handoff workspaces for this Git repository, including whether each is "
+        "active and conservatively safe to reclaim. Read-only and bounded."
+    )},
     _check_schema("capabilities"),
     {**_check_schema("instructions", {
         "scope": {"type": "string", "enum": ["home", "project"], "default": "project"},

@@ -41,6 +41,7 @@ from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action
 from direct_jobs import cancel_job, cleanup_job, job_status, start_job, list_jobs
 from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update, git_fetch, workflow_dispatch, run_cancel
 from incident_registry import active_incident_id, close_incident, incident_project_scope, note_incident, open_incident
+from source_handoff import gc_source_handoffs
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -123,6 +124,7 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"capture_handoff"},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","base_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"worktree_capture_handoff"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","worktree","base_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"source_handoff_gc"},"older_than_seconds":{"type":"integer","minimum":0,"maximum":2592000,"default":3600},"limit":{"type":"integer","minimum":1,"maximum":64,"default":16}},"required":["kind"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"owned_service_action"},"unit":{"type":"string","minLength":1,"maxLength":200,"pattern":r"^[A-Za-z0-9_.@:-]+\.service$"},"operation":{"type":"string","enum":["status","start","stop","restart","reload","enable","disable"]}},"required":["kind","unit","operation"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"github_pr_create"},"remote":{"type":"string","minLength":1,"maxLength":64},"head":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"base":{"type":"string","minLength":1,"maxLength":200},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000}},"required":["kind","head","expected_head_sha","title"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"github_pr_update"},"remote":{"type":"string","minLength":1,"maxLength":64},"pr":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000}},"required":["kind","pr","expected_head_sha"],"additionalProperties":False},
@@ -1148,6 +1150,14 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
     if kind == "worktree_reconcile":
         if handoff: raise ProbeError("handoff_denied", "worktree reconcile requires a canonical project", status="denied")
         return await reconcile_worktree(root, binding_id, action)
+    if kind == "source_handoff_gc":
+        if handoff:
+            raise ProbeError("handoff_denied", "source handoff GC must run from a repository checkout, not from a managed handoff", status="denied")
+        return gc_source_handoffs(
+            root,
+            older_than_seconds=int(action.get("older_than_seconds", 3600)),
+            max_remove=int(action.get("limit", 16)),
+        )
     if kind == "owned_service_action":
         if handoff: raise ProbeError("handoff_denied", "owned service action requires a canonical project", status="denied")
         return await owned_service_action(root, action)
