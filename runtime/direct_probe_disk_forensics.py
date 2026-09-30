@@ -26,8 +26,8 @@ def resolve_resource_target(raw: Any) -> tuple[Path, str | None]:
         raise ProbeError("config", "resource root binding is invalid")
     if not isinstance(path_s, str) or not path_s.startswith("/"):
         raise ProbeError("config", "resource root path must be absolute")
-    path = Path(path_s).resolve(strict=True)
-    if not path.is_dir():
+    path = Path(path_s).resolve(strict=False)
+    if path.exists() and not path.is_dir():
         raise ProbeError("config", "resource root must be a directory")
     return path, profile
 
