@@ -76,3 +76,10 @@ Favor system/process fixes over blame.
 When changing live failure-prone behavior, verify the code emits useful structured events at external boundaries, decisions, retries, state transitions, errors and successful completion. Include correlation identifiers and release/component context when applicable. Never log secrets.
 
 If an incident was difficult to diagnose because evidence was missing, improving observability is an incident action item, not optional polish.
+
+## Durable work continuation
+For a multi-step investigation, open one work checkpoint through direct_ops_v2 project_action/work_open.
+Carry work_id and stable request_key for mutations. On timeout, inspect operation_get or work_resume;
+never assume a publication or Git mutation did not happen. Checkpoint only meaningful milestones,
+not every probe. Incident attribution is explicit per work/task, never the latest repository incident.
+Long execution uses job_start; status polls use summary. Existing access and approval rules still apply.

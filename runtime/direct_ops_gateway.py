@@ -61,6 +61,11 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
     variants = (schema["properties"]["checks"]["items"] if plane.endswith("probe")
                 else schema["properties"]["action"])["oneOf"]
     operations = {item["properties"]["kind"]["const"]: item for item in variants}
+    from process_recovery import SCHEMAS, WORK_ACTIONS, PROCESS_READS
+    extra = WORK_ACTIONS if plane == "project_action" else PROCESS_READS if plane == "project_probe" else set()
+    for name in extra:
+        operations[name] = {**copy.deepcopy(SCHEMAS[name]), "properties":{
+            "kind":{"const":name}, **copy.deepcopy(SCHEMAS[name]["properties"])}}
     digest = hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     result = {"status": "ok", "execution": "direct", "plane": plane, "schema_digest": digest,
               "operations": sorted(operations), "preferred_tool": "direct_ops_v2",
@@ -86,6 +91,28 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
         payload_schema["required"] = [key for key in payload_schema.get("required", []) if key not in {"id", "kind"}]
         result["payload_schema"] = payload_schema
         result["operation"] = operation
+        from process_recovery import KEY, WORK_ID, INCIDENT_ID
+        if operation not in SCHEMAS:
+            payload_schema["properties"].update({"work_id": WORK_ID, "incident_id": INCIDENT_ID})
+            if plane.endswith("action"):
+                payload_schema["properties"].setdefault("request_key", KEY)
+        # Keep workspace guidance, plus only the relevant operation family, rather than the whole manual.
+        keep = {"workspace"}
+        if operation in {"run_tool", "job_start", "job_status", "run_profile"}: keep.add("execution")
+        if operation.startswith("incident_") or operation in SCHEMAS: keep.add("incidents")
+        if operation in {"logs", "log_search", "service", "service_config", "resources"}: keep.add("observability")
+        if operation in {"write_text", "apply_source_patch"}: keep.add("source")
+        if operation == "artifact_fetch": keep.add("artifacts")
+        result["operator_guidance"] = {k:v for k,v in result["operator_guidance"].items() if k in keep}
+    result["gateway_revision"] = "process-recovery-1"
+    result["gateway_contract_digest"] = hashlib.sha256(json.dumps(operations, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation == "run_tool":
+        result["payload_schema"]["properties"]["execution_mode"] = {"enum":["auto","sync","job"], "default":"auto",
+            "description":"auto routes declared timeouts over 30s to the existing durable job runner; sync preserves legacy behavior."}
+    result["operator_guidance"]["recovery"] = (
+        "For multi-step work, work_open once and carry work_id. Use stable request_key for mutations; "
+        "after a lost response use operation_get/work_resume before retrying. Long commands use job_start. "
+        "Never treat a lost response as proof that a side effect did not happen.")
     return result
 
 
@@ -95,13 +122,14 @@ def _validate(schema: dict[str, Any], value: dict[str, Any]) -> None:
         return
     first = errors[0]
     where = ".".join(str(part) for part in first.absolute_path)
-    message = first.message
+    from process_recovery import validation_message
+    message = validation_message(first)
     if where:
         message = f"{where}: {message}"
     raise ProbeError("invalid_input", message[:2000], status="denied")
 
 
-async def run_direct_ops_v2(
+async def _run_native_direct_ops_v2(
     project_root: str,
     project_id: str,
     plane: str,
@@ -153,3 +181,49 @@ async def run_direct_ops_v2(
 
     raise ProbeError("invalid_input", f"unknown direct ops plane {plane!r}", status="denied")
 
+async def run_direct_ops_v2(project_root, project_id, plane, operation, payload=None):
+    import asyncio
+    from process_recovery import (SCHEMAS, WORK_ACTIONS, PROCESS_READS, CONTEXT, KEY,
+        WORK_ID, INCIDENT_ID, resolve_context, work_action, process_read)
+    body = {} if payload is None else payload
+    _validate(DIRECT_OPS_V2_INPUT_SCHEMA, {
+        "project": project_id, "plane": plane, "operation": operation, "payload": body})
+    if operation == "describe":
+        return await _run_native_direct_ops_v2(project_root, project_id, plane, operation, body)
+    if operation in SCHEMAS:
+        required_plane = "project_action" if operation in WORK_ACTIONS else "project_probe"
+        if plane != required_plane:
+            raise ProbeError("invalid_input", f"{operation} belongs to {required_plane}", status="denied")
+        _validate(SCHEMAS[operation], body)
+        if body.get("incident_id"):
+            from incident_registry import incident_project_scope, get_incident
+            scope = await asyncio.to_thread(incident_project_scope, project_id, project_root)
+            await asyncio.to_thread(get_incident, scope, body["incident_id"])
+        if operation in WORK_ACTIONS:
+            return await asyncio.to_thread(work_action, project_root, project_id, operation, body)
+        return await asyncio.to_thread(process_read, project_root, operation, body)
+    metadata = {key: body[key] for key in ("work_id", "incident_id", "request_key") if key in body}
+    mode = body.get("execution_mode", "auto")
+    if "execution_mode" in body and (operation != "run_tool" or mode not in {"auto", "sync", "job"}):
+        raise ProbeError("invalid_input", "execution_mode is valid only for run_tool", status="denied")
+    _validate({"type":"object", "properties":{"work_id":WORK_ID,"incident_id":INCIDENT_ID,"request_key":KEY},
+               "additionalProperties":False}, metadata)
+    context = await asyncio.to_thread(resolve_context, project_root, metadata)
+    if context.get("incident_id"):
+        from incident_registry import incident_project_scope, get_incident
+        scope = await asyncio.to_thread(incident_project_scope, project_id, project_root)
+        await asyncio.to_thread(get_incident, scope, context["incident_id"])
+    native = {key: value for key, value in body.items() if key not in {"work_id", "incident_id", "execution_mode"}}
+    if operation not in {"job_start", "github_workflow_dispatch"}:
+        native.pop("request_key", None)
+    if operation == "run_tool" and (mode == "job" or (mode == "auto" and native.get("timeout_seconds", 30) > 30)):
+        # Validate the original operation before changing its execution transport.
+        _validate(PROJECT_ACTION_INPUT_SCHEMA, {"project":project_id,"action":{"kind":"run_tool",**native}})
+        operation = "job_start"
+        if context.get("request_key"):
+            native["request_key"] = context["request_key"]
+    token = CONTEXT.set(context)
+    try:
+        return await _run_native_direct_ops_v2(project_root, project_id, plane, operation, native)
+    finally:
+        CONTEXT.reset(token)

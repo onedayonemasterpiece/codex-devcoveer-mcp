@@ -201,7 +201,8 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
     binding_id, binding, binding_inherited = await _binding_for_root(config, project_id, root)
     binding = dict(binding)
     binding["_devcoveer_project_scope"] = str(binding.get("github_repo") or binding_id)
-    incident_id = active_incident_id(binding["_devcoveer_project_scope"])
+    from process_recovery import context_fields
+    incident_id = context_fields().get("incident_id")
     slots: list[dict[str, Any] | asyncio.Task[dict[str, Any]]] = []
     tasks: list[asyncio.Task[dict[str, Any]]] = []
     seen_ids: set[str] = set()
