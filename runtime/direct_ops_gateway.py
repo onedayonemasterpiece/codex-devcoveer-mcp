@@ -51,6 +51,25 @@ DIRECT_OPS_V2_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+def _native_operation_schema(plane: str, operation: str) -> dict[str, Any] | None:
+    schemas = {
+        "project_probe": PROJECT_PROBE_INPUT_SCHEMA,
+        "host_probe": HOST_PROBE_INPUT_SCHEMA,
+        "project_action": PROJECT_ACTION_INPUT_SCHEMA,
+        "host_action": HOST_ACTION_INPUT_SCHEMA,
+    }
+    schema = schemas[plane]
+    variants = (
+        schema["properties"]["checks"]["items"]
+        if plane.endswith("probe")
+        else schema["properties"]["action"]
+    )["oneOf"]
+    for item in variants:
+        if item.get("properties", {}).get("kind", {}).get("const") == operation:
+            return item
+    return None
+
+
 def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
     import hashlib
     import json
@@ -93,7 +112,8 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
         result["operation"] = operation
         from process_recovery import KEY, WORK_ID, INCIDENT_ID
         if operation not in SCHEMAS:
-            payload_schema["properties"].update({"work_id": WORK_ID, "incident_id": INCIDENT_ID})
+            payload_schema["properties"].setdefault("work_id", WORK_ID)
+            payload_schema["properties"].setdefault("incident_id", INCIDENT_ID)
             if plane.endswith("action"):
                 payload_schema["properties"].setdefault("request_key", KEY)
         # Keep workspace guidance, plus only the relevant operation family, rather than the whole manual.
@@ -213,8 +233,13 @@ async def run_direct_ops_v2(project_root, project_id, plane, operation, payload=
         from incident_registry import incident_project_scope, get_incident
         scope = await asyncio.to_thread(incident_project_scope, project_id, project_root)
         await asyncio.to_thread(get_incident, scope, context["incident_id"])
-    native = {key: value for key, value in body.items() if key not in {"work_id", "incident_id", "execution_mode"}}
-    if operation not in {"job_start", "github_workflow_dispatch"}:
+    native_schema = _native_operation_schema(plane, operation)
+    native_properties = set((native_schema or {}).get("properties", {}))
+    native = dict(body)
+    for key in ("work_id", "incident_id", "execution_mode"):
+        if key not in native_properties:
+            native.pop(key, None)
+    if "request_key" not in native_properties:
         native.pop("request_key", None)
     if operation == "run_tool" and (mode == "job" or (mode == "auto" and native.get("timeout_seconds", 30) > 30)):
         # Validate the original operation before changing its execution transport.

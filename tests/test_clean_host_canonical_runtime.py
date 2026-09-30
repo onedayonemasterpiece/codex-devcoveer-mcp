@@ -115,7 +115,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.28.5-process-recovery"' in bridge
+        assert 'BRIDGE_VERSION = "3.28.6-process-recovery"' in bridge
         assert 'include_messages=(detail != "summary")' in bridge
         assert '"inspectionStatus":"metadata_only"' in bridge
         assert "Task is running. No message history was fetched" in bridge
@@ -147,6 +147,10 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'call-time tools/list_changed notification failed' in bridge
         assert 'session_key = id(_ctx.session)' in bridge
         assert '@direct_ops_v2' in (out / "direct_actions.py").read_text(encoding="utf-8")
+        gateway = (out / "direct_ops_gateway.py").read_text(encoding="utf-8")
+        assert "def _native_operation_schema(" in gateway
+        assert 'if key not in native_properties:' in gateway
+        assert 'if "request_key" not in native_properties:' in gateway
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
         assert 'headers["x-opencode-directory"]' in backend
         assert '"User-Agent": "opencode/" + (self._server_version or "unknown")' in backend

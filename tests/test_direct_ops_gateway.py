@@ -15,6 +15,7 @@ sys.path.insert(0,str(RUNTIME))
 import direct_ops_gateway as gateway
 import direct_actions as actions
 import direct_ops2
+import incident_registry
 
 
 def run(coro): return asyncio.run(coro)
@@ -182,3 +183,68 @@ def test_liberal_direct_ops_add_capabilities_without_removing_escape_hatch():
     assert "not a capability boundary" in guidance["escape_hatch"]
     assert "arbitrary HTTPS" in guidance["artifacts"]
     assert "inert source" in guidance["source"]
+
+
+def _allow_incident_lookup(monkeypatch, incident_id):
+    monkeypatch.setattr(
+        incident_registry, "incident_project_scope",
+        lambda _project, _root: "test-scope",
+    )
+    monkeypatch.setattr(
+        incident_registry, "get_incident",
+        lambda _scope, requested: {"incident_id": requested}
+        if requested == incident_id else None,
+    )
+
+
+def test_native_incident_note_preserves_intrinsic_incident_id(monkeypatch,tmp_path:Path):
+    incident_id="inc_"+"a"*24
+    _allow_incident_lookup(monkeypatch,incident_id)
+    seen={}
+    async def fake(root,project,action,receipt_surface="typed"):
+        seen.update(root=root,project=project,action=action,receipt_surface=receipt_surface)
+        return {"status":"ok","incident":{"incident_id":action["incident_id"]}}
+    monkeypatch.setattr(gateway,"run_project_action",fake)
+    out=run(gateway.run_direct_ops_v2(
+        str(tmp_path),"p","project_action","incident_note",
+        {"incident_id":incident_id,"note":"verified","note_kind":"verification"},
+    ))
+    assert out["status"]=="ok"
+    assert seen["action"]["incident_id"]==incident_id
+    assert seen["action"]["kind"]=="incident_note"
+    assert seen["receipt_surface"]=="direct_ops_v2"
+
+
+def test_native_incident_get_preserves_intrinsic_incident_id(monkeypatch,tmp_path:Path):
+    incident_id="inc_"+"b"*24
+    _allow_incident_lookup(monkeypatch,incident_id)
+    seen={}
+    async def fake(root,project,checks,receipt_surface="typed"):
+        seen.update(root=root,project=project,checks=checks,receipt_surface=receipt_surface)
+        return {"execution":"direct","results":[{"id":"direct_ops_v2","status":"ok"}]}
+    monkeypatch.setattr(gateway,"run_project_probe",fake)
+    out=run(gateway.run_direct_ops_v2(
+        str(tmp_path),"p","project_probe","incident_get",
+        {"incident_id":incident_id},
+    ))
+    assert out["execution"]=="direct"
+    assert seen["checks"][0]["incident_id"]==incident_id
+    assert seen["checks"][0]["kind"]=="incident_get"
+    assert seen["receipt_surface"]=="direct_ops_v2"
+
+
+def test_context_incident_id_is_stripped_from_nonincident_native_action(monkeypatch,tmp_path:Path):
+    incident_id="inc_"+"c"*24
+    _allow_incident_lookup(monkeypatch,incident_id)
+    seen={}
+    async def fake(root,project,action,receipt_surface="typed"):
+        seen.update(action=action,receipt_surface=receipt_surface)
+        return {"status":"ok"}
+    monkeypatch.setattr(gateway,"run_project_action",fake)
+    out=run(gateway.run_direct_ops_v2(
+        str(tmp_path),"p","project_action","write_text",
+        {"path":"x.txt","content":"x","incident_id":incident_id},
+    ))
+    assert out["status"]=="ok"
+    assert "incident_id" not in seen["action"]
+    assert seen["action"]=={"kind":"write_text","path":"x.txt","content":"x"}
