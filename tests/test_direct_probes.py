@@ -334,3 +334,27 @@ def test_project_probe_records_typed_receipts_without_payload(tmp_path: Path, mo
     assert receipt["project"] == "p"
     assert receipt["status"] == "ok"
     assert "payload" not in receipt and "args" not in receipt and "output" not in receipt
+
+
+
+def test_source_handoff_list_probe_is_typed_and_bounded(tmp_path: Path, monkeypatch):
+    repo = init_repo(tmp_path / "repo")
+    cfg = write_cfg(tmp_path / "cfg.json", "p", repo)
+    observed = {}
+
+    def fake_list(root, *, limit, safe_only):
+        observed.update(root=root, limit=limit, safe_only=safe_only)
+        return {"status":"ok","handoffs":[],"count":0,"cleanupSafeCount":0,"complete":True}
+
+    monkeypatch.setattr(dp, "list_source_handoffs", fake_list)
+    payload = run(dp.run_project_probe(
+        str(repo), "p",
+        [{"id":"handoffs","kind":"source_handoff_list","limit":7,"safe_only":True}],
+        config_path=cfg,
+    ))
+    result = result_by_id(payload, "handoffs")
+    assert result["status"] == "ok"
+    assert result["source"] == "managed-source-handoffs"
+    assert observed["root"] == repo.resolve()
+    assert observed["limit"] == 7
+    assert observed["safe_only"] is True

@@ -20,6 +20,7 @@ from direct_ops2 import project_capabilities, workspace_compare
 from direct_ops2_worktrees import worktree_compare
 from direct_web_context import read_instructions, web_preflight
 from incident_registry import active_incident_id, get_incident, search_incidents
+from source_handoff import list_source_handoffs
 from direct_ops2_host import (
     mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
     root_git_state,
@@ -98,6 +99,12 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
     if kind == "tree": return await _tree(root, check), "git-local-object"
     if kind == "worktree_list": return await _worktree_list(root), "git-local"
     if kind == "worktree_compare": return await worktree_compare(root, check), "git-worktree/object/worktree"
+    if kind == "source_handoff_list":
+        return list_source_handoffs(
+            root,
+            limit=int(check.get("limit", 50)),
+            safe_only=bool(check.get("safe_only", False)),
+        ), "managed-source-handoffs"
     if kind == "capabilities": return await project_capabilities(root, binding), "git-local+trusted-server-config"
     if kind == "workspace_compare": return await workspace_compare(root, check["target_ref"], include_untracked=bool(check.get("include_untracked", True)), limit=int(check.get("limit", 500))), "git-local-object/worktree"
     if kind == "diff": return await _diff(root, check), "git-local-object/worktree"

@@ -107,7 +107,17 @@ async def _resources(binding: dict[str, Any], check: dict[str, Any]) -> dict[str
         if raw is None:
             raise ProbeError("target_denied", "resource root is not registered", status="denied")
         path, profile = resolve_resource_target(raw)
-        result["root"] = {"alias": alias, **_disk_usage(path)}
+        if not path.exists():
+            result["root"] = {"alias": alias, "exists": False}
+            if profile is not None:
+                result["profile_data"] = {
+                    "profile": profile,
+                    "rootExists": False,
+                    "complete": True,
+                    "note": "Registered optional resource root does not currently exist.",
+                }
+            return result
+        result["root"] = {"alias": alias, "exists": True, **_disk_usage(path)}
         largest = min(int(check.get("largest", 10)), 30)
         if largest:
             du = await _run_process(["/usr/bin/du", "-x", "-B1", "--max-depth=1", str(path)],

@@ -115,7 +115,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.28.6-process-recovery"' in bridge
+        assert 'BRIDGE_VERSION = "3.29.0-handoff-lifecycle"' in bridge
         assert 'include_messages=(detail != "summary")' in bridge
         assert '"inspectionStatus":"metadata_only"' in bridge
         assert "Task is running. No message history was fetched" in bridge
@@ -131,6 +131,9 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         ) < bridge.index("def _watch_opencode_evidence")
         assert 'name="stage_source_handoff"' in bridge
         assert 'name="cleanup_source_handoff"' in bridge
+        assert "source_handoff_list" in (out / "direct_probe_core.py").read_text(encoding="utf-8")
+        assert "source_handoff_gc" in (out / "direct_actions.py").read_text(encoding="utf-8")
+        assert "opportunistically reclaims stale cleanup-safe handoffs" in bridge
         assert 'name="street_story_materialize_release"' in bridge
         assert 'name="street_story_deploy_user_service"' in bridge
         assert 'name="street_story_publish_edge_route"' in bridge
