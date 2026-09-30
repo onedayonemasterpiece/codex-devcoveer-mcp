@@ -144,6 +144,27 @@ def test_resources_accepts_fixed_profile_binding(tmp_path: Path):
     assert data["profile_data"]["files"]["count"] == 1
 
 
+def test_resources_reports_missing_optional_profile_root(tmp_path: Path):
+    missing = tmp_path / "missing-worktrees"
+    binding = {
+        "roots": {
+            "worktrees": {
+                "path": str(missing),
+                "profile": "codex_worktrees",
+            }
+        }
+    }
+
+    data = asyncio.run(host_runtime._resources(
+        binding, {"id": "r", "kind": "resources", "root": "worktrees", "largest": 0}
+    ))
+
+    assert data["root"] == {"alias": "worktrees", "exists": False}
+    assert data["profile_data"]["profile"] == "codex_worktrees"
+    assert data["profile_data"]["rootExists"] is False
+    assert data["profile_data"]["complete"] is True
+
+
 def test_unknown_resource_profile_fails_closed(tmp_path: Path):
     with pytest.raises(forensic.ProbeError) as exc:
         forensic.resolve_resource_target({
