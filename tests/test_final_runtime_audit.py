@@ -220,13 +220,13 @@ def _cancellation_fragment_env(record, inspected):
         "time": __import__("time"),
         "OpenCodeError": FakeOpenCodeError,
         "TASK_REGISTRY": FakeRegistry(),
-        "EVIDENCE_STORE": FakeEvidenceStore(),
         "OPENCODE_BACKEND": FakeBackend(),
         "_registry_public": lambda value: dict(value),
     }
     source = (
         RUNTIME / "bridge_fragments" / "read_opencode_task_adaptive.py"
     ).read_text(encoding="utf-8")
+    assert "EVIDENCE_STORE" not in source
     exec(compile(source, "<read-opencode-task-adaptive>", "exec"), env)
     return env
 
@@ -286,7 +286,7 @@ def test_cancelling_idle_provider_becomes_interrupted():
     assert result["status"] == "interrupted"
     assert result["executionStatus"] == "interrupted"
     assert record["status"] == "interrupted"
-    assert record["acceptanceStatus"] == "review_required"
+    assert "acceptanceStatus" not in record
 
 
 def test_cancelling_groq_task_never_auto_falls_back():
