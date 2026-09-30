@@ -22,6 +22,7 @@ import direct_probe_host_runtime as hostrt
 import direct_probe_host_services as hostservices
 import direct_probes as probes
 import incident_registry as incidents
+import process_recovery as recovery
 
 
 def run(coro):
@@ -229,7 +230,7 @@ def test_p1_typed_surface_exposes_safe_semantic_operations():
     assert {'run_tool','artifact_fetch','apply_source_patch','incident_open'} <= runners
 
 
-def test_direct_probe_receipt_correlates_active_incident(monkeypatch,tmp_path):
+def test_direct_probe_receipt_requires_explicit_incident_context(monkeypatch,tmp_path):
     repo=init_repo(tmp_path/'receipt-repo')
     git(repo,'remote','add','origin','https://github.com/o/r.git')
     cfg=tmp_path/'cfg.json'
@@ -242,7 +243,17 @@ def test_direct_probe_receipt_correlates_active_incident(monkeypatch,tmp_path):
     monkeypatch.setattr(probes,'_append_direct_receipt',seen.append)
     payload=run(probes.run_project_probe(str(repo),'p',[{'id':'g','kind':'git_state'}],config_path=cfg))
     assert payload['results'][0]['status']=='ok'
-    assert seen and seen[-1]['incident_id']=='inc_0123456789abcdef01234567'
+    assert seen and seen[-1]['incident_id'] is None
+
+    explicit='inc_0123456789abcdef01234567'
+    token=recovery.CONTEXT.set({'incident_id':explicit})
+    try:
+        payload=run(probes.run_project_probe(
+            str(repo),'p',[{'id':'g2','kind':'git_state'}],config_path=cfg))
+    finally:
+        recovery.CONTEXT.reset(token)
+    assert payload['results'][0]['status']=='ok'
+    assert seen[-1]['incident_id']==explicit
 
 
 def test_malformed_config_metadata_degrades_to_opaque(tmp_path):

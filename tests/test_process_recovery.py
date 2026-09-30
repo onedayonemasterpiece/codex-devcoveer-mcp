@@ -179,7 +179,8 @@ def test_full_snapshot_is_bounded_and_omits_reasoning():
 def test_gateway_schema_exposes_recovery_without_new_top_level_tool():
     described=gateway.describe_plane('project_action','work_open')
     assert described['operation']=='work_open'
-    assert described['operations']==['work_open']
+    assert 'work_open' in described['operations']
+    assert {'git_fetch','github_workflow_dispatch','job_start','run_tool'} <= set(described['operations'])
     assert 'gateway_contract_digest' in described
     mutation=gateway.describe_plane('project_action','write_text')['payload_schema']['properties']
     assert {'work_id','incident_id','request_key'} <= set(mutation)

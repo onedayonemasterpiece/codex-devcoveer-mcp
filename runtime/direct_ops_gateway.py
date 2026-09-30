@@ -104,7 +104,6 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
         if operation in {"write_text", "apply_source_patch"}: keep.add("source")
         if operation == "artifact_fetch": keep.add("artifacts")
         result["operator_guidance"] = {k:v for k,v in result["operator_guidance"].items() if k in keep}
-        result["operations"] = [operation]
     result["gateway_revision"] = "process-recovery-1"
     result["gateway_contract_digest"] = hashlib.sha256(json.dumps(operations, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if operation == "run_tool":
