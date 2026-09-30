@@ -61,8 +61,14 @@ class RoutingBackend(OpenCodeBackend):
         result['providerHealth'] = {p:self.health_store.provider_summary(p) for p in result['connected']}
         return result
 
-    async def inspect(self, *, session_id, directory, include_messages=True):
-        result = await super().inspect(session_id=session_id, directory=directory, include_messages=include_messages)
+    async def inspect(
+        self, *, session_id, directory, include_messages=True,
+        provider_hint=None, model_hint=None, selection_hint=None,
+    ):
+        result = await super().inspect(
+            session_id=session_id, directory=directory, include_messages=include_messages,
+            provider_hint=provider_hint, model_hint=model_hint, selection_hint=selection_hint,
+        )
         messages = result.get('messages', [])
         # Only the latest user turn can determine execution status after continuation.
         last_user = max((i for i, m in enumerate(messages) if m.get('info', {}).get('role') == 'user'), default=-1)
