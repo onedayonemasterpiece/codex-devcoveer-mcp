@@ -32,9 +32,20 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
         raise SystemExit(f"clean-host bridge anchor {label!r}: expected 1, found {count}")
     return source.replace(old, new, 1)
 
+def function_block(source: str, name: str) -> tuple[int, int, str]:
+    marker = f"async def {name}("
+    start = source.find(marker)
+    if start < 0:
+        raise SystemExit(f"clean-host bridge function missing: {name}")
+    next_async = source.find("\n\nasync def ", start + len(marker))
+    next_sync = source.find("\n\ndef ", start + len(marker))
+    candidates = [x for x in (next_async, next_sync) if x >= 0]
+    end = min(candidates) if candidates else len(source)
+    return start, end, source[start:end].rstrip() + "\n"
+
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.28.0-process-recovery"', "version")
+                          'BRIDGE_VERSION = "3.28.1-process-recovery"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -627,6 +638,19 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                           "native incident prompt context")
     source = replace_once(source, reminder.NATIVE_INCIDENT_RESULT_OLD, reminder.NATIVE_INCIDENT_RESULT_NEW,
                           "native incident result")
+    adaptive_read = (ROOT / "runtime" / "bridge_fragments" / "read_opencode_task_adaptive.py").read_text(encoding="utf-8")
+    if "_maybe_auto_groq_fallback" in source or "_GROQ_KEY_ORDER" in source:
+        raise SystemExit("clean-host bridge adaptive read-task helpers unexpectedly already exist")
+    read_start, read_end, _old_read = function_block(source, "_read_opencode_task")
+    source = source[:read_start] + adaptive_read.rstrip() + source[read_end:]
+    for marker in (
+        'include_messages=(detail != "summary")',
+        '"inspectionStatus":"metadata_only"',
+        "Task is running. No message history was fetched",
+        "_maybe_auto_groq_fallback",
+    ):
+        if marker not in source:
+            raise SystemExit(f"clean-host adaptive read-task marker missing: {marker}")
     return source
 
 def transform_backend(source: str) -> str:
