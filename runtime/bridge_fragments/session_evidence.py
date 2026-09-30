@@ -13,7 +13,12 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = 'summary'
 
 
 async def _read_opencode_task_locked(record: dict[str, Any], *, detail: str = 'summary') -> dict[str, Any]:
-    payload = dict(await _BASE_READ_OPENCODE_TASK(record, detail='full'))
+    payload = dict(await _BASE_READ_OPENCODE_TASK(record, detail=detail))
+    if detail == 'summary' and payload.get('status') == 'running' and payload.get('inspectionStatus') == 'metadata_only':
+        payload = _redact_evidence(payload)
+        payload.update(executionStatus='running', acceptanceStatus='not_ready',
+            sessionEvidenceAvailable=False)
+        return payload
     messages = payload.pop('history', [])
     payload = _redact_evidence(payload)
     status = payload['status']
@@ -65,7 +70,9 @@ async def _read_opencode_task_locked(record: dict[str, Any], *, detail: str = 's
     else:
         payload.update(executionStatus=status, acceptanceStatus='not_ready', sessionEvidenceAvailable=False)
         if detail == 'full':
-            payload['liveSessionSnapshot'] = _redact_evidence(messages)
+            from process_recovery import bounded_snapshot
+            payload['liveSessionSnapshot'], payload['liveSnapshotTruncated'] = bounded_snapshot(
+                _redact_evidence(messages))
     if detail == 'full' and status != 'running':
         payload['historyNote'] = 'Use get_task_evidence(scope=full_safe) for the complete redacted session.'
     return payload

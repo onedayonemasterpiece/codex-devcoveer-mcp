@@ -102,6 +102,29 @@ def fragment_env(tmp_path):
     return env,record,base,fake
 
 
+def test_running_summary_stays_metadata_only_through_evidence_wrapper(tmp_path):
+    env,record,base,_fake=fragment_env(tmp_path)
+    record['status']='running'
+    base.return_value={
+        'status':'running',
+        'task':record.copy(),
+        'executionStatus':'running',
+        'inspectionStatus':'metadata_only',
+        'providerState':{'type':'busy'},
+        'suggestedPollAfterSeconds':5,
+        'content':'Task is running. No message history was fetched; use detail=full only for diagnosis.',
+    }
+    result=asyncio.run(env['_read_opencode_task'](record,detail='summary'))
+    base.assert_awaited_once_with(record,detail='summary')
+    assert result['status']=='running'
+    assert result['inspectionStatus']=='metadata_only'
+    assert result['suggestedPollAfterSeconds']==5
+    assert result['sessionEvidenceAvailable'] is False
+    assert result['acceptanceStatus']=='not_ready'
+    assert 'history' not in result
+    assert 'liveSessionSnapshot' not in result
+
+
 def test_acceptance_digest_and_continuation_invalidation(tmp_path):
     env,record,base,fake=fragment_env(tmp_path)
     async def run():
