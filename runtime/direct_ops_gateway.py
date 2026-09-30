@@ -104,7 +104,6 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
         if operation in {"write_text", "apply_source_patch"}: keep.add("source")
         if operation == "artifact_fetch": keep.add("artifacts")
         result["operator_guidance"] = {k:v for k,v in result["operator_guidance"].items() if k in keep}
-        result["operations"] = [operation]
     result["gateway_revision"] = "process-recovery-1"
     result["gateway_contract_digest"] = hashlib.sha256(json.dumps(operations, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if operation == "run_tool":
@@ -199,32 +198,3 @@ async def run_direct_ops_v2(project_root, project_id, plane, operation, payload=
         if body.get("incident_id"):
             from incident_registry import incident_project_scope, get_incident
             scope = await asyncio.to_thread(incident_project_scope, project_id, project_root)
-            await asyncio.to_thread(get_incident, scope, body["incident_id"])
-        if operation in WORK_ACTIONS:
-            return await asyncio.to_thread(work_action, project_root, project_id, operation, body)
-        return await asyncio.to_thread(process_read, project_root, operation, body)
-    metadata = {key: body[key] for key in ("work_id", "incident_id", "request_key") if key in body}
-    mode = body.get("execution_mode", "auto")
-    if "execution_mode" in body and (operation != "run_tool" or mode not in {"auto", "sync", "job"}):
-        raise ProbeError("invalid_input", "execution_mode is valid only for run_tool", status="denied")
-    _validate({"type":"object", "properties":{"work_id":WORK_ID,"incident_id":INCIDENT_ID,"request_key":KEY},
-               "additionalProperties":False}, metadata)
-    context = await asyncio.to_thread(resolve_context, project_root, metadata)
-    if context.get("incident_id"):
-        from incident_registry import incident_project_scope, get_incident
-        scope = await asyncio.to_thread(incident_project_scope, project_id, project_root)
-        await asyncio.to_thread(get_incident, scope, context["incident_id"])
-    native = {key: value for key, value in body.items() if key not in {"work_id", "incident_id", "execution_mode"}}
-    if operation not in {"job_start", "github_workflow_dispatch"}:
-        native.pop("request_key", None)
-    if operation == "run_tool" and (mode == "job" or (mode == "auto" and native.get("timeout_seconds", 30) > 30)):
-        # Validate the original operation before changing its execution transport.
-        _validate(PROJECT_ACTION_INPUT_SCHEMA, {"project":project_id,"action":{"kind":"run_tool",**native}})
-        operation = "job_start"
-        if context.get("request_key"):
-            native["request_key"] = context["request_key"]
-    token = CONTEXT.set(context)
-    try:
-        return await _run_native_direct_ops_v2(project_root, project_id, plane, operation, native)
-    finally:
-        CONTEXT.reset(token)

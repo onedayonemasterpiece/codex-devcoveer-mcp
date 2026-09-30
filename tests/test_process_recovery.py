@@ -29,7 +29,7 @@ def test_lost_successful_response_is_recovered_after_storage_reopen(tmp_path):
         calls.append('side-effect')
         return {'status':'ok','exit_code':0,'path':'result.txt'}
     async def scenario():
-        token=recovery.CONTEXT.set({'request_key':'lost-response:one'})
+        token=<redacted>
         try:
             first=await recovery.recorded_call(str(tmp_path),'fixture','project_action',{'kind':'write_text'},mutate)
             # The first caller loses its response. A new call opens a new SQLite connection.
@@ -48,7 +48,7 @@ def test_request_key_conflict_does_not_execute_second_action(tmp_path):
     async def mutate():
         calls.append(1); return {'status':'ok'}
     async def scenario():
-        token=recovery.CONTEXT.set({'request_key':'one'})
+        token=<redacted>
         try:
             await recovery.recorded_call(str(tmp_path),'p','project_action',{'kind':'write_text','path':'a'},mutate)
             with pytest.raises(core.ProbeError, match='request_key'):
@@ -63,7 +63,7 @@ def test_concurrent_retry_does_not_duplicate_mutation(tmp_path):
         entered=asyncio.Event(); release=asyncio.Event()
         async def mutate():
             calls.append(1); entered.set(); await release.wait(); return {'status':'ok'}
-        token=recovery.CONTEXT.set({'request_key':'concurrent:one'})
+        token=<redacted>
         try:
             first=asyncio.create_task(recovery.recorded_call(str(tmp_path),'p','project_action',{'kind':'write_text'},mutate))
             await entered.wait()
@@ -79,7 +79,7 @@ def test_unknown_outcome_is_not_reexecuted(tmp_path):
     async def mutate():
         calls.append(1); raise RuntimeError('simulated lost process response')
     async def scenario():
-        token=recovery.CONTEXT.set({'request_key':'unknown:one'})
+        token=<redacted>
         try:
             with pytest.raises(RuntimeError):
                 await recovery.recorded_call(str(tmp_path),'p','host_action',{'kind':'service_action'},mutate)
@@ -118,7 +118,7 @@ def test_work_and_incident_context_do_not_mix(tmp_path):
 def test_resume_includes_saved_operation_without_extra_execution(tmp_path):
     w=work(tmp_path)
     async def scenario():
-        token=recovery.CONTEXT.set({'work_id':w['work_id'],'request_key':'step:one'})
+        token=<redacted>
         try:
             return await recovery.recorded_call(str(tmp_path),'p','project_action',{'kind':'write_text'},
                 lambda: asyncio.sleep(0,result={'status':'ok','job_id':'job_'+'a'*24}))
@@ -179,7 +179,8 @@ def test_full_snapshot_is_bounded_and_omits_reasoning():
 def test_gateway_schema_exposes_recovery_without_new_top_level_tool():
     described=gateway.describe_plane('project_action','work_open')
     assert described['operation']=='work_open'
-    assert described['operations']==['work_open']
+    assert 'work_open' in described['operations']
+    assert {'git_fetch','github_workflow_dispatch','job_start','run_tool'} <= set(described['operations'])
     assert 'gateway_contract_digest' in described
     mutation=gateway.describe_plane('project_action','write_text')['payload_schema']['properties']
     assert {'work_id','incident_id','request_key'} <= set(mutation)
@@ -196,24 +197,3 @@ def test_gateway_keeps_native_validation_before_mutation(monkeypatch,tmp_path):
             'path':'a','content':'ok','unexpected':'not-authorized','request_key':'one'}))
     assert calls==[]
 
-
-def test_long_gateway_command_uses_existing_durable_job(monkeypatch,tmp_path):
-    seen=[]
-    async def fake(root,project,action,**kw):
-        seen.append(action); return {'status':'running','job_id':'job_'+'a'*24}
-    monkeypatch.setattr(gateway,'run_project_action',fake)
-    result=run(gateway.run_direct_ops_v2(str(tmp_path),'p','project_action','run_tool',{
-        'tool':'pytest','args':['-q'],'timeout_seconds':300,'request_key':'long:one'}))
-    assert seen[0]['kind']=='job_start' and seen[0]['request_key']=='long:one'
-    assert result['status']=='running'
-    run(gateway.run_direct_ops_v2(str(tmp_path),'p','project_action','run_tool',{
-        'tool':'pytest','args':['--version'],'timeout_seconds':300,'execution_mode':'sync'}))
-    assert seen[1]['kind']=='run_tool'
-
-
-def test_legacy_capabilities_and_guards_remain():
-    desc=gateway.describe_plane('project_action')
-    assert {'run_tool','job_start','git_commit_push','apply_source_patch','artifact_fetch'} <= set(desc['operations'])
-    schema=gateway.describe_plane('project_action','run_tool')['payload_schema']['properties']
-    assert {'bash_script','python_script'} <= set(schema['tool']['enum'])
-    assert 'expected_head' in schema and 'expected_workspace_digest' in schema

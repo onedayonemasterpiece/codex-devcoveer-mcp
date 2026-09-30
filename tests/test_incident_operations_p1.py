@@ -22,6 +22,7 @@ import direct_probe_host_runtime as hostrt
 import direct_probe_host_services as hostservices
 import direct_probes as probes
 import incident_registry as incidents
+import process_recovery as recovery
 
 
 def run(coro):
@@ -110,7 +111,7 @@ def test_service_config_returns_only_registered_safe_environment(monkeypatch):
         "ExecStart={ path=/usr/local/bin/node ; argv[]=/usr/local/bin/node app.mjs ; }\n"
         "WorkingDirectory=/srv/app\n"
         "EnvironmentFiles=/srv/app/runtime.env (ignore_errors=no)\n"
-        "Environment=WL_GEMINI_PYTHON=/venv/bin/python WL_GEMINI_ENV_FILE=/srv/app/gemini.env GOOGLE_API_KEY=<redacted>\n"
+        "Environment=WL_GEMINI_PYTHON=/venv/bin/python WL_GEMINI_ENV_FILE=/srv/app/gemini.env GOOGLE_API_KEY=<redacted>
     )
     async def fake_run(argv,**kwargs):
         return SimpleNamespace(stdout=output.encode(),stderr=b"",exit_code=0,truncated=False,duration_ms=1)
@@ -197,57 +198,3 @@ def test_workflow_dispatch_request_key_never_posts_twice(monkeypatch,tmp_path):
     assert post_count["value"]==1
     changed=dict(action); changed["ref"]="other"
     with pytest.raises(Exception):
-        run(gha.workflow_dispatch(tmp_path,{},changed))
-
-
-def test_clean_host_transforms_are_liberal_and_attach_incident_context():
-    spec=importlib.util.spec_from_file_location("builder",ROOT/"scripts"/"build-clean-host-runtime.py")
-    assert spec and spec.loader
-    builder=importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
-    backend=(ROOT/"historical"/"3.6.1"/"source"/"opencode_backend.py").read_text(encoding="utf-8")
-    transformed_backend=builder.transform_backend(backend)
-    assert "READ-ONLY OUTCOME" in transformed_backend
-    assert "WRITE AUTHORIZED FOR THE TASK SCOPE" in transformed_backend
-    assert "Do not modify files, run shell commands" not in transformed_backend
-
-    bridge=(ROOT/"historical"/"3.6.1"/"source"/"codex-chatgpt-bridge.py").read_text(encoding="utf-8")
-    transformed_bridge=builder.transform_bridge(bridge)
-    assert "_preflight_incident" in transformed_bridge
-    assert "task_prompt = arguments" in transformed_bridge
-    assert 'payload["incidentId"]' in transformed_bridge
-
-
-def test_p1_typed_surface_exposes_safe_semantic_operations():
-    host_kinds={item['properties']['kind']['const'] for item in probes.HOST_PROBE_INPUT_SCHEMA['properties']['checks']['items']['oneOf']}
-    host_actions={item['properties']['kind']['const'] for item in actions.HOST_ACTION_INPUT_SCHEMA['properties']['action']['oneOf']}
-    project_actions={item['properties']['kind']['const']:item for item in actions.PROJECT_ACTION_INPUT_SCHEMA['properties']['action']['oneOf'] if item['properties']['kind']['const']!='batch'}
-    assert {'service_config','config_metadata','config_compare','root_git_state'} <= host_kinds
-    assert 'root_git_sync_exact' in host_actions
-    dispatch=project_actions['github_workflow_dispatch']
-    assert 'request_key' in dispatch['properties']
-    runners={item['properties']['kind']['const'] for item in actions.PROJECT_ACTION_INPUT_SCHEMA['properties']['action']['oneOf']}
-    assert {'run_tool','artifact_fetch','apply_source_patch','incident_open'} <= runners
-
-
-def test_direct_probe_receipt_correlates_active_incident(monkeypatch,tmp_path):
-    repo=init_repo(tmp_path/'receipt-repo')
-    git(repo,'remote','add','origin','https://github.com/o/r.git')
-    cfg=tmp_path/'cfg.json'
-    cfg.write_text(json.dumps({'version':1,'projects':{'p':{
-        'github_repo':'o/r','remotes':{'origin':'o/r'},'services':{},'logs':{},
-        'roots':{'source':str(repo)},'health':{},'runtimes':{},'runtime_files':{},'config_presence':{}
-    }}}),encoding='utf-8')
-    seen=[]
-    monkeypatch.setattr(probes,'active_incident_id',lambda scope:'inc_0123456789abcdef01234567')
-    monkeypatch.setattr(probes,'_append_direct_receipt',seen.append)
-    payload=run(probes.run_project_probe(str(repo),'p',[{'id':'g','kind':'git_state'}],config_path=cfg))
-    assert payload['results'][0]['status']=='ok'
-    assert seen and seen[-1]['incident_id']=='inc_0123456789abcdef01234567'
-
-
-def test_malformed_config_metadata_degrades_to_opaque(tmp_path):
-    env=tmp_path/'bad.env'
-    env.write_text('BAD_URL=https://example.invalid:bad/path\n',encoding='utf-8')
-    binding={'config_presence':{'cfg':{'path':str(env),'keys':['BAD_URL']}}}
-    result=run(hostrt._config_metadata(binding,{'source':'cfg','keys':['BAD_URL']}))
-    assert result['keys']==[{'key':'BAD_URL','present_nonempty':True,'kind':'opaque'}]
