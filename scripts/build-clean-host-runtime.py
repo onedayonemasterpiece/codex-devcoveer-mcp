@@ -39,13 +39,17 @@ def function_block(source: str, name: str) -> tuple[int, int, str]:
         raise SystemExit(f"clean-host bridge function missing: {name}")
     next_async = source.find("\n\nasync def ", start + len(marker))
     next_sync = source.find("\n\ndef ", start + len(marker))
-    candidates = [x for x in (next_async, next_sync) if x >= 0]
+    evidence_prelude = source.find(
+        "\n\nimport re\n\n# Included by the canonical runtime builder, after the base task reader.",
+        start + len(marker),
+    )
+    candidates = [x for x in (next_async, next_sync, evidence_prelude) if x >= 0]
     end = min(candidates) if candidates else len(source)
     return start, end, source[start:end].rstrip() + "\n"
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.28.1-process-recovery"', "version")
+                          'BRIDGE_VERSION = "3.28.2-process-recovery"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
