@@ -58,7 +58,7 @@ def test_new_turn_does_not_reuse_old_success_or_error(monkeypatch, tmp_path):
     assert result['finalResponse'] is None and result['error'] is None
 
 
-def test_routing_inspect_forwards_metadata_only_hints(monkeypatch, tmp_path):
+def test_routing_inspect_accepts_metadata_only_hints_at_routing_boundary(monkeypatch, tmp_path):
     b = RoutingBackend.__new__(RoutingBackend); b.health_store = ModelHealthStore(tmp_path/'health')
     base_inspect = AsyncMock(return_value={'messages':[]})
     monkeypatch.setattr(backend.OpenCodeBackend, 'inspect', base_inspect)
@@ -70,8 +70,6 @@ def test_routing_inspect_forwards_metadata_only_hints(monkeypatch, tmp_path):
     ))
     base_inspect.assert_awaited_once_with(
         session_id='ses_test', directory='/repo', include_messages=False,
-        provider_hint='opencode', model_hint='nemotron-3-ultra-free',
-        selection_hint='opencode/nemotron-3-ultra-free',
     )
     assert result['status'] == 'running'
     assert result['providerState']['type'] == 'busy'

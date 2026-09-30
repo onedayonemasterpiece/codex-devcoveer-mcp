@@ -67,7 +67,6 @@ class RoutingBackend(OpenCodeBackend):
     ):
         result = await super().inspect(
             session_id=session_id, directory=directory, include_messages=include_messages,
-            provider_hint=provider_hint, model_hint=model_hint, selection_hint=selection_hint,
         )
         messages = result.get('messages', [])
         # Only the latest user turn can determine execution status after continuation.
