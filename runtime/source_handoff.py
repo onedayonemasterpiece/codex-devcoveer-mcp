@@ -367,8 +367,7 @@ def _handoff_row(
         row["cleanupSafe"] = True
         row["cleanupReason"] = "clean_head_referenced"
     elif row["changesSubsumed"]:
-        row["cleanupSafe"] = True
-        row["cleanupReason"] = "changes_subsumed_by_default_ref"
+        row["cleanupReason"] = "changes_subsumed_review"
     elif row["clean"]:
         row["cleanupReason"] = "clean_but_unreferenced"
     else:
@@ -418,8 +417,8 @@ def list_source_handoffs(
         "complete": complete and process_scan_complete and len(selected) <= len(bounded),
         "processScanComplete": process_scan_complete,
         "note": (
-            "cleanupSafe is conservative: only inactive workspaces whose state is already durable "
-            "in Git refs/default branch, or missing workspaces with only metadata left, qualify."
+            "cleanupSafe is conservative: only inactive clean workspaces whose HEAD is preserved "
+            "by a Git ref, or missing workspaces with only metadata left, qualify automatically."
         ),
     }
 

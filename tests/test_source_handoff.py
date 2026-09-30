@@ -171,7 +171,7 @@ def test_invalid_handoff_id_is_rejected(tmp_path: Path) -> None:
 
 
 
-def test_lifecycle_inventory_keeps_unique_dirty_and_reclaims_subsumed(tmp_path: Path) -> None:
+def test_lifecycle_inventory_keeps_dirty_subsumed_as_review_only(tmp_path: Path) -> None:
     repo, base = make_repo(tmp_path)
     root = tmp_path / "handoffs"
     patch = build_patch(repo, base)
@@ -187,12 +187,13 @@ def test_lifecycle_inventory_keeps_unique_dirty_and_reclaims_subsumed(tmp_path: 
     git(repo, "commit", "-m", "accept patch")
     after = list_source_handoffs(repo, root=root)
     row = next(item for item in after["handoffs"] if item["handoffId"] == result["handoffId"])
-    assert row["cleanupSafe"] is True
-    assert row["cleanupReason"] == "changes_subsumed_by_default_ref"
+    assert row["changesSubsumed"] is True
+    assert row["cleanupSafe"] is False
+    assert row["cleanupReason"] == "changes_subsumed_review"
 
     swept = gc_source_handoffs(repo, root=root, older_than_seconds=0, max_remove=8)
-    assert result["handoffId"] in swept["removed"]
-    assert not workspace.exists()
+    assert result["handoffId"] not in swept["removed"]
+    assert workspace.exists()
 
 
 def test_lifecycle_clean_referenced_head_is_safe(tmp_path: Path) -> None:
@@ -238,13 +239,15 @@ def test_stage_opportunistically_sweeps_only_safe_handoffs(tmp_path: Path, monke
     root = tmp_path / "handoffs"
     first_patch = build_patch(repo, base)
     first = stage(repo, base, first_patch, root)
-    git(repo, "apply", "--index", "-", input_bytes=first_patch)
-    git(repo, "commit", "-m", "accept first")
+    first_workspace = resolve_source_handoff(first["handoffId"], root=root)
+    git(first_workspace, "commit", "-m", "accept first")
+    first_head = git(first_workspace, "rev-parse", "HEAD").decode().strip()
+    git(repo, "branch", "saved-first", first_head)
 
     monkeypatch.setattr(sh, "AUTO_GC_TRIGGER_COUNT", 1)
     monkeypatch.setattr(sh, "AUTO_GC_STALE_SECONDS", 0)
 
-    current = git(repo, "rev-parse", "HEAD").decode().strip()
+    current = base
     (repo / "change.txt").write_text("second\n", encoding="utf-8")
     second_patch = git(repo, "diff", "--binary", current)
     git(repo, "checkout", "--", "change.txt")
