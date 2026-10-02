@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from requirements_guard import patch_touches_requirements
+
 DEFAULT_HANDOFF_ROOT = Path.home() / ".local" / "share" / "openai-codex-mcp" / "handoffs"
 MAX_PATCH_BYTES = 16 * 1024 * 1024
 MIN_FREE_BYTES = 512 * 1024 * 1024
@@ -550,6 +552,11 @@ def stage_source_handoff(
     actual_patch_sha = hashlib.sha256(patch_bytes).hexdigest()
     if actual_patch_sha != expected_patch_sha:
         raise SourceHandoffError("patch sha256 mismatch")
+    if patch_touches_requirements(patch_bytes):
+        raise SourceHandoffError(
+            "requirements contract changes are not accepted through Source Handoff; "
+            "use requirements_update after explicit user requirement-change intent"
+        )
 
     exists = _run_git(project, ["cat-file", "-e", f"{base}^{{commit}}"], check=False)
     if exists.returncode != 0:

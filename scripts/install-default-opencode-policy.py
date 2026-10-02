@@ -147,6 +147,7 @@ NEW_START_TOOL = """    types.Tool(name="start_task", title="Start DevCoveer tas
             "Use list_models for model state and list_tasks/read_task for task state. "
             "For continuation work that names or implies a checkpoint, branch, SHA or prior worktree, first inspect find_projects workspaceContext and project_probe worktree_list; exact repository-name resolution identifies only one physical checkout. "
             "Address the matching project before read/write/test/build and pass expected_head on guarded direct actions when a checkpoint SHA is known. stage_source_handoff isolates a ChatGPT-authored patch; it does not select an existing worktree and should not be created for work that direct operations can do in the selected checkout. Managed handoffs are temporary and staging performs bounded safe cleanup, so do not add manual cleanup ceremony to every task. "
+            "When the project has .devcoveer/requirements.json, project_probe and direct_ops_v2 describe expose requirementsContext and agent tasks receive the same high-level contract automatically. Preserve those requirements across implementation changes; if the current task conflicts with them, surface the conflict instead of silently weakening or reinterpreting the contract. Change the contract only through requirements_update after explicit user requirement-change intent. "
             "For browser UI interaction, DOM observation, console/network inspection, screenshots, navigation or clicks, "
             "use my-browser-bridge directly when it is available to ChatGPT instead of starting OpenCode solely to drive Playwright. "
             "Before web work, use project_probe instructions with scope=home/project for exact AGENTS.md reads and web_preflight with the package cwd. "
@@ -155,6 +156,7 @@ NEW_START_TOOL = """    types.Tool(name="start_task", title="Start DevCoveer tas
             "In normal ChatGPT-led mode, do not delegate repository code or documentation authoring to OpenCode. "
             "ChatGPT should author the exact code/docs change itself, use direct project_action writes when available, and use stage_source_handoff "
             "when direct repository writing is unavailable; use the supplied patch for verification/commit/push rather than rewrite source/docs. "
+            "Prefer one semantic typed operation over helper scripts or repeated low-level probes. Batch independent read-only checks into one project_probe/host_probe call. For long deterministic work use durable job_start/job_status. After a denied call, timeout, lost response, or safety interruption, inspect saved job/operation/work state before retrying and do not re-attempt the same side effect through an equivalent alternate mechanism. "
             "Use start_task only when the work requires reasoning beyond typed operations "
             "or an unforeseen operation absent from the typed surface. Use read_task later to check status and obtain the result."),
         input_schema=START_TASK_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,

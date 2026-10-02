@@ -358,3 +358,34 @@ def test_source_handoff_list_probe_is_typed_and_bounded(tmp_path: Path, monkeypa
     assert observed["root"] == repo.resolve()
     assert observed["limit"] == 7
     assert observed["safe_only"] is True
+
+
+
+def test_project_probe_attaches_requirements_context_when_configured(tmp_path: Path):
+    repo = init_repo(tmp_path / "requirements")
+    contract = repo / ".devcoveer" / "requirements.json"
+    contract.parent.mkdir()
+    contract.write_text(json.dumps({
+        "schema_version": 1,
+        "project": "requirements-demo",
+        "requirements": [{
+            "id": "CORE-001",
+            "statement": "Preserve the primary product flow.",
+            "critical": True,
+            "acceptance": ["The primary flow remains available."],
+        }],
+    }), encoding="utf-8")
+    cfg = write_cfg(tmp_path / "requirements-config.json", "p", repo)
+
+    payload = run(dp.run_project_probe(
+        str(repo), "p", [{"id": "state", "kind": "git_state"}], config_path=cfg,
+    ))
+    context = payload["requirementsContext"]
+    assert context["configured"] is True
+    assert context["criticalRequirementIds"] == ["CORE-001"]
+
+    explicit = run(dp.run_project_probe(
+        str(repo), "p", [{"id": "req", "kind": "requirements_context"}], config_path=cfg,
+    ))
+    data = result_by_id(explicit, "req")["data"]
+    assert data["digest"] == context["digest"]
