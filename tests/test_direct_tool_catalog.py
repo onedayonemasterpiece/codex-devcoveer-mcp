@@ -4,12 +4,17 @@ import json
 from pathlib import Path
 import subprocess
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime"
 BRIDGE_PY = Path("/home/dev/.local/share/openai-codex-mcp/bridge-venv/bin/python")
 
 
 def test_tool_refresh_catalog_with_canonical_mcp_sdk():
+    if not BRIDGE_PY.is_file():
+        pytest.skip("host-only canonical bridge SDK runtime is not installed in this environment")
+
     script = r"""
 import json
 import sys
