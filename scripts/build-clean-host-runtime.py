@@ -20,7 +20,7 @@ DIRECT_FILES = (
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
-    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "projects_hub_edge_operator.py",
+    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "projects_hub_edge_operator.py", "requirements_guard.py",
 )
 
 def sha(path: Path) -> str:
@@ -49,7 +49,7 @@ def function_block(source: str, name: str) -> tuple[int, int, str]:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.29.1-handoff-lifecycle"', "version")
+                          'BRIDGE_VERSION = "3.30.0-requirements-guard"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -77,6 +77,7 @@ from source_handoff import (
     resolve_source_handoff as _resolve_source_handoff,
     stage_source_handoff as _stage_source_handoff,
 )
+from requirements_guard import requirements_prompt as _requirements_prompt
 from street_story_operator import (
     OperatorError as StreetStoryOperatorError,
     StreetStoryOperator,
@@ -640,6 +641,12 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                           "OpenCode incident prompt context")
     source = replace_once(source, reminder.NATIVE_PROMPT_OLD, reminder.NATIVE_PROMPT_NEW,
                           "native incident prompt context")
+    native_requirements_prompt = reminder.NATIVE_PROMPT_NEW.replace(
+        '_first_prompt(project.canonical, task_prompt, access)',
+        '_requirements_prompt(project.path) + _first_prompt(project.canonical, task_prompt, access)',
+    )
+    source = replace_once(source, reminder.NATIVE_PROMPT_NEW, native_requirements_prompt,
+                          "native requirements prompt")
     source = replace_once(source, reminder.NATIVE_INCIDENT_RESULT_OLD, reminder.NATIVE_INCIDENT_RESULT_NEW,
                           "native incident result")
     adaptive_read = (ROOT / "runtime" / "bridge_fragments" / "read_opencode_task_adaptive.py").read_text(encoding="utf-8")
@@ -658,6 +665,11 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     return source
 
 def transform_backend(source: str) -> str:
+    source = replace_once(
+        source, "import anyio\n",
+        "import anyio\n\nfrom requirements_guard import requirements_prompt\n",
+        "requirements backend import",
+    )
     source = replace_once(source, '''        self.base_url = base_url
 ''', '''        self.base_url = base_url
         self._server_version: str | None = None
@@ -754,13 +766,14 @@ def transform_backend(source: str) -> str:
                                "tools": tools,
                                "parts": [{"type": "text", "text": boundary + prompt}],
                            }, timeout=30)
-''', '''        await self.request("POST", f"/session/{session_id}/prompt_async", directory=directory,
+''', '''        requirements = requirements_prompt(Path(directory))
+        await self.request("POST", f"/session/{session_id}/prompt_async", directory=directory,
                            payload={
                                "model": {"providerID": provider, "modelID": model_id},
                                # plan denies edits; build is the official agent
                                # for explicitly writable operational tasks.
                                "agent": "plan" if access == "read" else "build",
-                               "parts": [{"type": "text", "text": boundary + prompt}],
+                               "parts": [{"type": "text", "text": boundary + requirements + prompt}],
                            }, timeout=30)
 ''', "official prompt payload")
     return source

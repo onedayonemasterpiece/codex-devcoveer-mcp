@@ -11,6 +11,7 @@ from direct_probes import (
     run_host_probe,
     run_project_probe,
 )
+from requirements_guard import requirements_summary_context
 from direct_actions import (
     HOST_ACTION_INPUT_SCHEMA,
     PROJECT_ACTION_INPUT_SCHEMA,
@@ -94,6 +95,8 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
                   "execution": "Known short commands use run_tool; browser suites/full builds/unknown duration use job_start then job_status on the same project/worktree, with request_key for safe replay. GitHub workflow dispatch also accepts request_key: reuse the same key after timeout/lost response to reconcile without a second dispatch; use a new key only for an intentional rerun. Prefer git_switch_ff for an exact existing-branch switch+fast-forward instead of an agent shell sequence.",
                   "workspace": "For continue/checkpoint/branch/SHA tasks, inspect find_projects workspaceContext and worktree_list, address the exact physical checkout, and pass expected_head when the checkpoint SHA is known. When git_state returns tracked_workspace_digest, pass expected_workspace_digest on guarded local actions when the exact tracked workspace must be preserved across parallel work. Exact repository-name resolution selects one checkout only; stage_source_handoff does not select an existing worktree.",
                   "source": "Prefer direct writes/apply_source_patch in an already selected checkout; source patches remain inert source data. stage_source_handoff is temporary transport only when isolation is needed; it opportunistically reclaims stale cleanup-safe handoffs. source_handoff_list shows repository-wide lifecycle state and source_handoff_gc removes only proven-safe inactive leftovers, so do not add per-task cleanup bureaucracy.",
+                  "requirements": "When .devcoveer/requirements.json exists, treat it as the project's high-level product contract: preserve it across implementation changes and surface conflicts instead of silently weakening or reinterpreting requirements. requirementsContext is attached automatically. Change the contract only through requirements_update after explicit user requirement-change intent; merges that change it require requirements_change_ref.",
+                  "efficiency": "Prefer one semantic typed operation over helper scripts and repeated low-level probes. Batch independent read-only checks into one project_probe/host_probe call. Use durable job_start/job_status for long work. After a denied call, lost reply, timeout, or safety interruption, inspect saved job/operation/work state first; do not retry the same side effect through an equivalent alternate mechanism.",
                   "artifacts": "Use artifact_fetch for arbitrary HTTPS project artifacts with bounded streaming, optional SHA-256 verification and provenance instead of ad-hoc shell/Python download code.",
                   "paths": "path is project-root-relative even with cwd. Web tests may pass nonsecret CHECK_BASE and CHECK_OUTPUT through env. Prefer configured secret bindings/config_presence over broad .env discovery; explicit secret workflows remain separate and are not disabled by Direct Ops.",
                   "escape_hatch": "Typed operations are preferred semantic fast paths, not a capability boundary. If a legitimate operation is absent from the typed surface, start_task remains available for full-power reasoning and unforeseen operations.",
@@ -117,11 +120,12 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
             if plane.endswith("action"):
                 payload_schema["properties"].setdefault("request_key", KEY)
         # Keep workspace guidance, plus only the relevant operation family, rather than the whole manual.
-        keep = {"workspace"}
+        keep = {"workspace", "efficiency"}
         if operation in {"run_tool", "job_start", "job_status", "run_profile"}: keep.add("execution")
         if operation.startswith("incident_") or operation in SCHEMAS: keep.add("incidents")
         if operation in {"logs", "log_search", "service", "service_config", "resources"}: keep.add("observability")
         if operation in {"write_text", "apply_source_patch", "source_handoff_list", "source_handoff_gc"}: keep.add("source")
+        if operation in {"requirements_context", "requirements_update", "write_text", "apply_source_patch", "git_commit_push", "github_pr_merge"}: keep.add("requirements")
         if operation == "artifact_fetch": keep.add("artifacts")
         result["operator_guidance"] = {k:v for k,v in result["operator_guidance"].items() if k in keep}
     result["gateway_revision"] = "process-recovery-1"
@@ -209,7 +213,11 @@ async def run_direct_ops_v2(project_root, project_id, plane, operation, payload=
     _validate(DIRECT_OPS_V2_INPUT_SCHEMA, {
         "project": project_id, "plane": plane, "operation": operation, "payload": body})
     if operation == "describe":
-        return await _run_native_direct_ops_v2(project_root, project_id, plane, operation, body)
+        result = await _run_native_direct_ops_v2(project_root, project_id, plane, operation, body)
+        requirements = requirements_summary_context(project_root)
+        if requirements["configured"]:
+            result["requirementsContext"] = requirements
+        return result
     if operation in SCHEMAS:
         required_plane = "project_action" if operation in WORK_ACTIONS else "project_probe"
         if plane != required_plane:

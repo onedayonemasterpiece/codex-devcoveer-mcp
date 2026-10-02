@@ -47,7 +47,10 @@ def test_pr_merge_requires_exact_chatgpt_head_and_base(tmp_path:Path,monkeypatch
         return {"state":"OPEN","headRefName":"chatgpt/x","headRefOid":"b"*40,
                 "baseRefName":"main","url":"u"}
     async def fake_gh(binding,args,**kwargs):
-        calls.append(args); return ""
+        calls.append(args)
+        if args[0]=="api":
+            return ""
+        return ""
     monkeypatch.setattr(gha,"resolve_github_remote",remote)
     monkeypatch.setattr(gha,"_view_pr",fake_view)
     monkeypatch.setattr(gha,"_gh",fake_gh)
@@ -55,7 +58,41 @@ def test_pr_merge_requires_exact_chatgpt_head_and_base(tmp_path:Path,monkeypatch
         "pr":8,"expected_head_sha":"b"*40,"expected_base":"main","method":"merge"
     }))
     assert out["merge_sha"]=="c"*40
-    assert "--merge" in calls[0]
+    assert calls[0][0]=="api"
+    assert "--merge" in calls[-1]
+
+
+def test_pr_merge_requires_explicit_ref_for_requirements_change_or_rename(tmp_path:Path,monkeypatch):
+    async def remote(root,binding,alias): return ("o/r","u")
+    merged=False
+    async def fake_view(binding,repo,pr):
+        return {"state":"MERGED" if merged else "OPEN","headRefName":"chatgpt/x",
+                "headRefOid":"b"*40,"baseRefName":"main","url":"u",
+                "mergedAt":"now" if merged else None,
+                "mergeCommit":{"oid":"c"*40} if merged else None}
+    async def fake_gh(binding,args,**kwargs):
+        nonlocal merged
+        if args[0]=="api":
+            # Simulate a rename: filename plus previous_filename emitted by the jq projection.
+            return ".devcoveer/requirements-v2.json\n.devcoveer/requirements.json\nsrc/app.py\n"
+        if args[0:2]==["pr","merge"]:
+            merged=True
+            return ""
+        raise AssertionError(args)
+    monkeypatch.setattr(gha,"resolve_github_remote",remote)
+    monkeypatch.setattr(gha,"_view_pr",fake_view)
+    monkeypatch.setattr(gha,"_gh",fake_gh)
+    with pytest.raises(gha.ProbeError) as exc:
+        run(gha.pr_merge(tmp_path,{},{
+            "pr":8,"expected_head_sha":"b"*40,"expected_base":"main","method":"merge"
+        }))
+    assert exc.value.category=="requirements_change_required"
+
+    out=run(gha.pr_merge(tmp_path,{},{
+        "pr":8,"expected_head_sha":"b"*40,"expected_base":"main","method":"merge",
+        "requirements_change_ref":"voice:voice-20261002-122522-dc517f1b"
+    }))
+    assert out["requirementsChangeRef"].startswith("voice:")
 
 
 def test_pr_merge_rejects_non_chatgpt_branch(tmp_path:Path,monkeypatch):

@@ -254,3 +254,17 @@ def test_stage_opportunistically_sweeps_only_safe_handoffs(tmp_path: Path, monke
     second = stage(repo, current, second_patch, root)
     assert first["handoffId"] in second["autoCleanup"]["removed"]
     assert (root / second["handoffId"]).is_dir()
+
+
+
+def test_requirements_contract_cannot_be_staged_through_source_handoff(tmp_path: Path) -> None:
+    repo, base = make_repo(tmp_path)
+    contract = repo / ".devcoveer" / "requirements.json"
+    contract.parent.mkdir()
+    contract.write_text('{"schema_version":1,"project":"demo","requirements":[{"id":"CORE-001","statement":"preserve"}]}\n', encoding="utf-8")
+    git(repo, "add", ".devcoveer/requirements.json")
+    patch = git(repo, "diff", "--cached", "--binary", base)
+    git(repo, "reset", "--hard", base)
+
+    with pytest.raises(SourceHandoffError, match="requirements contract changes are not accepted"):
+        stage(repo, base, patch, tmp_path / "handoffs")

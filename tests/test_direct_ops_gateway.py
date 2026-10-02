@@ -175,14 +175,18 @@ def test_capabilities_workspace_guidance_mentions_workspace_digest(monkeypatch, 
 def test_liberal_direct_ops_add_capabilities_without_removing_escape_hatch():
     described = gateway.describe_plane("project_action")
     operations = set(described["operations"])
-    assert {"git_switch_ff", "apply_source_patch", "artifact_fetch"} <= operations
+    assert {"git_switch_ff", "apply_source_patch", "artifact_fetch", "requirements_update"} <= operations
     assert {"run_tool", "run_profile", "write_text", "job_start", "git_fetch"} <= operations
+    probe_operations = set(gateway.describe_plane("project_probe")["operations"])
+    assert "requirements_context" in probe_operations
     run_tool = gateway.describe_plane("project_action", "run_tool")["payload_schema"]
     assert "bash_script" in run_tool["properties"]["tool"]["enum"]
     guidance = described["operator_guidance"]
     assert "not a capability boundary" in guidance["escape_hatch"]
     assert "arbitrary HTTPS" in guidance["artifacts"]
     assert "inert source" in guidance["source"]
+    assert "requirements_update" in guidance["requirements"]
+    assert "semantic typed operation" in guidance["efficiency"]
 
 
 def _allow_incident_lookup(monkeypatch, incident_id):

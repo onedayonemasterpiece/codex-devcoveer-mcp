@@ -115,7 +115,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.29.1-handoff-lifecycle"' in bridge
+        assert 'BRIDGE_VERSION = "3.30.0-requirements-guard"' in bridge
         assert 'include_messages=(detail != "summary")' in bridge
         assert '"inspectionStatus":"metadata_only"' in bridge
         assert "Task is running. No message history was fetched" in bridge
@@ -133,7 +133,14 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'name="cleanup_source_handoff"' in bridge
         assert "source_handoff_list" in (out / "direct_probe_core.py").read_text(encoding="utf-8")
         assert "source_handoff_gc" in (out / "direct_actions.py").read_text(encoding="utf-8")
+        assert "requirements_context" in (out / "direct_probe_core.py").read_text(encoding="utf-8")
+        assert "requirements_update" in (out / "direct_actions.py").read_text(encoding="utf-8")
+        assert (out / "requirements_guard.py").is_file()
         assert "opportunistically reclaims stale cleanup-safe handoffs" in bridge
+        assert "explicit user requirement-change intent" in start_task_description
+        assert "semantic typed operation" in start_task_description
+        assert "Batch independent read-only checks" in start_task_description
+        assert '_requirements_prompt(project.path) + _first_prompt' in bridge
         assert 'name="street_story_materialize_release"' in bridge
         assert 'name="street_story_deploy_user_service"' in bridge
         assert 'name="street_story_publish_edge_route"' in bridge
@@ -155,6 +162,8 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'if key not in native_properties:' in gateway
         assert 'if "request_key" not in native_properties:' in gateway
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
+        assert "requirements_prompt(Path(directory))" in backend
+        assert "boundary + requirements + prompt" in backend
         assert 'headers["x-opencode-directory"]' in backend
         assert '"User-Agent": "opencode/" + (self._server_version or "unknown")' in backend
         assert 'await self.request("GET", "/config", directory=directory' in backend
@@ -164,7 +173,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         for name in (
             "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py",
             "direct_probe_config.json", "opencode_backend.py",
-            "source_handoff.py", "street_story_operator.py", "projects_hub_edge_operator.py",
+            "source_handoff.py", "requirements_guard.py", "street_story_operator.py", "projects_hub_edge_operator.py",
         ):
             assert (out / name).is_file()
 

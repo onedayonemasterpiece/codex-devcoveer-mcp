@@ -42,6 +42,12 @@ from direct_jobs import cancel_job, cleanup_job, job_status, start_job, list_job
 from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update, git_fetch, workflow_dispatch, run_cancel
 from incident_registry import active_incident_id, close_incident, incident_project_scope, note_incident, open_incident
 from source_handoff import gc_source_handoffs
+from requirements_guard import (
+    consume_requirements_authorization,
+    guard_requirement_mutation,
+    requirements_commit_guard,
+    update_requirements,
+)
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -125,10 +131,11 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"worktree_capture_handoff"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","worktree","base_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"source_handoff_gc"},"older_than_seconds":{"type":"integer","minimum":0,"maximum":2592000,"default":0},"limit":{"type":"integer","minimum":1,"maximum":64,"default":16}},"required":["kind"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"requirements_update"},"content":{"type":"string","minLength":2,"maxLength":262144},"expected_digest":{"type":"string","pattern":r"^[0-9a-f]{64}$"},"reason":{"type":"string","minLength":1,"maxLength":2000},"authorization_ref":{"type":"string","minLength":1,"maxLength":500}},"required":["kind","content","reason","authorization_ref"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"owned_service_action"},"unit":{"type":"string","minLength":1,"maxLength":200,"pattern":r"^[A-Za-z0-9_.@:-]+\.service$"},"operation":{"type":"string","enum":["status","start","stop","restart","reload","enable","disable"]}},"required":["kind","unit","operation"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"github_pr_create"},"remote":{"type":"string","minLength":1,"maxLength":64},"head":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"base":{"type":"string","minLength":1,"maxLength":200},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000}},"required":["kind","head","expected_head_sha","title"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"github_pr_update"},"remote":{"type":"string","minLength":1,"maxLength":64},"pr":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000}},"required":["kind","pr","expected_head_sha"],"additionalProperties":False},
-        {"type":"object","properties":{"kind":{"const":"github_pr_merge"},"remote":{"type":"string","minLength":1,"maxLength":64},"pr":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"expected_base":{"type":"string","minLength":1,"maxLength":200},"method":{"type":"string","enum":["merge","squash","rebase"]}},"required":["kind","pr","expected_head_sha"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"github_pr_merge"},"remote":{"type":"string","minLength":1,"maxLength":64},"pr":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"expected_base":{"type":"string","minLength":1,"maxLength":200},"method":{"type":"string","enum":["merge","squash","rebase"]},"requirements_change_ref":{"type":"string","minLength":1,"maxLength":500}},"required":["kind","pr","expected_head_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"github_branch_delete"},"remote":{"type":"string","minLength":1,"maxLength":64},"branch":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"expected_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"}},"required":["kind","branch","expected_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_start"},"tool":{"type":"string","enum":["pytest","bash_script","python_script","node_script","npm_script","pnpm_script","yarn_script","gradle_task","make_target","python_module"]},"path":{"type":"string","minLength":1,"maxLength":500},"script":{"type":"string","minLength":1,"maxLength":200},"cwd":{"type":"string","maxLength":500},"args":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":500}},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600}},"required":["kind","tool"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_status"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
@@ -167,7 +174,7 @@ _EXPECTED_WORKSPACE_DIGEST_SCHEMA = {
 _HEAD_GUARDED_KINDS = {
     "sync_ff", "git_switch_ff", "apply_source_patch", "artifact_fetch",
     "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
-    "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "capture_handoff", "job_start",
+    "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "capture_handoff", "job_start", "requirements_update",
 }
 for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
     _kind = _variant["properties"]["kind"]["const"]
@@ -1087,9 +1094,12 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
         binding_id, binding, binding_inherited = await _binding_for_root(config, binding_id, root)
     kind = action["kind"]
     await _guard_expected_head(root, action)
+    guard_requirement_mutation(root, action)
     if kind == "batch":
         return await _run_batch(project_root, project_id, action, config_path=config_path)
     incident_project = str(binding.get("github_repo") or binding_id)
+    if kind == "requirements_update":
+        return update_requirements(root, action)
     if kind == "incident_open": return open_incident(incident_project, action)
     if kind == "incident_note": return note_incident(incident_project, action)
     if kind == "incident_close": return close_incident(incident_project, action)
@@ -1132,7 +1142,12 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
     if kind == "run_profile":
         return await _run_profile(root, binding, action["profile"], section="project_actions", handoff=handoff)
     if kind == "handoff_commit_push":
-        return await _handoff_commit_push(root, binding, action, meta)
+        requirement_change = requirements_commit_guard(root)
+        result = await _handoff_commit_push(root, binding, action, meta)
+        if requirement_change is not None:
+            consume_requirements_authorization(root)
+            result["requirementsChange"] = requirement_change
+        return result
     if kind == "write_text": return write_text(root, action)
     if kind == "mkdir": return mkdir(root, action)
     if kind == "move_path": return move_path(root, action)
@@ -1140,7 +1155,13 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
     if kind == "chmod_executable": return chmod_executable(root, action)
     if kind == "git_create_branch": return await git_create_branch(root, action)
     if kind == "git_stage": return await git_stage(root, action)
-    if kind == "git_commit_push": return await git_commit_push(root, binding, action)
+    if kind == "git_commit_push":
+        requirement_change = requirements_commit_guard(root)
+        result = await git_commit_push(root, binding, action)
+        if requirement_change is not None:
+            consume_requirements_authorization(root)
+            result["requirementsChange"] = requirement_change
+        return result
     if kind == "capture_handoff":
         if handoff: raise ProbeError("handoff_denied", "capture_handoff requires a canonical project", status="denied")
         return await capture_handoff(root, binding_id, action)

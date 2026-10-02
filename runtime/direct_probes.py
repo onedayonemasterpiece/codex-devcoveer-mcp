@@ -21,6 +21,7 @@ from direct_ops2_worktrees import worktree_compare
 from direct_web_context import read_instructions, web_preflight
 from incident_registry import active_incident_id, get_incident, search_incidents
 from source_handoff import list_source_handoffs
+from requirements_guard import requirements_context, requirements_summary_context
 from direct_ops2_host import (
     mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
     root_git_state,
@@ -105,6 +106,8 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
             limit=int(check.get("limit", 50)),
             safe_only=bool(check.get("safe_only", False)),
         ), "managed-source-handoffs"
+    if kind == "requirements_context":
+        return requirements_context(root), "project-requirements-contract"
     if kind == "capabilities": return await project_capabilities(root, binding), "git-local+trusted-server-config"
     if kind == "workspace_compare": return await workspace_compare(root, check["target_ref"], include_untracked=bool(check.get("include_untracked", True)), limit=int(check.get("limit", 500))), "git-local-object/worktree"
     if kind == "diff": return await _diff(root, check), "git-local-object/worktree"
@@ -259,6 +262,10 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
         "batch_deadline_seconds": BATCH_DEADLINE_SECONDS,
         "atomic": False, "results": results, "response_truncated": False,
     }
+    if not host:
+        requirement_context = requirements_summary_context(root)
+        if requirement_context["configured"]:
+            payload["requirementsContext"] = requirement_context
     plane = "host_probe" if host else "project_probe"
     for check, result in zip(checks, results):
         error = result.get("error") if isinstance(result, dict) else None

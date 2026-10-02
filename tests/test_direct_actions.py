@@ -17,6 +17,7 @@ RUNTIME = ROOT / "runtime"
 sys.path.insert(0, str(RUNTIME))
 
 import direct_actions as da  # noqa: E402
+import requirements_guard as rg  # noqa: E402
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -426,3 +427,43 @@ def test_source_handoff_gc_action_is_typed_safe_sweep(tmp_path: Path, monkeypatc
     assert observed["root"] == repo.resolve()
     assert observed["older"] == 0
     assert observed["limit"] == 4
+
+
+
+def test_requirements_contract_is_protected_through_project_action(tmp_path: Path, monkeypatch):
+    repo = init_repo(tmp_path / "requirements-project")
+    cfg = write_cfg(tmp_path / "requirements-config.json", repo)
+    monkeypatch.setattr(rg, "STATE_ROOT", tmp_path / "requirements-state")
+
+    with pytest.raises(da.ProbeError) as exc:
+        run(da.run_project_action(
+            str(repo), "p",
+            {"kind": "write_text", "path": rg.MANIFEST_PATH, "content": "{}"},
+            config_path=cfg,
+        ))
+    assert exc.value.category == "requirements_change_required"
+
+    content = json.dumps({
+        "schema_version": 1,
+        "project": "demo",
+        "requirements": [{
+            "id": "CORE-001",
+            "statement": "Preserve the primary product flow.",
+            "critical": True,
+            "acceptance": ["Primary flow remains available."],
+        }],
+    })
+    out = run(da.run_project_action(
+        str(repo), "p",
+        {
+            "kind": "requirements_update",
+            "content": content,
+            "reason": "Explicit owner requirement.",
+            "authorization_ref": "task:owner-approved-requirement",
+        },
+        config_path=cfg,
+    ))
+    assert out["status"] == "ok"
+    assert out["action"] == "requirements_update"
+    assert out["authorizationRef"] == "task:owner-approved-requirement"
+    assert (repo / rg.MANIFEST_PATH).is_file()

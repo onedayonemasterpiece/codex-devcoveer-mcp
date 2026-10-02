@@ -13,6 +13,7 @@ from typing import Any
 
 from direct_probe_core import ProbeError, _git, _redact_text, _run_process, _validate_alias, _validate_branch
 from direct_ops2 import resolve_github_remote
+from requirements_guard import MANIFEST_PATH
 
 HEX40_RE=re.compile(r"^[0-9a-f]{40}$")
 CHATGPT_BRANCH_RE=re.compile(r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$")
@@ -141,6 +142,23 @@ async def pr_update(root:Path,binding:dict[str,Any],action:dict[str,Any]) -> dic
             "number":pr,"url":after.get("url"),"head_sha":expected}
 
 
+async def _pr_changed_paths(binding: dict[str, Any], repo: str, pr: int) -> set[str]:
+    text = await _gh(
+        binding,
+        [
+            "api", "--paginate", f"repos/{repo}/pulls/{pr}/files",
+            "--jq", ".[] | .filename, (.previous_filename // empty)",
+        ],
+        limit=256 * 1024,
+    )
+    paths: set[str] = set()
+    for raw in text.splitlines():
+        path = raw.strip()
+        if path and len(path) <= 1000 and "\x00" not in path:
+            paths.add(path)
+    return paths
+
+
 async def pr_merge(root:Path,binding:dict[str,Any],action:dict[str,Any]) -> dict[str,Any]:
     _remote,repo=await _repo(root,binding,action.get("remote","origin"))
     pr=int(action["pr"]); expected=action["expected_head_sha"].lower()
@@ -155,6 +173,15 @@ async def pr_merge(root:Path,binding:dict[str,Any],action:dict[str,Any]) -> dict
         raise ProbeError("remote_moved","PR head differs from expected SHA",status="denied")
     if data.get("baseRefName")!=expected_base:
         raise ProbeError("pr_base_mismatch","PR base differs from expected branch",status="denied")
+    changed=await _pr_changed_paths(binding,repo,pr)
+    requirements_change_ref=action.get("requirements_change_ref")
+    if MANIFEST_PATH in changed and not requirements_change_ref:
+        raise ProbeError(
+            "requirements_change_required",
+            "PR changes or renames the protected requirements contract; merge requires requirements_change_ref "
+            "pointing to the explicit user task/agreement",
+            status="denied",
+        )
     method=action.get("method","merge")
     flag={"merge":"--merge","squash":"--squash","rebase":"--rebase"}[method]
     await _gh(binding,["pr","merge",str(pr),"--repo",repo,flag],timeout=120)
@@ -163,9 +190,12 @@ async def pr_merge(root:Path,binding:dict[str,Any],action:dict[str,Any]) -> dict
         raise ProbeError("github","PR merge did not reach MERGED state")
     merge_commit=after.get("mergeCommit")
     merge_sha=merge_commit.get("oid") if isinstance(merge_commit,dict) else None
-    return {"status":"ok","action":"github_pr_merge","repository":repo,"number":pr,
+    result={"status":"ok","action":"github_pr_merge","repository":repo,"number":pr,
             "url":after.get("url"),"merged_at":after.get("mergedAt"),"merge_sha":merge_sha,
             "head_sha":expected,"method":method}
+    if MANIFEST_PATH in changed:
+        result["requirementsChangeRef"]=requirements_change_ref
+    return result
 
 
 async def delete_remote_branch(root:Path,binding:dict[str,Any],action:dict[str,Any]) -> dict[str,Any]:

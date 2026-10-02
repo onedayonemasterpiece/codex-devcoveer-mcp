@@ -127,6 +127,10 @@ PROJECT_CHECK_SCHEMAS = [
         "List managed Source Handoff workspaces for this Git repository, including whether each is "
         "active and conservatively safe to reclaim. Read-only and bounded."
     )},
+    {**_check_schema("requirements_context"), "description": (
+        "Read the project's high-level requirements contract. When configured, the same context is "
+        "attached automatically to project_probe responses and injected into agent tasks."
+    )},
     _check_schema("capabilities"),
     {**_check_schema("instructions", {
         "scope": {"type": "string", "enum": ["home", "project"], "default": "project"},
