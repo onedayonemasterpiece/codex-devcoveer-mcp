@@ -112,6 +112,7 @@ def test_log_search_is_targeted_bounded_and_redacted(monkeypatch):
         assert "--reverse" in argv
         return SimpleNamespace(stdout=text.encode(),stderr=b"",exit_code=0,truncated=False,duration_ms=1)
     monkeypatch.setattr(host_services,"_run_process",fake_run)
+    monkeypatch.setattr(host_services.time, "time", lambda: 1790493602.5)
     result=run(host_services._log_search(binding,{
         "log":"app","query":"request_id=r1","limit":20,"context_lines":0,
         "since_seconds":600,"regex":False,"case_sensitive":False,

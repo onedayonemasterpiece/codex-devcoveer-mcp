@@ -501,12 +501,18 @@ async def _log_search(binding: dict[str, Any], check: dict[str, Any]) -> dict[st
             raise ProbeError("cursor_mismatch", "log search cursor source type changed", status="denied")
         argv = ["/usr/bin/journalctl"] + (["--user"] if scope == "user" else []) + [
             "--unit", unit, "--no-pager", "--output=json", "--reverse",
-            "--lines", str(page_lines + (1 if journal_cursor else 0)),
-            "--since", f"@{lower_us / 1_000_000:.6f}",
-            "--until", f"@{upper_us / 1_000_000:.6f}",
+            "--lines", str(page_lines + 1 + (1 if journal_cursor else 0)),
         ]
         if journal_cursor:
+            # journalctl rejects cursor seeking when combined with time seek options
+            # on the deployed systemd build. The cursor itself freezes the
+            # continuation position; enforce the original lower bound after read.
             argv += ["--cursor", str(journal_cursor)]
+        else:
+            argv += [
+                "--since", f"@{lower_us / 1_000_000:.6f}",
+                "--until", f"@{upper_us / 1_000_000:.6f}",
+            ]
         result = await _run_process(
             argv, env=_systemd_env(scope), timeout=15, output_limit=2 * 1024 * 1024
         )
@@ -530,7 +536,28 @@ async def _log_search(binding: dict[str, Any], check: dict[str, Any]) -> dict[st
                 records.append(row)
         if journal_cursor and records and records[0].get("__CURSOR") == journal_cursor:
             records = records[1:]
-        has_more = result.truncated or len(records) >= page_lines
+
+        reached_lower_bound = False
+        bounded_records: list[dict[str, Any]] = []
+        for row in records:
+            try:
+                row_us = int(row.get("__REALTIME_TIMESTAMP"))
+            except (TypeError, ValueError):
+                source_truncated = True
+                continue
+            if row_us > upper_us:
+                # Defensive only: a continuation cursor should already be at or
+                # below the frozen upper bound.
+                continue
+            if row_us < lower_us:
+                reached_lower_bound = True
+                break
+            bounded_records.append(row)
+        records = bounded_records
+        has_more = (
+            not reached_lower_bound
+            and (result.truncated or len(records) > page_lines)
+        )
         records = records[:page_lines]
         source_truncated = source_truncated or bool(result.truncated)
         filtered = _search_log_records(

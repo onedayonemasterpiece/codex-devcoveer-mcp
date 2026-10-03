@@ -49,7 +49,7 @@ def function_block(source: str, name: str) -> tuple[int, int, str]:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.31.0-operational-quality"', "version")
+                          'BRIDGE_VERSION = "3.31.1-operational-quality"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
