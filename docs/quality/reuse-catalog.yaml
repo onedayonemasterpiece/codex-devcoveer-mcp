@@ -1,0 +1,118 @@
+schema_version: 1
+catalog_id: devcoveer-cross-project-reuse
+observed_on: '2026-10-03'
+status: advisory_snapshot_not_runtime_inventory
+owner: onedayonemasterpiece/codex-devcoveer-mcp
+source_review: idea-hub:voice-20261003-083638-766e61b7
+policy:
+  authority: navigation_only
+  semantic_selection: current_working_model
+  new_approval_gate: false
+  automatic_runtime_injection: not_implemented
+  unknown_runtime_versions: preserve_as_unknown
+  requirements: existing_requirements_guard
+  compatibility: interface_versions_and_capabilities
+  hashes: artifact_integrity_and_audit_provenance
+capabilities:
+  - id: live.audio-session
+    kind: shared_library
+    owner: onedayonemasterpiece/live-interaction
+    intents: [voice_session, microphone_handoff, wss_transport, stop_resume, ordered_audio]
+    canonical_paths: [README.md, docs/integration.md, docs/native-wss.md]
+    source_observation:
+      ref: e05fac8bbb6fdcc463d53fff4c554083cb3d27e7
+      scope: selected_checkout_readme
+      remote_main: 129edcd38208e3d3daa4fb033c75288d83575dea
+      notes: Native WSS candidate and browser release are not interchangeable solely by version number.
+    owns: [audio_lifecycle, pcm_order, ack_backpressure, bounded_recovery, capability_transition]
+    excludes: [product_authorization, domain_tools, semantic_fact_work, publication_confirmation]
+    consumers:
+      - {project: wonderful-lections, declaration: 'vendor 0.3.11', installed: null, served: null}
+      - {project: events-bot-new, declaration: '0.3.7-rc.1', installed: null, served: null}
+      - {project: street-story, declaration: '0.3.7-rc.1 in selected branch', installed: null, served: null}
+      - {project: projects-hub, declaration: 'git b6a051a7cf53f84433ebf48a52b623d91fcc6478', installed: null, served: null}
+    quality_refs: [wonderful-lections:docs/reports/incidents/catalog.json]
+    tasks: [OPQ-03, OPQ-04, OPQ-05, OPQ-08]
+  - id: ai.resource-admission
+    kind: shared_library
+    owner: onedayonemasterpiece/ai-resource-control
+    intents: [provider_budget, live_lease, shared_quota, admission_failure]
+    canonical_paths: [README.md, docs/architecture.md, docs/rollout.md]
+    source_observation: {ref: f31738077dc4ad3f1e141a9eb252f84bce7d5379, scope: checkout_and_remote_main}
+    owns: [authority_sdk, live_binding_lease, budget_accounting]
+    excludes: [product_database, google_provider_latency, other_provider_quota_policy]
+    boundary: Private SDK; existing authority, not a new gateway. Keep Live leases and ordinary request accounting distinct.
+    consumers:
+      - {project: projects-hub, declaration: 'run_guarded import observed', installed: null}
+      - {project: street-story, declaration: 'ordinary quota wrapper observed', installed: null}
+      - {project: wonderful-lections, declaration: 'consumer documented; current installation unverified', installed: null}
+      - {project: events-bot-new, declaration: 'consumer documented; current installation unverified', installed: null}
+    tasks: [OPQ-03, OPQ-04, OPQ-08]
+  - id: social.publication-media
+    kind: product_service
+    owner: onedayonemasterpiece/vibepublish
+    intents: [publish_post, schedule_post, media_store, image_ingress, provider_receipt]
+    canonical_paths: [docs/routes.yml, docs/features/social-operations/mcp-contract-v1.md, docs/features/media-store/README.md, social_operations/assets.py]
+    source_observation: {ref: 53575a9befe22f05301348917f003b1a7440dead, scope: remote_main_and_historical_acceptance_receipt}
+    owns: [provider_adapters, native_scheduling, immutable_media_origin, verified_ingress]
+    excludes: [consumer_identity, editorial_intent, blanket_publish_rights, local_scheduler]
+    consumers:
+      - {project: street-story, declaration: 'service integration and scoped scheduling receipt', installed: null}
+      - {project: wonderful-lections, declaration: 'media integration route; fresh acceptance unverified', installed: null}
+    quality_refs: [vibepublish:inc_009a4680f1220529da42e68a, vibepublish:inc_7b6f25881b32763bacab151a]
+    warning: routes.yml status conflicts with later scoped acceptance; do not infer whole-product readiness.
+    tasks: [OPQ-02, OPQ-04, OPQ-05, OPQ-08]
+  - id: kaggle.provider-operations
+    kind: extraction_candidate
+    owner: onedayonemasterpiece/my-data-hub
+    co_reviewers: [onedayonemasterpiece/events-bot-new]
+    intents: [notebook_lifecycle, provider_status, callback_recovery, private_artifact]
+    canonical_paths: [docs/17-kaggle-control-plane.md, src/my_data_hub/providers/kaggle/contracts.py]
+    source_observation: {ref: e7972f7339b0abe28634bd1782c0d517c65ab06e, scope: checkout_and_remote_main}
+    donor_refs:
+      - {project: events-bot-new, ref: 8105d069f2d91306c13db02b976e5fa2921226f6, paths: [kaggle_registry.py, kaggle_recovery.py, kaggle_status.py]}
+    candidate_shared: [bounded_pagination, transport_error_classification, status_reconciliation]
+    excludes: [protected_master_control, account_permissions, business_jobs, automatic_unknown_effect_retry]
+    readiness: Code/contract candidate; clone percentage and current production equivalence unmeasured.
+    tasks: [OPQ-06]
+  - id: facts.accepted-outcome-provenance
+    kind: reusable_pattern
+    owner: onedayonemasterpiece/events-bot-new
+    intents: [supported_fact, source_deduplication, idempotent_import, typed_outcome]
+    canonical_paths: [docs/features/smart-event-update/caller-inventory.md, smart_update_state.py]
+    source_observation: {ref: 8105d069f2d91306c13db02b976e5fa2921226f6, scope: github_index_and_file_read}
+    candidate_consumers: [street-story, my-data-hub]
+    reusable: [provenance, accepted_outcome_before_effect, exact_replay, technical_vs_product_failure]
+    excludes: [shared_event_poi_identity, regex_semantic_extraction, automatic_fact_arbitration_without_llm]
+    readiness: Pattern donor, not an extracted common fact engine.
+    tasks: [OPQ-07]
+  - id: operations.durable-recovery
+    kind: reusable_pattern
+    owner: onedayonemasterpiece/codex-devcoveer-mcp
+    intents: [lost_response, resume_work, durable_job, unknown_effect, operational_diagnostics]
+    canonical_paths: [docs/process-recovery-20260930.md, docs/incident-observability.md, docs/requirements-guard.md]
+    source_observation: {ref: ddd688b434ce809f735e77940fcd6b465ccb87af, scope: remote_main_and_runtime_manifest}
+    runtime_observation: {version: 3.30.0-requirements-guard, tool_count: 23, observed_at: '2026-10-03T07:08:24Z'}
+    reusable: [request_identity, receipt_before_retry, scoped_work_checkpoint, truthful_coverage]
+    excludes: [platform_safety_bypass, receipt_as_new_authorization, cross_tenant_state]
+    quality_refs: [codex-devcoveer-mcp:inc_453f4acbb881a4bd4864a087, codex-devcoveer-mcp:inc_5ba055f5f05a4dd10f9a69fd]
+    tasks: [OPQ-01, OPQ-02, OPQ-05, OPQ-08]
+  - id: edge.verified-publication
+    kind: extraction_candidate
+    owner: onedayonemasterpiece/codex-devcoveer-mcp
+    intents: [healthy_release_edge_route, deployment_receipt, source_runtime_identity]
+    canonical_paths: [runtime/projects_hub_edge_operator.py, runtime/street_story_operator.py]
+    source_observation: {ref: ddd688b434ce809f735e77940fcd6b465ccb87af, scope: remote_main_source}
+    current_reuse: ProjectsHubEdgeOperator inherits StreetStoryOperator.
+    candidate_shared: [lock_receipt_primitives, edge_renderer_invocation, artifact_readback]
+    excludes: [generic_deploy_anywhere, shared_product_allowlist, bypass_readiness]
+    tasks: [OPQ-09]
+  - id: knowledge.intake-routing
+    kind: reusable_pattern
+    owner: onedayonemasterpiece/idea-hub
+    intents: [voice_review_routing, canonical_document, source_to_task, materialization_status]
+    canonical_paths: [registry/README.md, registry/catalog.yaml, registry/intake-sessions.yaml]
+    source_observation: {ref: c346ac7a526870501350c0277678276429224e0a, scope: github_read}
+    reusable: [source_identity, forward_reverse_links, explicit_pending, count_reconciliation]
+    excludes: [routing_as_implementation, sidecar_as_canonical_project_document, raw_voice_copy]
+    tasks: [OPQ-02, OPQ-03, OPQ-05]

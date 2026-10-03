@@ -2,6 +2,10 @@
 
 Private source-of-truth repository for the DevCoveer execution MCP used by ChatGPT to operate Codex and OpenCode on the DevCoveer host.
 
+## Operational quality and reuse
+
+The [cross-project reuse design](docs/cross-project-reuse.md), [capability catalogue](docs/quality/reuse-catalog.yaml), [implementation plan](docs/quality/implementation-plan.yaml), and [3 October 2026 audit](docs/audits/2026-10-03-operational-quality.md) distinguish existing shared solutions from proposed improvements. The catalogue is an advisory snapshot; automatic MCP context injection and monitoring are not implemented by this documentation change.
+
 ## Current state
 
 The original DevCoveer host is unavailable after the hosting failure, so recovery cannot depend on copying host-local bytes. The repository now carries the latest accepted source lineage needed to rebuild the control plane on DevCoveer2:

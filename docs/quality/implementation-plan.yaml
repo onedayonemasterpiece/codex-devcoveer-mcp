@@ -1,0 +1,170 @@
+schema_version: 1
+plan_id: operational-quality-20261003
+status: proposed_not_implemented
+owner: onedayonemasterpiece/codex-devcoveer-mcp
+source_review: idea-hub:voice-20261003-083638-766e61b7
+audit: docs/audits/2026-10-03-operational-quality.md
+target_design: docs/cross-project-reuse.md
+execution_policy:
+  author: current_working_model
+  deterministic_operations: existing_direct_ops
+  no_new_runtime_in_this_audit: true
+  no_automatic_requirement_changes: true
+  no_automatic_approval_or_authorization_changes: true
+  independent_service_releases: true
+  implementation_authorization: separate_implementation_task
+  verification_claims: distinguish_fixture_source_runtime_and_user_field_evidence
+tasks:
+  - id: OPQ-01
+    priority: P0
+    owner: codex-devcoveer-mcp
+    title: Restore truthful bounded diagnostics
+    findings: [F01]
+    depends_on: []
+    deliverables:
+      - Per-root resources result; missing optional root does not hide valid measurements.
+      - Log source cursor or segment continuation with requested/covered window and retention cutoff.
+      - Explicit read_text continuation and effective line limit; no ambiguous chunk completeness.
+    acceptance:
+      - Absent registered worktrees directory returns a typed missing-root item, not an entire probe exception.
+      - More than one source page yields exact continuation; zero matches on partial coverage never means no errors.
+      - Fixtures cover rotation, retention cutoff, empty complete interval and concurrent source change.
+    canonical_doc_targets: [docs/direct-probes.md, docs/incident-observability.md]
+    runtime_acceptance: Repeat read-only resources and paged log search against the deployed fix.
+  - id: OPQ-02
+    priority: P0
+    owner: codex-devcoveer-mcp
+    title: Source identity and honest documentation status
+    findings: [F02, F04]
+    depends_on: [OPQ-01]
+    collaborators: [idea-hub, vibepublish, ai-resource-control, street-story]
+    deliverables:
+      - Compact main/selected-worktree/installed/served observations, each with scope and timestamp.
+      - Existing route indexes link to canonical scoped acceptance; historical status is labelled historical.
+      - Intake routes point to actual owning docs, without claiming pending PRs merged.
+    acceptance:
+      - Stale dirty checkout and code in non-default branch are distinguished without modifying either.
+      - Missing deployed receipt remains unknown, not assumed equal to source.
+      - VibePublish stale route status reconciles only verified capability scope, not all product features.
+    canonical_doc_targets: [docs/direct-probes.md, docs/quality/reuse-catalog.yaml]
+    external_doc_targets: [vibepublish:docs/routes.yml, ai-resource-control:README.md, idea-hub:registry/intake-sessions.yaml]
+  - id: OPQ-03
+    priority: P1
+    owner: codex-devcoveer-mcp
+    title: Advisory semantic reuse context in both execution paths
+    findings: [F03]
+    depends_on: [OPQ-02]
+    deliverables:
+      - Read-only bounded reuse context on existing direct and start/continue paths.
+      - Current model selects donors by meaning and records a short reason only for material decisions.
+      - No mandatory per-task approval, extra LLM service or duplicated requirements registry.
+    acceptance:
+      - Paraphrased voice/WSS task with no catalog keyword still finds the appropriate donor.
+      - Similar names with different domain semantics do not cause a forced common engine.
+      - Catalog unavailable gives advisory degradation while authorization stays enforced.
+      - Same relevant evidence is available to ChatGPT Direct Ops and OpenCode continuation.
+    canonical_doc_targets: [docs/cross-project-reuse.md, docs/quality/reuse-catalog.yaml, docs/operating-model-and-adaptive-routing.md]
+  - id: OPQ-04
+    priority: P1
+    owner: live-interaction
+    title: Capabilities and consumer adoption receipts
+    findings: [F03]
+    depends_on: [OPQ-03]
+    collaborators: [ai-resource-control, projects-hub, street-story, wonderful-lections, events-bot-new, vibepublish]
+    deliverables:
+      - Interface/capability matrix for browser, Node and Python consumers.
+      - Artifact version and integrity metadata plus declared/installed/served/accepted receipt fields.
+      - Minimal affected-consumer contract suites and compatible rollback guidance.
+    acceptance:
+      - One JS and one Python adapter retain authentication, Stop and damaged-turn guarantees.
+      - Newer browser package is not automatically substituted for native-WSS candidate.
+      - Compatible service release works without matching a consumer-pinned source SHA.
+      - Stale served JS is detected separately from healthy backend/source version.
+    canonical_doc_targets: [docs/integration.md, docs/native-wss.md]
+    external_doc_targets: [ai-resource-control:docs/rollout.md, codex-devcoveer-mcp:docs/quality/reuse-catalog.yaml]
+  - id: OPQ-05
+    priority: P1
+    owner: codex-devcoveer-mcp
+    title: Cross-project incident impact and repair visibility
+    findings: [F04, F05]
+    depends_on: [OPQ-03]
+    collaborators: [wonderful-lections, vibepublish, live-interaction, idea-hub]
+    deliverables:
+      - Link existing incidents to component, observed versions, suspected/confirmed consumers and fixes.
+      - Minimal relevant negative-knowledge summary, with expansion to canonical evidence.
+      - Change-driven material drift report using existing execution infrastructure.
+    acceptance:
+      - Shared microphone defect reaches affected consumers; product reviewer permission does not become a transport defect.
+      - Synthetic sender PASS cannot close an unresolved hall field incident.
+      - Repeated review updates the same incident relation rather than cloning full history.
+      - Unchanged snapshots produce no alert; scheduled activation remains explicitly controlled.
+    canonical_doc_targets: [docs/incident-observability.md, docs/quality/reuse-catalog.yaml]
+    external_doc_targets: [wonderful-lections:docs/reports/incidents/catalog.json, idea-hub:registry/README.md]
+  - id: OPQ-06
+    priority: P2
+    owner: my-data-hub
+    title: Bounded Kaggle reuse pilot with Events
+    findings: [F06]
+    depends_on: [OPQ-03]
+    collaborators: [events-bot-new]
+    deliverables:
+      - Compare two exact call paths and fixtures before extracting any implementation.
+      - Share only genuinely equivalent transport, pagination, error and status primitives.
+      - Retain separate protected-master policy and product jobs; record rejected reuse choices.
+    acceptance:
+      - Unknown mutation outcome is reconciled, never blindly replayed.
+      - External read-only and protected resources remain non-mutable through shared helpers.
+      - Both consumers pass their own contract fixtures; code reduction is measured, not a delivery gate.
+    canonical_doc_targets: [docs/17-kaggle-control-plane.md]
+    external_doc_targets: [events-bot-new:docs/backlog/features/emailmonitoring/requirements.md]
+  - id: OPQ-07
+    priority: P2
+    owner: street-story
+    title: Reuse fact-quality patterns without a deterministic semantic engine
+    findings: [F07]
+    depends_on: [OPQ-03]
+    collaborators: [events-bot-new, my-data-hub]
+    deliverables:
+      - Preserve LLM-first extraction, semantic deduplication and contradiction reasoning.
+      - Adopt explicit provenance, accepted outcome and exact-replay boundaries where suitable.
+      - Keep event/POI identity and product arbitration in their owning domain contracts.
+    acceptance:
+      - Multi-source paraphrases and conflicting dates are processed through the model contract, not regex arbitration.
+      - Diagnostic ID cannot authorize publication or persistence as an accepted fact.
+      - Repeated accepted source does not duplicate facts or erase contradiction evidence.
+    canonical_doc_targets: [docs/facts-audit-2026-10-03.md, docs/audits/facts-llm-first-audit-2026-10-03.md]
+    external_doc_targets: [events-bot-new:docs/features/smart-event-update/caller-inventory.md]
+  - id: OPQ-08
+    priority: P1
+    owner: codex-devcoveer-mcp
+    title: Operational safety and result-quality evaluations
+    findings: [F01, F05]
+    depends_on: [OPQ-01]
+    deliverables:
+      - Audit actual tools/list annotations against real effect classes, including mixed gateways.
+      - Error taxonomy and metadata-only correlation across client, MCP, executor and provider.
+      - Held-out realistic workflow fixtures with explicit outcome, denominator and evidence coverage.
+    acceptance:
+      - Read-only annotation is never used to disguise a write; server authorization remains authoritative.
+      - Lost response and concurrent retries create at most one authorized effect.
+      - Denied operation is not repeated through an equivalent alternate route.
+      - Malicious repository/log text cannot grant authority or exfiltrate credentials.
+      - Wrong audience/tenant tokens fail; successful mutation plus failed optional media retains the mutation receipt.
+      - Platform review frequency remains unknown when client events or coverage are absent.
+    metrics: [reuse_appropriateness, fix_adoption_lag, incident_recurrence, workflow_completion, diagnostic_coverage, observable_platform_reviews]
+    baseline: not_measured
+    canonical_doc_targets: [docs/incident-observability.md, docs/cross-project-reuse.md]
+  - id: OPQ-09
+    priority: P2
+    owner: codex-devcoveer-mcp
+    title: Neutral edge primitives at the next natural change
+    findings: [F08]
+    depends_on: []
+    deliverables:
+      - Move genuinely shared lock, receipt and renderer primitives out of the product-named superclass.
+      - Retain separate typed product operations, allowlists and readiness checks.
+    acceptance:
+      - Existing Street Story and Projects Hub accepted/denied cases remain unchanged.
+      - Refactor cannot target arbitrary hostname, service, release root or credentials.
+      - No new deployment framework or production redeploy solely for this audit.
+    canonical_doc_targets: [docs/cross-project-reuse.md]
