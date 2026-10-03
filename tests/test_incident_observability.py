@@ -101,12 +101,15 @@ def test_log_search_is_targeted_bounded_and_redacted(monkeypatch):
         "logs":{"app":{"type":"journal","service":"app"}},
         "roots":{},
     }
-    text=(
-        "2026-09-27T10:00:00 INFO request_id=r1 started\n"
-        "2026-09-27T10:00:01 ERROR request_id=r1 API_KEY=<redacted> provider timeout\n"
-        "2026-09-27T10:00:02 INFO request_id=r2 ok\n"
-    )
+    rows=[
+        {"MESSAGE":"INFO request_id=r1 started","__CURSOR":"c1","__REALTIME_TIMESTAMP":"1790493600000000"},
+        {"MESSAGE":"ERROR request_id=r1 API_KEY=<redacted> provider timeout","__CURSOR":"c2","__REALTIME_TIMESTAMP":"1790493601000000"},
+        {"MESSAGE":"INFO request_id=r2 ok","__CURSOR":"c3","__REALTIME_TIMESTAMP":"1790493602000000"},
+    ]
+    text="\n".join(json.dumps(row) for row in rows)+"\n"
     async def fake_run(argv,**kwargs):
+        assert "--output=json" in argv
+        assert "--reverse" in argv
         return SimpleNamespace(stdout=text.encode(),stderr=b"",exit_code=0,truncated=False,duration_ms=1)
     monkeypatch.setattr(host_services,"_run_process",fake_run)
     result=run(host_services._log_search(binding,{

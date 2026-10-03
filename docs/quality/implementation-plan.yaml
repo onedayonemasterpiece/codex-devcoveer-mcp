@@ -1,6 +1,6 @@
 schema_version: 1
 plan_id: operational-quality-20261003
-status: proposed_not_implemented
+status: phase1_source_implemented_pending_live_rollout
 owner: onedayonemasterpiece/codex-devcoveer-mcp
 source_review: idea-hub:voice-20261003-083638-766e61b7
 audit: docs/audits/2026-10-03-operational-quality.md
@@ -14,6 +14,17 @@ execution_policy:
   independent_service_releases: true
   implementation_authorization: separate_implementation_task
   verification_claims: distinguish_fixture_source_runtime_and_user_field_evidence
+phase1_delivery:
+  source_verified: true
+  full_source_suite: '340 passed, 4 skipped'
+  delivered_scope: [OPQ-01, OPQ-02, OPQ-03, OPQ-04-phase1-contracts, OPQ-05, OPQ-08]
+  backlog_unchanged: [OPQ-06, OPQ-07, OPQ-09]
+  out_of_scope:
+    - mass consumer migration
+    - kaggle extraction
+    - shared fact-engine extraction
+    - neutral edge superclass refactor
+  live_rollout_and_acceptance: pending_at_source_commit
 tasks:
   - id: OPQ-01
     priority: P0

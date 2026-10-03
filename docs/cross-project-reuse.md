@@ -1,6 +1,6 @@
 # Межпроектное переиспользование: целевая схема
 
-Статус: **proposed / implementation not started**, 03.10.2026.
+Статус: **Phase 1 implemented in source; live rollout/acceptance recorded separately**, 03.10.2026.
 Основание: [аудит](audits/2026-10-03-operational-quality.md).
 Входы: [каталог возможностей](quality/reuse-catalog.yaml), [постановка](quality/implementation-plan.yaml).
 Это расширение существующего DevCoveer, а не отдельный сервис согласований.
@@ -75,3 +75,18 @@ OPQ-01–09 содержат проверяемые сценарии. Обяза
 | Проверки ChatGPT | Только наблюдаемые сообщения пользователя/клиента на покрытые сессии, с долей unknown |
 
 Безопасность — guardrail, не показатель для «оптимизации» отключением защит. Приёмочные fixtures требуют отсутствия несанкционированных эффектов и утечек, но не доказывают нулевой риск всей эксплуатации. Экономия LOC не является самостоятельным критерием качества.
+
+
+## Phase 1 runtime contract — 03.10.2026
+
+Phase 1 implements the minimal advisory layer inside the existing DevCoveer runtime; it does not add a database, daemon, approval engine or LLM router.
+
+- Every project probe response carries a compact `reuseContext` summary when the canonical catalog is readable. The same bounded navigation map is prepended to OpenCode and native task prompts. Catalog content is explicitly untrusted advisory data; Requirements Guard and the user's task remain authoritative.
+- `reuse_context` expands only explicit capability IDs (maximum five cards) under an output byte budget. The current working model performs semantic selection; the runtime does not route by keyword or capability ID.
+- `quality_inventory` keeps `main/source`, selected checkout, dependency declaration, installed, served and acceptance state distinct. Missing evidence stays `unknown`.
+- `reuse_compatibility` evaluates interface/version/capabilities/transport. Source SHA is provenance, not a cross-service lock; artifact SHA-256 remains an integrity check.
+- `reuse_incident_impact` projects an explicit incident scope/confidence across catalog consumers without changing canonical incident records. Local failures remain local, suspected stays suspected, and synthetic PASS cannot close a real field incident.
+- `reuse_portfolio` plus `reuse_portfolio_record` provides a small file-backed drift baseline across all catalog cards. The hook is advisory: failure cannot roll back a successful commit/deploy or invent a PASS.
+- The canonical catalog is copied into the installed MCP runtime so task context does not depend on a dirty source checkout.
+
+The implementation deliberately leaves OPQ-06, OPQ-07 and OPQ-09 as backlog. Those are extraction/refactor projects, not prerequisites for Phase 1 operational quality.

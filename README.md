@@ -4,7 +4,7 @@ Private source-of-truth repository for the DevCoveer execution MCP used by ChatG
 
 ## Operational quality and reuse
 
-The [cross-project reuse design](docs/cross-project-reuse.md), [capability catalogue](docs/quality/reuse-catalog.yaml), [implementation plan](docs/quality/implementation-plan.yaml), and [3 October 2026 audit](docs/audits/2026-10-03-operational-quality.md) distinguish existing shared solutions from proposed improvements. The catalogue is an advisory snapshot; automatic MCP context injection and monitoring are not implemented by this documentation change.
+The [cross-project reuse design](docs/cross-project-reuse.md), [capability catalogue](docs/quality/reuse-catalog.yaml), [implementation plan](docs/quality/implementation-plan.yaml), and [3 October 2026 audit](docs/audits/2026-10-03-operational-quality.md) distinguish existing shared solutions from proposed improvements. The catalogue is advisory, but Phase 1 runtime integration is implemented: compact reuse context is injected into task entrypoints, bounded expansion/inventory/compatibility/incident-impact are available through Direct Ops, and a file-backed advisory drift baseline can be recorded without a new daemon or database.
 
 ## Current state
 
@@ -45,7 +45,7 @@ The verifier creates an ephemeral `uv run` environment using Python 3.12.3, runs
 
 The canonical development modes, model resource classes, live-stall diagnostics, short-term model-health memory and adaptive failover policy are defined in [`docs/operating-model-and-adaptive-routing.md`](docs/operating-model-and-adaptive-routing.md).
 
-Source-handoff behavior is defined in [`docs/source-handoff-p0.md`](docs/source-handoff-p0.md), direct diagnostics in [`docs/direct-probes.md`](docs/direct-probes.md), and the evidence-first incident/logging workflow in [`docs/incident-observability.md`](docs/incident-observability.md).
+Source-handoff behavior is defined in [`docs/source-handoff-p0.md`](docs/source-handoff-p0.md), direct diagnostics in [`docs/direct-probes.md`](docs/direct-probes.md), the evidence-first incident/logging workflow in [`docs/incident-observability.md`](docs/incident-observability.md), and the operational-quality delivery plan in [`docs/quality/implementation-plan.yaml`](docs/quality/implementation-plan.yaml). Live acceptance is recorded under `docs/reports/operational-quality-phase1-acceptance-20261003.md` after rollout.
 
 ## DevCoveer2 recovery sequence
 

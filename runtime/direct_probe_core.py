@@ -131,6 +131,53 @@ PROJECT_CHECK_SCHEMAS = [
         "Read the project's high-level requirements contract. When configured, the same context is "
         "attached automatically to project_probe responses and injected into agent tasks."
     )},
+    {**_check_schema("reuse_context", {
+        "capability_ids": {"type":"array","minItems":1,"maxItems":5,"uniqueItems":True,
+                           "items":{"type":"string","minLength":1,"maxLength":128}},
+        "max_bytes": {"type":"integer","minimum":2048,"maximum":32768,"default":16384},
+    }), "description": (
+        "Expand the canonical advisory cross-project reuse catalog. Omit capability_ids for compact "
+        "navigation or request at most five explicit cards. Selection remains semantic model work."
+    )},
+    {**_check_schema("quality_inventory"), "description": (
+        "Return one compact state view that keeps main/source, selected checkout, dependency declaration, "
+        "installed, served and acceptance states separate; unknown remains unknown."
+    )},
+    {**_check_schema("reuse_compatibility", {
+        "provided_interface":{"type":"string","minLength":1,"maxLength":128},
+        "required_interface":{"type":"string","minLength":1,"maxLength":128},
+        "provided_version":{"type":"string","minLength":1,"maxLength":128},
+        "accepted_versions":{"type":"array","maxItems":20,"uniqueItems":True,
+                             "items":{"type":"string","minLength":1,"maxLength":128}},
+        "provided_capabilities":{"type":"array","maxItems":64,"uniqueItems":True,
+                                 "items":{"type":"string","minLength":1,"maxLength":128}},
+        "required_capabilities":{"type":"array","maxItems":64,"uniqueItems":True,
+                                 "items":{"type":"string","minLength":1,"maxLength":128}},
+        "provided_transport":{"type":"string","minLength":1,"maxLength":128},
+        "required_transport":{"type":"string","minLength":1,"maxLength":128},
+        "source_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},
+        "expected_source_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},
+        "artifact_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"},
+        "expected_artifact_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"},
+    }, ["provided_interface","required_interface"]), "description": (
+        "Check interface/version/capability/transport compatibility separately from source SHA provenance; "
+        "artifact checksum remains an integrity check."
+    )},
+    {**_check_schema("reuse_incident_impact", {
+        "capability_id":{"type":"string","minLength":1,"maxLength":128},
+        "incident_ref":{"type":"string","minLength":1,"maxLength":500},
+        "origin_project":{"type":"string","minLength":1,"maxLength":128},
+        "scope":{"type":"string","enum":["shared_capability","local_consumer","unknown"]},
+        "confidence":{"type":"string","enum":["confirmed","suspected","unknown"]},
+        "signal":{"type":"string","enum":["failure","pass"]},
+        "synthetic":{"type":"boolean","default":False},
+    }, ["capability_id","incident_ref","scope","confidence","signal"]), "description": (
+        "Project a recorded incident across canonical reuse consumers while preserving local scope, "
+        "confidence and synthetic-PASS boundaries. This is advisory and never closes incidents."
+    )},
+    {**_check_schema("reuse_portfolio"), "description": (
+        "Report all reuse catalog cards, source-observation coverage and drift versus the saved advisory baseline."
+    )},
     _check_schema("capabilities"),
     {**_check_schema("instructions", {
         "scope": {"type": "string", "enum": ["home", "project"], "default": "project"},
@@ -218,6 +265,9 @@ HOST_CHECK_SCHEMAS = [
         "since_seconds": {"type": "integer", "minimum": 0, "maximum": 2592000, "default": 3600},
         "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         "context_lines": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0},
+        "page_lines": {"type": "integer", "minimum": 20, "maximum": 1000, "default": 500},
+        "page_bytes": {"type": "integer", "minimum": 4096, "maximum": 262144, "default": 65536},
+        "cursor": {"type": "string", "minLength": 1, "maxLength": 8192},
     }, ["log", "query"]),
     _check_schema("resources", {
         "root": {"type": "string", "minLength": 1, "maxLength": 64},

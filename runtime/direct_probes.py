@@ -22,6 +22,10 @@ from direct_web_context import read_instructions, web_preflight
 from incident_registry import active_incident_id, get_incident, search_incidents
 from source_handoff import list_source_handoffs
 from requirements_guard import requirements_context, requirements_summary_context
+from reuse_quality import (
+    compatibility_check, incident_impact, portfolio_report, quality_inventory,
+    reuse_context, reuse_summary_context,
+)
 from direct_ops2_host import (
     mcp_manifest, network_probe, process_tree, root_file_sha256, root_file_stat, root_read_text,
     root_git_state,
@@ -108,6 +112,16 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
         ), "managed-source-handoffs"
     if kind == "requirements_context":
         return requirements_context(root), "project-requirements-contract"
+    if kind == "reuse_context":
+        return reuse_context(root, check), "canonical-reuse-catalog"
+    if kind == "quality_inventory":
+        return await quality_inventory(root, binding), "git-local+canonical-reuse-catalog"
+    if kind == "reuse_compatibility":
+        return compatibility_check(check), "deterministic-compatibility-contract"
+    if kind == "reuse_incident_impact":
+        return incident_impact(root, check), "canonical-reuse-catalog+explicit-incident-facts"
+    if kind == "reuse_portfolio":
+        return portfolio_report(root), "canonical-reuse-catalog+local-advisory-baseline"
     if kind == "capabilities": return await project_capabilities(root, binding), "git-local+trusted-server-config"
     if kind == "workspace_compare": return await workspace_compare(root, check["target_ref"], include_untracked=bool(check.get("include_untracked", True)), limit=int(check.get("limit", 500))), "git-local-object/worktree"
     if kind == "diff": return await _diff(root, check), "git-local-object/worktree"
@@ -266,6 +280,7 @@ async def _run_probe(project_root: str, project_id: str, checks: list[dict[str, 
         requirement_context = requirements_summary_context(root)
         if requirement_context["configured"]:
             payload["requirementsContext"] = requirement_context
+        payload["reuseContext"] = reuse_summary_context(root)
     plane = "host_probe" if host else "project_probe"
     for check, result in zip(checks, results):
         error = result.get("error") if isinstance(result, dict) else None

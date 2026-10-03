@@ -390,6 +390,10 @@ async def git_commit_push(root: Path, binding: dict[str, Any], action: dict[str,
     staged = await _git(root, "diff", "--cached", "--quiet", ok_codes=(0, 1))
     if staged.exit_code == 0:
         raise ProbeError("empty_commit", "no staged changes", status="denied")
+    staged_names = await _git(root, "diff", "--cached", "--name-only", "-z", output_limit=256 * 1024)
+    changed_paths = [
+        item for item in staged_names.stdout.decode("utf-8", "replace").split("\0") if item
+    ]
     check = await _git(root, "diff", "--cached", "--check", ok_codes=(0, 2), timeout=30)
     if check.exit_code != 0:
         raise ProbeError("patch_check", check.stdout.decode("utf-8", "replace")[-1200:] or "staged patch check failed", status="denied")
@@ -404,7 +408,10 @@ async def git_commit_push(root: Path, binding: dict[str, Any], action: dict[str,
     if pushed.exit_code != 0:
         err, _ = _redact_text(pushed.stderr.decode("utf-8", "replace"))
         raise ProbeError("push_failed", err[-1200:] or "git push failed", exit_code=pushed.exit_code)
-    return {"status": "ok", "action": "git_commit_push", "branch": branch, "commit_sha": head, "repository": repo}
+    return {
+        "status": "ok", "action": "git_commit_push", "branch": branch,
+        "commit_sha": head, "repository": repo, "changed_paths": changed_paths,
+    }
 
 
 async def capture_handoff(root: Path, project_id: str, action: dict[str, Any]) -> dict[str, Any]:

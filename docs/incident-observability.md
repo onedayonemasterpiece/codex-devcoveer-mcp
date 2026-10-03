@@ -85,3 +85,18 @@ For an incident conclusion, identify the evidence class supporting it:
 - agent/tool execution evidence.
 
 Source code alone describes intended behavior; it does not prove what happened in production.
+
+
+## Cross-project incident impact (Phase 1)
+
+The reuse catalog can add an advisory impact projection without replacing the owning incident registry. `reuse_incident_impact` requires the caller to supply the observed capability, canonical incident reference, scope, confidence and signal.
+
+Rules are intentionally conservative:
+
+- `shared_capability + confirmed failure` may mark known catalog consumers `affected_confirmed`;
+- `suspected` remains `affected_suspected` and never upgrades itself to confirmed;
+- `local_consumer` affects only the named consumer;
+- `unknown` propagates no confirmed state;
+- a synthetic PASS is evidence only and cannot close a real incident.
+
+For `live.audio-session`, the 29 September Wonderful Lections hall voice / wake-resume records are shared-capability evidence, while the owner live permission incident is a local consumer authorization issue. The canonical records remain in Wonderful Lections; DevCoveer stores links and impact state, not copied incident history.
