@@ -127,6 +127,50 @@ def test_log_search_rotation_is_reported_as_coverage_gap(tmp_path: Path):
     assert exc.value.status == "partial"
 
 
+
+def test_journal_log_search_continuation_uses_cursor_without_time_seek(monkeypatch):
+    now_us = int(host_services.time.time() * 1_000_000)
+    rows = [
+        {
+            "__CURSOR": f"cursor-{index}",
+            "__REALTIME_TIMESTAMP": str(now_us - index),
+            "MESSAGE": "NEEDLE" if index == 33 else f"row-{index}",
+        }
+        for index in range(46)
+    ]
+    calls: list[list[str]] = []
+
+    async def fake_run(argv, *, env, timeout, output_limit):
+        calls.append(list(argv))
+        if "--cursor" not in argv:
+            selected = rows[:21]
+        else:
+            assert "--since" not in argv and "--until" not in argv
+            cursor = argv[argv.index("--cursor") + 1]
+            index = int(cursor.rsplit("-", 1)[1])
+            selected = rows[index:index + 22]
+        body = ("\n".join(json.dumps(row) for row in selected) + "\n").encode()
+        return direct_probe_core.ProcessResult(body, b"", 0, False, 1)
+
+    monkeypatch.setattr(host_services, "_run_process", fake_run)
+    binding = {
+        "logs": {"fixture": {"type": "journal", "service": "svc"}},
+        "services": {"svc": {"unit": "fixture.service", "scope": "user"}},
+    }
+    check = {
+        "log": "fixture", "query": "NEEDLE", "since_seconds": 300,
+        "limit": 20, "page_lines": 20, "page_bytes": 65536,
+    }
+    first = run(host_services._log_search(binding, check))
+    assert first["next_cursor"]
+    second = run(host_services._log_search(binding, {**check, "cursor": first["next_cursor"]}))
+    assert second["next_cursor"]
+    third = run(host_services._log_search(binding, {**check, "cursor": second["next_cursor"]}))
+    assert third["coverage_complete"] is True
+    assert third["matches_seen"] == 1
+    assert sum("--cursor" in call for call in calls) == 2
+
+
 def test_read_text_long_range_has_explicit_continuation_and_eof(tmp_path: Path):
     repo = tmp_path / "repo"
     subprocess.check_call(["/usr/bin/git", "init", "-q", "-b", "main", str(repo)])
