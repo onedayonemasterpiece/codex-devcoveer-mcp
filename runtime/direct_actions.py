@@ -48,6 +48,7 @@ from requirements_guard import (
     requirements_commit_guard,
     update_requirements,
 )
+from reuse_quality import advisory_quality_hook, record_portfolio
 
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -195,6 +196,8 @@ for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
     if _kind == "job_status":
         _variant["properties"]["tail_lines"] = {"type": "integer", "minimum": 0, "maximum": 200}
 _PROJECT_ACTION_SCHEMA["oneOf"].extend([
+    {"type":"object","properties":{"kind":{"const":"reuse_portfolio_record"}},
+     "required":["kind"],"additionalProperties":False},
     {"type": "object", "properties": {"kind": {"const": "incident_open"},
         "title": {"type": "string", "minLength": 1, "maxLength": 300},
         "summary": {"type": "string", "minLength": 1, "maxLength": 12000},
@@ -975,6 +978,10 @@ async def _handoff_commit_push(root: Path, binding: dict[str, Any], action: dict
     staged = await _git(root, "diff", "--cached", "--quiet", base, timeout=15)
     if staged.exit_code == 0:
         raise ProbeError("empty_patch", "handoff has no staged source patch", status="denied")
+    staged_names = await _git(root, "diff", "--cached", "--name-only", "-z", base, timeout=15)
+    changed_paths = [
+        item for item in staged_names.stdout.decode("utf-8", "replace").split("\0") if item
+    ]
     if staged.exit_code != 1:
         raise ProbeError("git_state", "could not inspect staged patch", exit_code=staged.exit_code)
     check = await _git(root, "diff", "--cached", "--check", base, timeout=30)
@@ -1001,7 +1008,7 @@ async def _handoff_commit_push(root: Path, binding: dict[str, Any], action: dict
         err, _ = _decode(pushed, "stderr")
         raise ProbeError("push_failed", err[-1200:] or "git push failed", exit_code=pushed.exit_code)
     return {"status": "ok", "action": "handoff_commit_push", "branch": branch,
-            "commit_sha": commit_sha, "reused_commit": False}
+            "commit_sha": commit_sha, "reused_commit": False, "changed_paths": changed_paths}
 
 
 async def _run_direct_ops_compat(root: Path, project_id: str, action: dict[str, Any]) -> dict[str, Any]:
@@ -1100,6 +1107,8 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
     incident_project = str(binding.get("github_repo") or binding_id)
     if kind == "requirements_update":
         return update_requirements(root, action)
+    if kind == "reuse_portfolio_record":
+        return record_portfolio(root)
     if kind == "incident_open": return open_incident(incident_project, action)
     if kind == "incident_note": return note_incident(incident_project, action)
     if kind == "incident_close": return close_incident(incident_project, action)
@@ -1147,6 +1156,9 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
         if requirement_change is not None:
             consume_requirements_authorization(root)
             result["requirementsChange"] = requirement_change
+        hook = advisory_quality_hook(root, list(result.get("changed_paths") or []))
+        if hook is not None:
+            result["qualityHook"] = hook
         return result
     if kind == "write_text": return write_text(root, action)
     if kind == "mkdir": return mkdir(root, action)
@@ -1161,6 +1173,9 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
         if requirement_change is not None:
             consume_requirements_authorization(root)
             result["requirementsChange"] = requirement_change
+        hook = advisory_quality_hook(root, list(result.get("changed_paths") or []))
+        if hook is not None:
+            result["qualityHook"] = hook
         return result
     if kind == "capture_handoff":
         if handoff: raise ProbeError("handoff_denied", "capture_handoff requires a canonical project", status="denied")

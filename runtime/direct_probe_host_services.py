@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
 import os
 import re
 import shlex
 import stat as statmod
+import time
 from pathlib import Path
 from typing import Any
 
@@ -358,6 +362,107 @@ def _search_log_text(text: str, *, query: str, use_regex: bool, case_sensitive: 
     }
 
 
+
+_LOG_CURSOR_DOMAIN = b"devcoveer-log-search-v1\0"
+_LOG_CURSOR_TTL_SECONDS = 24 * 60 * 60
+
+
+def _log_search_fingerprint(alias: str, check: dict[str, Any]) -> str:
+    stable = {
+        "log": alias,
+        "query": str(check["query"]),
+        "regex": bool(check.get("regex", False)),
+        "case_sensitive": bool(check.get("case_sensitive", False)),
+        "since_seconds": int(check.get("since_seconds", 3600)),
+        "limit": int(check.get("limit", 50)),
+        "context_lines": int(check.get("context_lines", 0)),
+        "page_lines": int(check.get("page_lines", 500)),
+        "page_bytes": int(check.get("page_bytes", 65536)),
+    }
+    encoded = json.dumps(stable, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _encode_log_cursor(body: dict[str, Any]) -> str:
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    envelope = {
+        "body": body,
+        "checksum": hashlib.sha256(_LOG_CURSOR_DOMAIN + encoded).hexdigest(),
+    }
+    raw = json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_log_cursor(token: str, *, alias: str, fingerprint: str) -> dict[str, Any]:
+    if not isinstance(token, str) or not token or len(token) > 8192:
+        raise ProbeError("invalid_cursor", "log search cursor is invalid", status="denied")
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        envelope = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        body = envelope["body"]
+        encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        checksum = hashlib.sha256(_LOG_CURSOR_DOMAIN + encoded).hexdigest()
+        if not isinstance(body, dict) or envelope.get("checksum") != checksum:
+            raise ValueError("checksum")
+    except (ValueError, KeyError, TypeError, UnicodeError, json.JSONDecodeError):
+        raise ProbeError("invalid_cursor", "log search cursor failed integrity validation", status="denied") from None
+    if body.get("v") != 1 or body.get("log") != alias or body.get("fingerprint") != fingerprint:
+        raise ProbeError("cursor_mismatch", "log search cursor does not match this source/query/options", status="denied")
+    created_at = body.get("created_at")
+    if not isinstance(created_at, int) or int(time.time()) - created_at > _LOG_CURSOR_TTL_SECONDS:
+        raise ProbeError("cursor_expired", "log search cursor has expired; start a new bounded observation", status="denied")
+    return body
+
+
+def _search_log_records(records: list[dict[str, Any]], *, query: str, use_regex: bool,
+                        case_sensitive: bool, limit: int, context_lines: int) -> dict[str, Any]:
+    messages = [str(row.get("MESSAGE", "")) for row in records]
+    filtered = _search_log_text(
+        "\n".join(messages), query=query, use_regex=use_regex,
+        case_sensitive=case_sensitive, limit=limit, context_lines=context_lines,
+    )
+    by_line = {index + 1: row for index, row in enumerate(records)}
+    for hit in filtered["matches"]:
+        row = by_line.get(int(hit["line"]))
+        if isinstance(row, dict):
+            hit["source_cursor"] = row.get("__CURSOR")
+            raw_ts = row.get("__REALTIME_TIMESTAMP")
+            try:
+                hit["realtime_us"] = int(raw_ts) if raw_ts is not None else None
+            except (TypeError, ValueError):
+                hit["realtime_us"] = None
+    return filtered
+
+
+def _read_file_log_page(path: Path, *, offset: int, upper_size: int, page_bytes: int,
+                        expected_source_id: str | None) -> tuple[str, int, str, int]:
+    st = path.lstat()
+    if not statmod.S_ISREG(st.st_mode) or statmod.S_ISLNK(st.st_mode):
+        raise ProbeError("file_type", "operational log must be a regular non-symlink file", status="denied")
+    source_id = f"{st.st_dev}:{st.st_ino}"
+    if expected_source_id is not None and source_id != expected_source_id:
+        raise ProbeError("cursor_gap", "operational log rotated; prior cursor can no longer prove continuous coverage", status="partial")
+    if st.st_size < upper_size:
+        raise ProbeError("cursor_gap", "operational log was truncated; prior cursor can no longer prove continuous coverage", status="partial")
+    if offset < 0 or offset > upper_size:
+        raise ProbeError("invalid_cursor", "operational log cursor offset is outside the frozen source", status="denied")
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        remaining = max(0, upper_size - offset)
+        data = handle.read(min(page_bytes, remaining))
+        if offset + len(data) < upper_size and data and not data.endswith(b"\n"):
+            extra = handle.readline(min(64 * 1024, upper_size - offset - len(data)))
+            data += extra
+            if offset + len(data) < upper_size and not data.endswith(b"\n"):
+                raise ProbeError(
+                    "coverage_gap", "operational log line exceeds bounded page continuation size",
+                    status="partial",
+                )
+    next_offset = min(upper_size, offset + len(data))
+    text = data.decode("utf-8", "replace")
+    return text, next_offset, source_id, st.st_mtime_ns
+
+
 async def _log_search(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
     alias = _validate_alias(check["log"])
     cfg = _host_section(binding, "logs").get(alias)
@@ -367,10 +472,21 @@ async def _log_search(binding: dict[str, Any], check: dict[str, Any]) -> dict[st
     limit = max(1, min(int(check.get("limit", 50)), 200))
     context_lines = max(0, min(int(check.get("context_lines", 0)), 5))
     since_seconds = int(check.get("since_seconds", 3600))
-    # Scan substantially more than we return, while keeping memory/output bounded.
-    scan_lines = min(5000, max(1000, limit * 25))
+    page_lines = max(20, min(int(check.get("page_lines", 500)), 1000))
+    page_bytes = max(4096, min(int(check.get("page_bytes", 65536)), 262144))
+    fingerprint = _log_search_fingerprint(alias, check)
+    cursor_body = (
+        _decode_log_cursor(check["cursor"], alias=alias, fingerprint=fingerprint)
+        if check.get("cursor") else None
+    )
+    created_at = int(time.time()) if cursor_body is None else int(cursor_body["created_at"])
+    matches_seen = 0 if cursor_body is None else int(cursor_body.get("matches_seen", 0))
     source = ""
     source_truncated = False
+    next_cursor: str | None = None
+    requested_interval: dict[str, Any]
+    covered_interval: dict[str, Any]
+
     if cfg.get("type") == "journal":
         unit_alias = cfg.get("service")
         service_cfg = _host_section(binding, "services").get(unit_alias)
@@ -378,44 +494,117 @@ async def _log_search(binding: dict[str, Any], check: dict[str, Any]) -> dict[st
             raise ProbeError("config", "journal log refers to unknown service")
         unit = service_cfg["unit"]
         scope = service_cfg.get("scope", "user")
+        upper_us = int(time.time() * 1_000_000) if cursor_body is None else int(cursor_body["upper_us"])
+        lower_us = max(0, upper_us - since_seconds * 1_000_000)
+        journal_cursor = None if cursor_body is None else cursor_body.get("journal_cursor")
+        if cursor_body is not None and cursor_body.get("source_type") != "journal":
+            raise ProbeError("cursor_mismatch", "log search cursor source type changed", status="denied")
         argv = ["/usr/bin/journalctl"] + (["--user"] if scope == "user" else []) + [
-            "--unit", unit, "--no-pager", "--output=short-iso",
-            "-n", str(scan_lines), "--since", f"-{since_seconds} seconds",
+            "--unit", unit, "--no-pager", "--output=json", "--reverse",
+            "--lines", str(page_lines + (1 if journal_cursor else 0)),
+            "--since", f"@{lower_us / 1_000_000:.6f}",
+            "--until", f"@{upper_us / 1_000_000:.6f}",
         ]
+        if journal_cursor:
+            argv += ["--cursor", str(journal_cursor)]
         result = await _run_process(
             argv, env=_systemd_env(scope), timeout=15, output_limit=2 * 1024 * 1024
         )
         if result.exit_code != 0:
-            raise ProbeError("logs", result.stderr.decode("utf-8", "replace")[-1000:],
-                             exit_code=result.exit_code)
-        text = result.stdout.decode("utf-8", "replace")
-        source_truncated = result.truncated or len(text.splitlines()) >= scan_lines
+            stderr = result.stderr.decode("utf-8", "replace")[-1000:]
+            if journal_cursor and "cursor" in stderr.casefold():
+                raise ProbeError(
+                    "cursor_gap",
+                    "journal continuation cursor is no longer available; retention/rotation may have created a coverage gap",
+                    status="partial", exit_code=result.exit_code,
+                )
+            raise ProbeError("logs", stderr, exit_code=result.exit_code)
+        records: list[dict[str, Any]] = []
+        for raw in result.stdout.decode("utf-8", "replace").splitlines():
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError:
+                source_truncated = True
+                continue
+            if isinstance(row, dict):
+                records.append(row)
+        if journal_cursor and records and records[0].get("__CURSOR") == journal_cursor:
+            records = records[1:]
+        has_more = result.truncated or len(records) >= page_lines
+        records = records[:page_lines]
+        source_truncated = source_truncated or bool(result.truncated)
+        filtered = _search_log_records(
+            records, query=query, use_regex=bool(check.get("regex", False)),
+            case_sensitive=bool(check.get("case_sensitive", False)),
+            limit=limit, context_lines=context_lines,
+        )
+        matches_seen += int(filtered["match_count"])
+        last_cursor = records[-1].get("__CURSOR") if records else None
+        timestamps: list[int] = []
+        for row in records:
+            try:
+                timestamps.append(int(row.get("__REALTIME_TIMESTAMP")))
+            except (TypeError, ValueError):
+                pass
+        if has_more and isinstance(last_cursor, str) and last_cursor:
+            next_cursor = _encode_log_cursor({
+                "v": 1, "log": alias, "fingerprint": fingerprint, "created_at": created_at,
+                "source_type": "journal", "upper_us": upper_us, "journal_cursor": last_cursor,
+                "matches_seen": matches_seen,
+            })
+        elif has_more:
+            source_truncated = True
+        requested_interval = {"kind": "realtime_us", "start": lower_us, "end": upper_us}
+        covered_interval = {
+            "kind": "realtime_us",
+            "start": lower_us if not has_more else (min(timestamps) if timestamps else None),
+            "end": upper_us,
+            "direction": "newest_to_oldest",
+        }
         source = f"journal:{unit}"
+
     elif cfg.get("type") == "file":
         path = Path(str(cfg.get("path", "")))
         allowed_roots = [
-            Path(str(v.get("path") if isinstance(v, dict) else v)).resolve()
-            for v in _host_section(binding, "roots").values()
+            Path(str(value.get("path") if isinstance(value, dict) else value)).resolve()
+            for value in _host_section(binding, "roots").values()
         ]
         if not path.is_absolute():
             raise ProbeError("config", "operational log path must be absolute")
         resolved = path.resolve(strict=True)
         if not any(resolved == root or root in resolved.parents for root in allowed_roots):
             raise ProbeError("target_denied", "operational log is outside registered host roots", status="denied")
-        text, source_truncated = await asyncio.to_thread(
-            _tail_file, resolved, scan_lines, 2 * 1024 * 1024, 2 * 1024 * 1024
+        st = resolved.lstat()
+        if cursor_body is not None and cursor_body.get("source_type") != "file":
+            raise ProbeError("cursor_mismatch", "log search cursor source type changed", status="denied")
+        upper_size = st.st_size if cursor_body is None else int(cursor_body["upper_size"])
+        offset = 0 if cursor_body is None else int(cursor_body["offset"])
+        expected_source_id = None if cursor_body is None else str(cursor_body["source_id"])
+        text_page, next_offset, source_id, mtime_ns = await asyncio.to_thread(
+            _read_file_log_page, resolved, offset=offset, upper_size=upper_size,
+            page_bytes=page_bytes, expected_source_id=expected_source_id,
         )
+        filtered = _search_log_text(
+            text_page, query=query, use_regex=bool(check.get("regex", False)),
+            case_sensitive=bool(check.get("case_sensitive", False)),
+            limit=limit, context_lines=context_lines,
+        )
+        matches_seen += int(filtered["match_count"])
+        has_more = next_offset < upper_size
+        if has_more:
+            next_cursor = _encode_log_cursor({
+                "v": 1, "log": alias, "fingerprint": fingerprint, "created_at": created_at,
+                "source_type": "file", "upper_size": upper_size, "offset": next_offset,
+                "source_id": source_id, "mtime_ns": mtime_ns, "matches_seen": matches_seen,
+            })
+        requested_interval = {"kind": "bytes", "start": 0, "end": upper_size}
+        covered_interval = {"kind": "bytes", "start": offset, "end": next_offset}
         source = f"file:{alias}"
     else:
         raise ProbeError("config", "unknown log target type")
-    filtered = _search_log_text(
-        text,
-        query=query,
-        use_regex=bool(check.get("regex", False)),
-        case_sensitive=bool(check.get("case_sensitive", False)),
-        limit=limit,
-        context_lines=context_lines,
-    )
+
+    page_complete = next_cursor is None and not source_truncated and not filtered["truncated_matches"]
+    coverage_complete = page_complete
     return {
         "source": source,
         "query": query,
@@ -423,7 +612,19 @@ async def _log_search(binding: dict[str, Any], check: dict[str, Any]) -> dict[st
         "case_sensitive": bool(check.get("case_sensitive", False)),
         "since_seconds": since_seconds,
         **filtered,
-        "complete": not source_truncated and not filtered["truncated_matches"],
+        "requested_interval": requested_interval,
+        "covered_interval": covered_interval,
+        "frozen_upper_bound": requested_interval["end"],
+        "coverage_complete": coverage_complete,
+        "complete": coverage_complete,
         "source_truncated": source_truncated,
+        "next_cursor": next_cursor,
+        "continuation_required": next_cursor is not None,
+        "matches_seen": matches_seen,
+        "confirmed_no_matches": coverage_complete and matches_seen == 0,
+        "retention": {
+            "status": "observed_interval_complete" if coverage_complete else "in_progress",
+            "note": "A cursor_gap error on continuation is reported as a retention/rotation coverage gap.",
+        },
         "redacted": any(bool(item.get("redacted")) for item in filtered["matches"]),
     }

@@ -20,7 +20,7 @@ DIRECT_FILES = (
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
-    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "projects_hub_edge_operator.py", "requirements_guard.py",
+    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "projects_hub_edge_operator.py", "requirements_guard.py", "reuse_quality.py",
 )
 
 def sha(path: Path) -> str:
@@ -49,7 +49,7 @@ def function_block(source: str, name: str) -> tuple[int, int, str]:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.30.0-requirements-guard"', "version")
+                          'BRIDGE_VERSION = "3.31.0-operational-quality"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -78,6 +78,7 @@ from source_handoff import (
     stage_source_handoff as _stage_source_handoff,
 )
 from requirements_guard import requirements_prompt as _requirements_prompt
+from reuse_quality import reuse_prompt as _reuse_prompt
 from street_story_operator import (
     OperatorError as StreetStoryOperatorError,
     StreetStoryOperator,
@@ -643,7 +644,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                           "native incident prompt context")
     native_requirements_prompt = reminder.NATIVE_PROMPT_NEW.replace(
         '_first_prompt(project.canonical, task_prompt, access)',
-        '_requirements_prompt(project.path) + _first_prompt(project.canonical, task_prompt, access)',
+        '_requirements_prompt(project.path) + _reuse_prompt(project.path) + _first_prompt(project.canonical, task_prompt, access)',
     )
     source = replace_once(source, reminder.NATIVE_PROMPT_NEW, native_requirements_prompt,
                           "native requirements prompt")
@@ -667,8 +668,8 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
 def transform_backend(source: str) -> str:
     source = replace_once(
         source, "import anyio\n",
-        "import anyio\n\nfrom requirements_guard import requirements_prompt\n",
-        "requirements backend import",
+        "import anyio\n\nfrom pathlib import Path\nfrom requirements_guard import requirements_prompt\nfrom reuse_quality import reuse_prompt\n",
+        "requirements/reuse backend import",
     )
     source = replace_once(source, '''        self.base_url = base_url
 ''', '''        self.base_url = base_url
@@ -767,13 +768,14 @@ def transform_backend(source: str) -> str:
                                "parts": [{"type": "text", "text": boundary + prompt}],
                            }, timeout=30)
 ''', '''        requirements = requirements_prompt(Path(directory))
+        reuse = reuse_prompt(Path(directory))
         await self.request("POST", f"/session/{session_id}/prompt_async", directory=directory,
                            payload={
                                "model": {"providerID": provider, "modelID": model_id},
                                # plan denies edits; build is the official agent
                                # for explicitly writable operational tasks.
                                "agent": "plan" if access == "read" else "build",
-                               "parts": [{"type": "text", "text": boundary + requirements + prompt}],
+                               "parts": [{"type": "text", "text": boundary + requirements + reuse + prompt}],
                            }, timeout=30)
 ''', "official prompt payload")
     return source
@@ -800,6 +802,8 @@ def main() -> int:
         shutil.copy2(ROOT / "runtime" / name, out / name)
     shutil.copy2(ROOT / "runtime" / "direct_probe_config.json",
                  out / "direct_probe_config.json")
+    shutil.copy2(ROOT / "docs" / "quality" / "reuse-catalog.yaml",
+                 out / "reuse-catalog.yaml")
     shutil.copy2(ROOT / "runtime" / "source_handoff.py",
                  out / "source_handoff.py")
     shutil.copy2(ROOT / "runtime" / "street_story_operator.py",

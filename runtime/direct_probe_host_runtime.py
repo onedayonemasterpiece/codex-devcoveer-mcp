@@ -138,11 +138,33 @@ async def _resources(binding: dict[str, Any], check: dict[str, Any]) -> dict[str
         if profile is not None:
             result["profile_data"] = await run_resource_profile(profile, path)
     else:
-        resolved = {}
+        resolved: dict[str, Any] = {}
+        complete = True
         for name, raw in roots.items():
-            path, _profile = resolve_resource_target(raw)
-            resolved[name] = _disk_usage(path)
+            try:
+                path, _profile = resolve_resource_target(raw)
+                if not path.exists():
+                    resolved[name] = {
+                        "status": "missing",
+                        "exists": False,
+                        "note": "Registered optional resource root does not currently exist.",
+                    }
+                    continue
+                resolved[name] = {
+                    "status": "ok",
+                    "exists": True,
+                    **_disk_usage(path),
+                }
+            except (OSError, ProbeError) as exc:
+                complete = False
+                resolved[name] = {
+                    "status": "unavailable",
+                    "exists": None,
+                    "error": type(exc).__name__,
+                    "note": "This root could not be measured; other registered roots remain valid.",
+                }
         result["roots"] = resolved
+        result["complete"] = complete
     return result
 
 def _health_request(url: str, method: str, timeout: float, body_limit: int) -> dict[str, Any]:

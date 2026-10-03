@@ -122,3 +122,15 @@ GitHub operations do not need the local HEAD guard.
 This is deliberately not a workspace manager: DevCoveer does not auto-checkout, auto-switch or guess
 which branch the user meant. Discovery makes choices explicit and the SHA guard makes a wrong choice
 fail before execution.
+
+
+## Operational quality Phase 1 (3.31)
+
+The bounded probe contract now has explicit completeness semantics:
+
+- Aggregate `resources` reports each registered root independently. A missing optional root is `missing`; an unreadable root is `unavailable`; valid roots are still returned.
+- `log_search` supports bounded continuation. The first page freezes the source upper bound; responses distinguish `requested_interval`, `covered_interval`, `coverage_complete`, cumulative `matches_seen`, and `confirmed_no_matches`. A continuation cursor is bound to source/query/options and expires. Rotation/truncation that prevents continuous coverage returns a typed gap rather than a false zero.
+- `read_text` preserves the legacy text/range fields and adds `actual_range`, `requested_range`, `eof`, `chunk_complete`, `requested_range_complete`, `next_start_line` and `continuation`. EOF before a requested end is explicitly incomplete.
+- Project probes expose `reuse_context`, `quality_inventory`, `reuse_compatibility`, `reuse_incident_impact` and `reuse_portfolio` through the existing typed surface. `reuse_portfolio_record` is a project action; no new top-level MCP tool was added.
+
+`direct_ops_v2` remains a mixed gateway and is therefore intentionally not annotated read-only. Server-side per-operation validation and authorization remain authoritative.

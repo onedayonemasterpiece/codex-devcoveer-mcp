@@ -1,14 +1,14 @@
 schema_version: 1
 catalog_id: devcoveer-cross-project-reuse
 observed_on: '2026-10-03'
-status: advisory_snapshot_not_runtime_inventory
+status: operational_phase1_advisory_catalog
 owner: onedayonemasterpiece/codex-devcoveer-mcp
 source_review: idea-hub:voice-20261003-083638-766e61b7
 policy:
   authority: navigation_only
   semantic_selection: current_working_model
   new_approval_gate: false
-  automatic_runtime_injection: not_implemented
+  automatic_runtime_injection: implemented_phase1_compact_context
   unknown_runtime_versions: preserve_as_unknown
   requirements: existing_requirements_guard
   compatibility: interface_versions_and_capabilities
@@ -32,6 +32,10 @@ capabilities:
       - {project: street-story, declaration: '0.3.7-rc.1 in selected branch', installed: null, served: null}
       - {project: projects-hub, declaration: 'git b6a051a7cf53f84433ebf48a52b623d91fcc6478', installed: null, served: null}
     quality_refs: [wonderful-lections:docs/reports/incidents/catalog.json]
+    incident_relations:
+      shared_failure: [wonderful-lections:INC-2026-09-29-hall-voice-delivery, wonderful-lections:INC-2026-09-29-show-wake-resume]
+      local_consumer: [wonderful-lections:INC-2026-09-29-owner-live-permissions]
+      synthetic_probe_rule: sender-delay PASS is evidence only and cannot close the hall voice incident
     tasks: [OPQ-03, OPQ-04, OPQ-05, OPQ-08]
   - id: ai.resource-admission
     kind: shared_library

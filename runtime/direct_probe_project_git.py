@@ -321,22 +321,52 @@ async def _remote_blob(binding: dict[str, Any], remote: str, ref: str, raw_path:
     return data, sha, blob_sha
 
 
-def _line_page(text: str, start: int, end: int | None) -> tuple[str, int, int, bool]:
+def _line_page(text: str, start: int, end: int | None) -> dict[str, Any]:
     lines = text.splitlines()
     total = len(lines)
     start = max(1, start)
-    end = min(total, end if end is not None else start + 199)
-    if end < start:
+    if end is not None and end < start:
         raise ProbeError("invalid_input", "end_line must be >= start_line")
-    if end - start + 1 > 200:
-        end = start + 199
-    selected = "\n".join(lines[start - 1:end])
-    encoded = selected.encode("utf-8")
-    truncated = False
-    if len(encoded) > MAX_TEXT_BYTES:
-        selected = encoded[:MAX_TEXT_BYTES].decode("utf-8", "ignore")
-        truncated = True
-    return selected, start, end, truncated
+    requested_end = int(end) if end is not None else None
+    if start > total:
+        return {
+            "text": "", "actual_start": start, "actual_end": start - 1,
+            "total_lines": total, "byte_truncated": False, "page_limit_reached": False,
+            "eof": True,
+        }
+    page_target = min(total, requested_end if requested_end is not None else total, start + 199)
+    selected_lines: list[str] = []
+    used = 0
+    byte_truncated = False
+    for line in lines[start - 1:page_target]:
+        encoded = line.encode("utf-8")
+        cost = len(encoded) + (1 if selected_lines else 0)
+        if selected_lines and used + cost > MAX_TEXT_BYTES:
+            byte_truncated = True
+            break
+        if not selected_lines and len(encoded) > MAX_TEXT_BYTES:
+            selected_lines.append(encoded[:MAX_TEXT_BYTES].decode("utf-8", "ignore"))
+            used = MAX_TEXT_BYTES
+            byte_truncated = True
+            break
+        selected_lines.append(line)
+        used += cost
+    actual_end = start + len(selected_lines) - 1
+    page_limit_reached = (
+        not byte_truncated
+        and actual_end < total
+        and actual_end < (requested_end if requested_end is not None else total)
+        and len(selected_lines) >= 200
+    )
+    return {
+        "text": "\n".join(selected_lines),
+        "actual_start": start,
+        "actual_end": actual_end,
+        "total_lines": total,
+        "byte_truncated": byte_truncated,
+        "page_limit_reached": page_limit_reached,
+        "eof": actual_end >= total and not byte_truncated,
+    }
 
 
 async def _read_text(root: Path, binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
@@ -373,8 +403,39 @@ async def _read_text(root: Path, binding: dict[str, Any], check: dict[str, Any])
     if _is_binary(data):
         raise ProbeError("binary_denied", "binary/non-UTF8 content is not returned", status="denied")
     text = data.decode("utf-8")
-    page, actual_start, actual_end, truncated = _line_page(text, start, int(end) if end is not None else None)
-    page, redacted = _redact_text(page)
-    return {"path": raw_path, "version": version, "start_line": actual_start, "end_line": actual_end,
-            "text": page, "complete": not truncated, "truncated": truncated, "redacted": redacted,
-            "changed_during_read": changed}
+    page = _line_page(text, start, int(end) if end is not None else None)
+    rendered, redacted = _redact_text(page["text"])
+    requested_end = int(end) if end is not None else None
+    requested_range_complete = (
+        not page["byte_truncated"]
+        and (
+            page["actual_end"] >= requested_end
+            if requested_end is not None else bool(page["eof"])
+        )
+    )
+    incomplete_reason = None
+    if not requested_range_complete:
+        if page["eof"] and requested_end is not None:
+            incomplete_reason = "eof_before_requested_end"
+        elif page["byte_truncated"]:
+            incomplete_reason = "byte_limit"
+        else:
+            incomplete_reason = "page_line_limit"
+    next_start = None
+    if not requested_range_complete and not page["eof"] and not page["byte_truncated"]:
+        next_start = page["actual_end"] + 1
+    return {
+        "path": raw_path, "version": version,
+        "start_line": page["actual_start"], "end_line": page["actual_end"],
+        "actual_range": {"start_line": page["actual_start"], "end_line": page["actual_end"]},
+        "requested_range": {"start_line": start, "end_line": requested_end},
+        "total_lines": page["total_lines"], "eof": page["eof"],
+        "chunk_complete": not page["byte_truncated"],
+        "requested_range_complete": requested_range_complete,
+        "next_start_line": next_start,
+        "continuation": {"start_line": next_start} if next_start is not None else None,
+        "incomplete_reason": incomplete_reason,
+        "text": rendered, "complete": requested_range_complete,
+        "truncated": bool(page["byte_truncated"] or page["page_limit_reached"]),
+        "redacted": redacted, "changed_during_read": changed,
+    }

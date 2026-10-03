@@ -351,3 +351,10 @@ Codex auth-home validation compares resolved paths so the canonical auth store
 and its legacy symlink are treated as the same directory. The installer requires
 a commit on local `main`, checks evidence tools before switching, and retains its
 source, rollback copy, and failed candidates in a managed central artifact task.
+
+
+## 12. Reuse advisory context (Phase 1)
+
+Before a reasoning task begins, DevCoveer prepends a compact cross-project reuse map after Requirements Guard context. The same function is used for OpenCode start/continuation and native task prompts. The map is bounded and marked untrusted/advisory; it cannot grant authorization, rewrite requirements or require a particular implementation.
+
+The model selects relevant donors semantically from the task. If more detail is needed, use the existing direct probe surface to expand at most five explicit cards. Polling task state does not repeat full cards. If the installed catalog cannot be read, execution continues with an explicit advisory-degraded state while Requirements Guard and normal authorization remain unchanged.
