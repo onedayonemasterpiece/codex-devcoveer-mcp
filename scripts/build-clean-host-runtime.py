@@ -16,6 +16,7 @@ BASE_SHA = {
     "opencode_backend.py": "56699a39b2d635cdc397774cc25f122b119e7794599b0d50776c7596e6c9af84",
 }
 DIRECT_FILES = (
+    "codex_account.py",
     "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_core.py", "direct_probe_project.py",
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
@@ -663,6 +664,12 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     ):
         if marker not in source:
             raise SystemExit(f"clean-host adaptive read-task marker missing: {marker}")
+    account_spec = importlib.util.spec_from_file_location(
+        "codex_account_build", ROOT / "runtime" / "codex_account.py"
+    )
+    account_module = importlib.util.module_from_spec(account_spec)
+    account_spec.loader.exec_module(account_module)
+    source = account_module.patch_bridge(source)
     return source
 
 def transform_backend(source: str) -> str:
