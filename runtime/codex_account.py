@@ -171,6 +171,27 @@ async def read_status(history: Any) -> dict[str, Any]:
 
 
 
+def sanitize_turn_token_usage(payload: Any) -> dict[str, int] | None:
+    """Project only per-turn native token counters from tokenUsage.last."""
+    if not isinstance(payload, dict):
+        return None
+    last = payload.get("last")
+    if not isinstance(last, dict):
+        return None
+    result: dict[str, int] = {}
+    for key in (
+        "inputTokens",
+        "cachedInputTokens",
+        "outputTokens",
+        "reasoningOutputTokens",
+        "totalTokens",
+    ):
+        value = last.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            result[key] = value
+    return result or None
+
+
 def progress_from_turn(turn: Any) -> dict[str, Any]:
     """Return a safe coarse phase from native execution items without exposing commands."""
     if not isinstance(turn, dict):
@@ -225,8 +246,49 @@ def patch_bridge(source: str) -> str:
         source = source.replace(old, new, 1)
 
     replace('\nBRIDGE_VERSION = ',
-            '\nfrom codex_account import STATUS_SCHEMA, progress_from_turn as _codex_progress_from_turn, read_status as _codex_read_status, resolve_profile as _codex_resolve_profile\n\nBRIDGE_VERSION = ',
+            '\nfrom codex_account import STATUS_SCHEMA, progress_from_turn as _codex_progress_from_turn, read_status as _codex_read_status, resolve_profile as _codex_resolve_profile, sanitize_turn_token_usage as _codex_sanitize_turn_token_usage\n\nBRIDGE_VERSION = ',
             'import')
+    replace(
+        '        self._turn_status: dict[str, dict[str, Any]] = {}\n',
+        '        self._turn_status: dict[str, dict[str, Any]] = {}\n'
+        '        self._turn_token_usage: dict[tuple[str, str], dict[str, int]] = {}\n',
+        'native token usage store',
+    )
+    replace(
+        '        thread_id = params.get("threadId")\n'
+        '        if method == "thread/status/changed" and isinstance(thread_id, str):\n',
+        '        thread_id = params.get("threadId")\n'
+        '        if method == "thread/tokenUsage/updated" and isinstance(thread_id, str):\n'
+        '            turn_id = params.get("turnId")\n'
+        '            usage = _codex_sanitize_turn_token_usage(params.get("tokenUsage"))\n'
+        '            if isinstance(turn_id, str) and usage is not None:\n'
+        '                self._turn_token_usage[(thread_id, turn_id)] = usage\n'
+        '                while len(self._turn_token_usage) > 2048:\n'
+        '                    self._turn_token_usage.pop(next(iter(self._turn_token_usage)))\n'
+        '        elif method == "thread/status/changed" and isinstance(thread_id, str):\n',
+        'native token usage notification',
+    )
+    replace(
+        '    def _fail_pending(self, reason: str) -> None:\n',
+        '    def token_usage(self, thread_id: str, turn_id: Any) -> dict[str, int] | None:\n'
+        '        if not isinstance(turn_id, str):\n'
+        '            return None\n'
+        '        value = self._turn_token_usage.get((thread_id, turn_id))\n'
+        '        return dict(value) if isinstance(value, dict) else None\n\n'
+        '    def _fail_pending(self, reason: str) -> None:\n',
+        'native token usage accessor',
+    )
+    replace(
+        '            summary = _turn_summary(_last_turn(native_thread))\n'
+        '            turn_status = summary.get("status") if isinstance(summary, dict) else None\n',
+        '            summary = _turn_summary(_last_turn(native_thread))\n'
+        '            if isinstance(summary, dict):\n'
+        '                token_usage = history.token_usage(thread_id, summary.get("turnId"))\n'
+        '                if token_usage is not None:\n'
+        '                    summary["tokenUsage"] = token_usage\n'
+        '            turn_status = summary.get("status") if isinstance(summary, dict) else None\n',
+        'native read task token usage',
+    )
     replace('TOOLS = [\n', '''TOOLS = [
     types.Tool(name="codex_status", title="Read native Codex quota and owner model profile",
         description=("Read current account quota via native account/rateLimits/read, the machine equivalent of /status. "

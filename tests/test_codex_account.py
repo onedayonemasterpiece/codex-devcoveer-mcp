@@ -6,7 +6,13 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'runtime'))
-from codex_account import normalize_limits, progress_from_turn, read_status, resolve_profile
+from codex_account import (
+    normalize_limits,
+    progress_from_turn,
+    read_status,
+    resolve_profile,
+    sanitize_turn_token_usage,
+)
 
 NOW = datetime(2026, 10, 3, tzinfo=timezone.utc)
 
@@ -103,6 +109,34 @@ def test_status_failure_does_not_claim_quota_or_model():
 
 
 
+def test_turn_token_usage_projects_only_last_safe_counters():
+    result = sanitize_turn_token_usage({
+        "last": {
+            "inputTokens": 10,
+            "cachedInputTokens": 3,
+            "outputTokens": 4,
+            "reasoningOutputTokens": 5,
+            "totalTokens": 19,
+            "private": "must-not-leak",
+        },
+        "total": {"totalTokens": 9999},
+        "modelContextWindow": 123456,
+        "accessToken": "must-not-leak",
+    })
+    assert result == {
+        "inputTokens": 10,
+        "cachedInputTokens": 3,
+        "outputTokens": 4,
+        "reasoningOutputTokens": 5,
+        "totalTokens": 19,
+    }
+
+
+@pytest.mark.parametrize("value", [None, {}, {"last": None}, {"last": {"totalTokens": -1}}, {"last": {"totalTokens": True}}])
+def test_turn_token_usage_missing_or_invalid_is_unknown(value):
+    assert sanitize_turn_token_usage(value) is None
+
+
 def test_progress_phase_from_native_command_items():
     assert progress_from_turn(None)["progressPhase"] == "preparing"
     assert progress_from_turn({"status": "inProgress", "items": []})["progressPhase"] == "planning"
@@ -150,6 +184,9 @@ def test_canonical_builder_wires_status_and_alias(tmp_path):
     assert 'return _tool_result(await _codex_read_status(history))' in source
     assert '_codex_resolve_profile(' in source
     assert '_codex_progress_from_turn(turn)' in source
+    assert 'thread/tokenUsage/updated' in source
+    assert 'summary["tokenUsage"] = token_usage' in source
+    assert 'def token_usage(self, thread_id: str, turn_id: Any)' in source
     assert (tmp_path / 'runtime' / 'codex_account.py').is_file()
 
 
