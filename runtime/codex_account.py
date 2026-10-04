@@ -171,6 +171,29 @@ async def read_status(history: Any) -> dict[str, Any]:
 
 
 
+def normalize_turn_token_usage(payload: Any) -> dict[str, int] | None:
+    """Project only the current native turn breakdown; cumulative thread totals are excluded."""
+    if not isinstance(payload, dict):
+        return None
+    last = payload.get("last")
+    if not isinstance(last, dict):
+        return None
+    keys = (
+        "inputTokens",
+        "cachedInputTokens",
+        "outputTokens",
+        "reasoningOutputTokens",
+        "totalTokens",
+    )
+    result: dict[str, int] = {}
+    for key in keys:
+        value = last.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        result[key] = value
+    return result
+
+
 def progress_from_turn(turn: Any) -> dict[str, Any]:
     """Return a safe coarse phase from native execution items without exposing commands."""
     if not isinstance(turn, dict):
@@ -225,7 +248,7 @@ def patch_bridge(source: str) -> str:
         source = source.replace(old, new, 1)
 
     replace('\nBRIDGE_VERSION = ',
-            '\nfrom codex_account import STATUS_SCHEMA, progress_from_turn as _codex_progress_from_turn, read_status as _codex_read_status, resolve_profile as _codex_resolve_profile\n\nBRIDGE_VERSION = ',
+            '\nfrom codex_account import STATUS_SCHEMA, normalize_turn_token_usage as _codex_normalize_turn_token_usage, progress_from_turn as _codex_progress_from_turn, read_status as _codex_read_status, resolve_profile as _codex_resolve_profile\n\nBRIDGE_VERSION = ',
             'import')
     replace('TOOLS = [\n', '''TOOLS = [
     types.Tool(name="codex_status", title="Read native Codex quota and owner model profile",
@@ -244,6 +267,43 @@ def patch_bridge(source: str) -> str:
 
         if name == "list_models":
 ''', 'handler')
+    replace('        self._turn_status: dict[str, dict[str, Any]] = {}\n',
+            '        self._turn_status: dict[str, dict[str, Any]] = {}\n        self._turn_token_usage: dict[tuple[str, str], dict[str, int]] = {}\n',
+            'native turn token usage state')
+    replace('        thread_id = params.get("threadId")\n        if method == "thread/status/changed" and isinstance(thread_id, str):\n',
+            '''        thread_id = params.get("threadId")
+        if method == "thread/tokenUsage/updated" and isinstance(thread_id, str):
+            turn_id = params.get("turnId")
+            usage = _codex_normalize_turn_token_usage(params.get("tokenUsage"))
+            if isinstance(turn_id, str) and usage is not None:
+                key = (thread_id, turn_id)
+                if key not in self._turn_token_usage and len(self._turn_token_usage) >= 2048:
+                    self._turn_token_usage.pop(next(iter(self._turn_token_usage)))
+                self._turn_token_usage[key] = usage
+        elif method == "thread/status/changed" and isinstance(thread_id, str):
+''',
+            'native token usage notification')
+    replace('    def _fail_pending(self, reason: str) -> None:\n',
+            '''    def turn_token_usage(self, thread_id: str, turn_id: str) -> dict[str, int] | None:
+        value = self._turn_token_usage.get((thread_id, turn_id))
+        return dict(value) if value is not None else None
+
+    def _fail_pending(self, reason: str) -> None:
+''',
+            'native token usage accessor')
+    replace('            record = _task_record(native_thread, entry, record["taskReference"])\n            summary = _turn_summary(_last_turn(native_thread))\n            turn_status = summary.get("status") if isinstance(summary, dict) else None\n',
+            '''            record = _task_record(native_thread, entry, record["taskReference"])
+            last_turn = _last_turn(native_thread)
+            summary = _turn_summary(last_turn)
+            if isinstance(summary, dict) and isinstance(last_turn, dict):
+                last_turn_id = last_turn.get("id")
+                if isinstance(last_turn_id, str):
+                    usage = history.turn_token_usage(thread_id, last_turn_id)
+                    if usage is not None:
+                        summary["tokenUsage"] = usage
+            turn_status = summary.get("status") if isinstance(summary, dict) else None
+''',
+            'read_task native token usage')
     replace('    if final_response is not None:\n        summary["finalResponse"] = final_response\n    return summary\n',
             '    summary.update(_codex_progress_from_turn(turn))\n    if final_response is not None:\n        summary["finalResponse"] = final_response\n    return summary\n',
             'native task progress phase')
