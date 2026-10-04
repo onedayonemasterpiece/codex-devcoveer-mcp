@@ -118,3 +118,16 @@ def test_canonical_builder_wires_status_and_alias(tmp_path):
     assert 'return _tool_result(await _codex_read_status(history))' in source
     assert '_codex_resolve_profile(' in source
     assert (tmp_path / 'runtime' / 'codex_account.py').is_file()
+
+
+def test_devcoveer_pins_codex_cli_0155():
+    root = Path(__file__).resolve().parents[1]
+    bootstrap = (root / "scripts" / "bootstrap-devcoveer2-control-plane.sh").read_text()
+    installer = (root / "scripts" / "install-codex-cli-0155.sh").read_text()
+    config = (root / "runtime" / "direct_probe_config.json").read_text()
+
+    assert 'CODEX_VERSION="0.155.1"' in bootstrap
+    assert 'EXPECTED="codex-cli 0.155.1"' in installer
+    assert "'@openai/codex@0.155.1'" in installer
+    assert '"scripts/install-codex-cli-0155.sh"' in config
+    assert "0.153.0" not in bootstrap
