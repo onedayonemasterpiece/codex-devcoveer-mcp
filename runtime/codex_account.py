@@ -170,6 +170,52 @@ async def read_status(history: Any) -> dict[str, Any]:
     return result
 
 
+
+def progress_from_turn(turn: Any) -> dict[str, Any]:
+    """Return a safe coarse phase from native execution items without exposing commands."""
+    if not isinstance(turn, dict):
+        return {"progressPhase": "preparing"}
+
+    status = str(turn.get("status") or "")
+    if status == "completed":
+        return {"progressPhase": "ready"}
+    if status == "failed":
+        return {"progressPhase": "failed"}
+    if status in {"interrupted", "cancelled", "canceled"}:
+        return {"progressPhase": "cancelled"}
+
+    items = turn.get("items")
+    if not isinstance(items, list):
+        return {"progressPhase": "planning"}
+
+    phase = "planning"
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "commandExecution":
+            continue
+        command = str(item.get("command") or "").casefold()
+        phase = "implementing"
+        if any(token in command for token in (
+            "pytest", "gradle test", "gradlew test", "npm test", "pnpm test",
+            "yarn test", "vitest", "jest", "go test", "cargo test", "mvn test",
+        )):
+            phase = "testing"
+        elif any(token in command for token in (
+            "gh run", "gh pr checks", "workflow_dispatch", "github actions",
+        )):
+            phase = "ci"
+        elif any(token in command for token in (
+            "gh release", "android-release", "release.yml", "release.yaml",
+        )):
+            phase = "releasing"
+        elif any(token in command for token in (
+            "devcoveer_install", "deploy", "systemctl", "kubectl", "fly deploy",
+        )):
+            phase = "deploying"
+        elif any(token in command for token in ("git push", "gh pr create")):
+            phase = "publishing"
+    return {"progressPhase": phase}
+
+
 def patch_bridge(source: str) -> str:
     """Called by the canonical builder, never applied to live processes in place."""
     def replace(old: str, new: str, label: str) -> None:
@@ -179,7 +225,7 @@ def patch_bridge(source: str) -> str:
         source = source.replace(old, new, 1)
 
     replace('\nBRIDGE_VERSION = ',
-            '\nfrom codex_account import STATUS_SCHEMA, read_status as _codex_read_status, resolve_profile as _codex_resolve_profile\n\nBRIDGE_VERSION = ',
+            '\nfrom codex_account import STATUS_SCHEMA, progress_from_turn as _codex_progress_from_turn, read_status as _codex_read_status, resolve_profile as _codex_resolve_profile\n\nBRIDGE_VERSION = ',
             'import')
     replace('TOOLS = [\n', '''TOOLS = [
     types.Tool(name="codex_status", title="Read native Codex quota and owner model profile",
@@ -198,6 +244,9 @@ def patch_bridge(source: str) -> str:
 
         if name == "list_models":
 ''', 'handler')
+    replace('    if final_response is not None:\n        summary["finalResponse"] = final_response\n    return summary\n',
+            '    summary.update(_codex_progress_from_turn(turn))\n    if final_response is not None:\n        summary["finalResponse"] = final_response\n    return summary\n',
+            'native task progress phase')
     # Resolve the shorthand only after the native catalog was obtained. Hidden
     # catalog models remain opt-in; ordinary discovery is unchanged.
     start = source.index('async def _resolve_model_selection(')
