@@ -6,7 +6,7 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'runtime'))
-from codex_account import normalize_limits, read_status, resolve_profile
+from codex_account import normalize_limits, progress_from_turn, read_status, resolve_profile
 
 NOW = datetime(2026, 10, 3, tzinfo=timezone.utc)
 
@@ -102,6 +102,38 @@ def test_status_failure_does_not_claim_quota_or_model():
     assert 'private-error' not in str(result)
 
 
+
+def test_progress_phase_from_native_command_items():
+    assert progress_from_turn(None)["progressPhase"] == "preparing"
+    assert progress_from_turn({"status": "inProgress", "items": []})["progressPhase"] == "planning"
+    assert progress_from_turn({
+        "status": "inProgress",
+        "items": [{"type": "commandExecution", "command": "python -m pytest -q tests/test_x.py"}],
+    })["progressPhase"] == "testing"
+    assert progress_from_turn({
+        "status": "inProgress",
+        "items": [{"type": "commandExecution", "command": "gh pr checks 123"}],
+    })["progressPhase"] == "ci"
+    assert progress_from_turn({
+        "status": "inProgress",
+        "items": [{"type": "commandExecution", "command": "python deploy/devcoveer_install.py"}],
+    })["progressPhase"] == "deploying"
+    assert progress_from_turn({
+        "status": "completed",
+        "items": [{"type": "commandExecution", "command": "anything"}],
+    })["progressPhase"] == "ready"
+    assert progress_from_turn({"status": "failed", "items": []})["progressPhase"] == "failed"
+
+
+def test_progress_phase_never_returns_raw_command():
+    turn = {
+        "status": "inProgress",
+        "items": [{"type": "commandExecution", "command": "SECRET=abc pytest -q"}],
+    }
+    result = progress_from_turn(turn)
+    assert result == {"progressPhase": "testing"}
+    assert "SECRET" not in str(result)
+
 def test_canonical_builder_wires_status_and_alias(tmp_path):
     import subprocess
     root = Path(__file__).resolve().parents[1]
@@ -117,6 +149,7 @@ def test_canonical_builder_wires_status_and_alias(tmp_path):
     assert '"codex_status": Draft202012Validator(STATUS_SCHEMA)' in source
     assert 'return _tool_result(await _codex_read_status(history))' in source
     assert '_codex_resolve_profile(' in source
+    assert '_codex_progress_from_turn(turn)' in source
     assert (tmp_path / 'runtime' / 'codex_account.py').is_file()
 
 
