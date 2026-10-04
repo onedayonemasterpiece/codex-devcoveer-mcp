@@ -115,7 +115,7 @@
         "codex_cli_0153": {
           "argv": [
             "/usr/bin/bash",
-            "scripts/install-codex-cli-0153.sh"
+            "scripts/install-codex-cli-0155.sh"
           ],
           "cwd": ".",
           "timeout_seconds": 300,
