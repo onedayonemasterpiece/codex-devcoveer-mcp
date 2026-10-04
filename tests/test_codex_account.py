@@ -6,7 +6,7 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'runtime'))
-from codex_account import normalize_limits, progress_from_turn, read_status, resolve_profile
+from codex_account import normalize_limits, normalize_turn_token_usage, progress_from_turn, read_status, resolve_profile
 
 NOW = datetime(2026, 10, 3, tzinfo=timezone.utc)
 
@@ -103,6 +103,45 @@ def test_status_failure_does_not_claim_quota_or_model():
 
 
 
+def test_turn_token_usage_projects_last_breakdown_only():
+    payload = {
+        "last": {
+            "inputTokens": 120,
+            "cachedInputTokens": 20,
+            "outputTokens": 40,
+            "reasoningOutputTokens": 7,
+            "totalTokens": 160,
+            "cacheWriteInputTokens": 3,
+        },
+        "total": {
+            "inputTokens": 9999,
+            "cachedInputTokens": 9999,
+            "outputTokens": 9999,
+            "reasoningOutputTokens": 9999,
+            "totalTokens": 9999,
+        },
+        "modelContextWindow": 1000000,
+    }
+    assert normalize_turn_token_usage(payload) == {
+        "inputTokens": 120,
+        "cachedInputTokens": 20,
+        "outputTokens": 40,
+        "reasoningOutputTokens": 7,
+        "totalTokens": 160,
+    }
+
+
+@pytest.mark.parametrize("payload", [
+    None,
+    {},
+    {"last": None},
+    {"last": {"inputTokens": -1}},
+    {"last": {"inputTokens": "120"}},
+])
+def test_turn_token_usage_invalid_or_incomplete_is_unknown(payload):
+    assert normalize_turn_token_usage(payload) is None
+
+
 def test_progress_phase_from_native_command_items():
     assert progress_from_turn(None)["progressPhase"] == "preparing"
     assert progress_from_turn({"status": "inProgress", "items": []})["progressPhase"] == "planning"
@@ -150,6 +189,9 @@ def test_canonical_builder_wires_status_and_alias(tmp_path):
     assert 'return _tool_result(await _codex_read_status(history))' in source
     assert '_codex_resolve_profile(' in source
     assert '_codex_progress_from_turn(turn)' in source
+    assert 'thread/tokenUsage/updated' in source
+    assert 'def turn_token_usage(' in source
+    assert 'summary["tokenUsage"] = usage' in source
     assert (tmp_path / 'runtime' / 'codex_account.py').is_file()
 
 
