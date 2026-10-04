@@ -129,5 +129,5 @@ def test_devcoveer_pins_codex_cli_0160():
     assert 'CODEX_VERSION="0.160.0"' in bootstrap
     assert 'EXPECTED="codex-cli 0.160.0"' in installer
     assert "'@openai/codex@0.160.0'" in installer
-    assert '"scripts/install-codex-cli-0155.sh"' in config
+    assert '"scripts/install-codex-cli-0160.sh"' in config
     assert "0.153.0" not in bootstrap
