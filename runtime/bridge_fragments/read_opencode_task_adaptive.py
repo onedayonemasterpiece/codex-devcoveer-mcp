@@ -60,7 +60,25 @@ async def _maybe_auto_groq_fallback(
 
 async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary") -> dict[str, Any]:
     session_id = record.get("backendSessionId")
+    durable_status = str(record.get("status") or "unknown")
     if not isinstance(session_id, str):
+        if durable_status in {"dispatching", "dispatch_unknown", "failed"}:
+            return {
+                "status": durable_status,
+                "task": _registry_public(record),
+                "executionStatus": durable_status,
+                "errorCategory": record.get("errorCategory"),
+                "suggestedAction": (
+                    "submit_new_request_key_only_if_user_explicitly_retries"
+                    if durable_status in {"dispatching", "dispatch_unknown"} else None
+                ),
+                "content": (
+                    "Provider dispatch has no authoritative session readback. "
+                    "The durable request is preserved and will not be replayed automatically."
+                    if durable_status in {"dispatching", "dispatch_unknown"} else
+                    "Consultation failed before a provider session became available."
+                ),
+            }
         return {"status": "failed", "task": _registry_public(record),
                 "content": "OpenCode task has no valid session ID."}
     try:
