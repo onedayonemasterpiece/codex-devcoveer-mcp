@@ -120,9 +120,10 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert 'access="read"' in bridge
         assert "start_consultation" in bridge
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
-        start = backend.index("async def start_consultation")
+        start = backend.index("def consultation_directory")
         end = backend.index("async def cancel", start)
         consult = backend[start:end]
+        assert 'async def prompt_consultation' in consult
         assert '"agent": "build"' in consult
         for tool in ("bash", "task", "edit", "write", "patch", "apply_patch", "todowrite", "todoread"):
             assert f'"{tool}": False' in consult
