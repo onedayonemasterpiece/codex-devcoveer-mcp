@@ -124,7 +124,9 @@ def test_builder_materializes_consult_model_surface() -> None:
         end = backend.index("async def cancel", start)
         consult = backend[start:end]
         assert 'async def prompt_consultation' in consult
-        assert '"agent": "build"' in consult
+        assert '"agent": "plan" if provider == "opencode" else "build"' in consult
+        assert 'if provider != "opencode":' in consult
+        assert 'payload["tools"] = self.consultation_tools' in consult
         for tool in ("bash", "task", "edit", "write", "patch", "apply_patch", "todowrite", "todoread"):
             assert f'"{tool}": False' in consult
         for tool in ("read", "glob", "grep", "list", "lsp", "websearch", "webfetch"):
