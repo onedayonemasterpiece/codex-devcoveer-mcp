@@ -181,8 +181,10 @@ def _apply_landlock(root: Path, opencode_binary: Path) -> int:
         ):
             _allow_path(ruleset_fd, path, _READ_FILE | _WRITE_FILE)
 
-        # Do not expose /proc/self: it would disclose the credential-bearing
-        # process environment to an in-process read tool.
+        # Bun resolves its embedded payload through /proc/self/exe. Directory
+        # traversal is sufficient: never grant READ_FILE on /proc/self, so
+        # /proc/self/environ and other process metadata stay unreadable.
+        _allow_path(ruleset_fd, Path("/proc/self"), _READ_DIR)
         _allow_path(ruleset_fd, Path("/run/systemd/resolve"), read_only)
         _allow_path(ruleset_fd, Path("/sys/devices/system/cpu"), read_only)
         _allow_path(ruleset_fd, Path("/sys/devices/system/node"), read_only)
