@@ -58,6 +58,12 @@ def test_every_provided_only_council_round_uses_deny_all_consultation_transport(
         assert 'directory=runtime_cwd' in bridge
         assert '"contextMode": context_mode' in bridge
         assert '"evidenceSha256"' in bridge
+        handler_start = bridge.index('if name == "council_run":')
+        record_start = bridge.index('record_fields = {', handler_start)
+        record_end = bridge.index('if isinstance(request_key, str):', record_start)
+        durable_record = bridge[record_start:record_end]
+        assert '"evidenceBundle"' not in durable_record
+        assert '"evidence_bundle": evidence_bundle' not in durable_record
 
         start = backend.index("def consultation_directory")
         end = backend.index("async def cancel", start)
