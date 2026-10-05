@@ -26,7 +26,7 @@ def test_generated_council_schema_supports_provided_only_and_idempotency() -> No
     tmp, out = _built_runtime()
     try:
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
-        assert 'BRIDGE_VERSION = "3.34.2-opencode-isolated"' in bridge
+        assert 'BRIDGE_VERSION = "3.34.3-directory-isolation"' in bridge
         schema_start = bridge.index("COUNCIL_RUN_INPUT_SCHEMA")
         schema_end = bridge.index("TOOLS = [", schema_start)
         schema = bridge[schema_start:schema_end]
@@ -77,6 +77,12 @@ def test_every_provided_only_council_round_uses_deny_all_consultation_transport(
             "lsp", "websearch", "webfetch",
         ):
             assert f'"{tool}": False' in isolated
+        assert 'policy_path = root / "opencode.json"' in isolated
+        assert '"external_directory": "deny"' in isolated
+        assert '"plan": {' in isolated
+        assert '"*": "deny"' in isolated
+        assert 'provided-only OpenCode directory policy was not applied' in isolated
+        assert 'provided_only and provider != "opencode"' in isolated
         assert '[{"permission": "*", "pattern": "*", "action": "deny"}]' in isolated
         assert 'requirements = "" if provided_only' in isolated
         assert 'reuse = "" if provided_only' in isolated
@@ -131,8 +137,12 @@ def test_opencode_provided_only_uses_official_prompt_shape_under_local_deny_all(
         start = backend.index("async def start_consultation")
         end = backend.index("async def cancel", start)
         launch = backend[start:end]
-        assert '[{"permission": "*", "pattern": "*", "action": "deny"}]' in launch
         assert "consultation_directory(directory, provided_only=provided_only)" in launch
+        assert 'effective_config = await self.request' in launch
+        assert 'provided_only and provider == "opencode"' in launch
+        assert 'provided_only and provider != "opencode"' in launch
+        assert 'else self.permissions()' in launch
+        assert 'plan_permission.get("*") != "deny"' in launch
         assert '"permission": session_permissions' in launch
     finally:
         tmp.cleanup()
