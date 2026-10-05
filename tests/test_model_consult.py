@@ -139,7 +139,7 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert "dispatch_unknown" in bridge
         assert "request_key" in bridge
         assert "persist_consultation as _persist_consultation" in bridge
-        assert 'BRIDGE_VERSION = "3.34.0-council-isolation"' in bridge
+        assert 'BRIDGE_VERSION = "3.34.1-council-readback"' in bridge
         assert (out / "model_consult.py").is_file()
 
 
