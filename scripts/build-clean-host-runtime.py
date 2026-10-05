@@ -20,7 +20,7 @@ CONSULTATION_BACKEND_METHOD = r"""    @staticmethod
     def consultation_directory(directory: str, *, provided_only: bool = False) -> str:
         if not provided_only:
             return directory
-        root = Path("/home/dev/.local/share/openai-codex-mcp/model-consult-provided-only")
+        root = Path("/home/dev/.local/share/openai-codex-mcp/model-consult-provided-only-v2")
         if root.exists() and root.is_symlink():
             raise OpenCodeError("configuration", "provided-only consultation root is unsafe")
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -720,7 +720,7 @@ def _paid_council_digest'''
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.34.3-directory-isolation"', "version")
+                          'BRIDGE_VERSION = "3.34.4-isolation-cache-key"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
