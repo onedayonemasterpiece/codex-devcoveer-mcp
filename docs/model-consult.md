@@ -31,3 +31,26 @@ DeepSeek: this keeps reliability statistics attributable to the model that was
 actually requested.
 
 A terminal provider turn with no visible text is not considered successful. DevCoveer records it as failed with errorCategory=empty_output and the Markdown artifact records the failure rather than presenting an empty response as advice.
+
+
+## Provided-context-only product analysis
+
+Multi-user products must not use ordinary project-readable consultation as tenant
+isolation. For a caller-authorized evidence bundle, call `consult_model` with
+`context_mode=provided_only`, a non-empty `evidence_bundle`, and a stable
+`request_key`.
+
+In this mode DevCoveer runs the provider session in a dedicated empty directory,
+does not inject project requirements/reuse context, denies the session permission
+surface, and disables file/search/web/subagent/mutation tools. The model therefore
+receives the question plus the supplied evidence bundle, not the host project.
+
+`request_key` is durably reserved before provider dispatch. Replaying the same
+key and identical request returns the existing task instead of starting another
+inference. Reusing a key with a different request is rejected. If delivery to
+OpenCode times out after a provider session exists, the task becomes
+`dispatch_unknown`; `read_task` reconciles that same provider session and
+callers must not blind-retry with a new key.
+
+The legacy project-readable mode remains available for trusted owner/operator
+consultation and is not a substitute for product tenant isolation.
