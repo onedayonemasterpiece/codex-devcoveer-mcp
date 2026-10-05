@@ -40,10 +40,15 @@ isolation. For a caller-authorized evidence bundle, call `consult_model` with
 `context_mode=provided_only`, a non-empty `evidence_bundle`, and a stable
 `request_key`.
 
-In this mode DevCoveer runs the provider session in a dedicated empty directory,
-does not inject project requirements/reuse context, denies the session permission
-surface, and disables file/search/web/subagent/mutation tools. The model therefore
-receives the question plus the supplied evidence bundle, not the host project.
+In this mode DevCoveer runs the provider session in a dedicated empty directory
+and does not inject project requirements/reuse context. NVIDIA consultations keep
+an explicit disabled-tools payload. OpenCode Zen keeps the official OpenCode
+session/prompt shape required by the free provider, while the isolated directory
+contains a project-local OpenCode hard-deny policy for every permission check.
+That policy is evaluated after agent rules, so file/search/web/shell/subagent/
+mutation actions remain unavailable even though the request itself is a normal
+OpenCode request. The model therefore receives the question plus the supplied
+evidence bundle, not the host project.
 
 `request_key` is durably reserved before provider dispatch. Replaying the same
 key and identical request returns the existing task instead of starting another
@@ -66,9 +71,10 @@ project-readable council.
 In provided-only mode every participant round uses the isolated consultation
 transport: initial answer, cross-review, revision, final expert review, and
 bounded transient retries all run from the dedicated empty consultation
-directory with a deny-all permission surface and file/search/web/subagent
-tools disabled. Project requirements and reuse context are not injected into
-those provider prompts.
+directory. OpenCode participants use the official OpenCode request/session
+shape plus that directory's project-local hard-deny policy; NVIDIA participants
+retain explicit disabled-tools payloads. Project requirements and reuse context
+are not injected into those provider prompts.
 
 The council result remains attributed per model, and the existing free,
 extended, and pro budget rules are unchanged. Paid tiers still require the
