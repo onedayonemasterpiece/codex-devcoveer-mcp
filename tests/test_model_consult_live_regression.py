@@ -19,9 +19,10 @@ def test_consultation_uses_safe_build_agent_and_empty_output_fails() -> None:
         assert completed.returncode == 0, completed.stderr
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
-        start = backend.index("async def start_consultation")
+        start = backend.index("def consultation_directory")
         end = backend.index("async def cancel", start)
         consult = backend[start:end]
+        assert "async def prompt_consultation" in consult
         assert '"agent": "build"' in consult
         for tool in ("bash", "task", "edit", "write", "patch", "apply_patch", "todowrite", "todoread"):
             assert f'"{tool}": False' in consult

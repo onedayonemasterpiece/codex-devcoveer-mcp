@@ -54,3 +54,29 @@ callers must not blind-retry with a new key.
 
 The legacy project-readable mode remains available for trusted owner/operator
 consultation and is not a substitute for product tenant isolation.
+
+
+## Provided-context-only council
+
+Tenant-scoped product analysis may use `council_run` with
+`context_mode=provided_only`, a caller-authorized `evidence_bundle`, and a
+stable `request_key`. This is distinct from the existing trusted
+project-readable council.
+
+In provided-only mode every participant round uses the isolated consultation
+transport: initial answer, cross-review, revision, final expert review, and
+bounded transient retries all run from the dedicated empty consultation
+directory with a deny-all permission surface and file/search/web/subagent
+tools disabled. Project requirements and reuse context are not injected into
+those provider prompts.
+
+The council result remains attributed per model, and the existing free,
+extended, and pro budget rules are unchanged. Paid tiers still require the
+existing separate explicit confirmation flow; isolation does not bypass or
+weaken that policy.
+
+The stable `request_key` is reserved durably before council launch. Replaying
+the same key and request returns the existing council task rather than
+starting another inference. A mismatched payload for the same key is rejected,
+and an uncertain/lost dispatch is surfaced as durable readback rather than
+blindly repeated.

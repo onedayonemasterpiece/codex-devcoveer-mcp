@@ -120,9 +120,10 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert 'access="read"' in bridge
         assert "start_consultation" in bridge
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
-        start = backend.index("async def start_consultation")
+        start = backend.index("def consultation_directory")
         end = backend.index("async def cancel", start)
         consult = backend[start:end]
+        assert 'async def prompt_consultation' in consult
         assert '"agent": "build"' in consult
         for tool in ("bash", "task", "edit", "write", "patch", "apply_patch", "todowrite", "todoread"):
             assert f'"{tool}": False' in consult
@@ -138,7 +139,7 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert "dispatch_unknown" in bridge
         assert "request_key" in bridge
         assert "persist_consultation as _persist_consultation" in bridge
-        assert 'BRIDGE_VERSION = "3.33.0-consult-isolation"' in bridge
+        assert 'BRIDGE_VERSION = "3.34.0-council-isolation"' in bridge
         assert (out / "model_consult.py").is_file()
 
 
