@@ -25,6 +25,54 @@ CONSULTATION_BACKEND_METHOD = r"""    @staticmethod
             raise OpenCodeError("configuration", "provided-only consultation root is unsafe")
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(root, 0o700)
+
+        # Keep the OpenCode request/session shape official, but make every
+        # model-triggered permission check fail closed through an official
+        # project-local policy loaded from this isolated Location.
+        policy_path = root / "opencode.json"
+        if policy_path.exists() and policy_path.is_symlink():
+            raise OpenCodeError("configuration", "provided-only policy path is unsafe")
+        policy_value = json.dumps(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "experimental": {
+                    "policies": [
+                        {
+                            "action": "permission",
+                            "resource": "*",
+                            "effect": "deny",
+                        }
+                    ]
+                },
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ) + "\n"
+        current = None
+        if policy_path.is_file():
+            try:
+                current = policy_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                raise OpenCodeError(
+                    "configuration",
+                    "provided-only policy cannot be read safely",
+                ) from None
+        if current != policy_value:
+            fd, temp_name = tempfile.mkstemp(prefix=".opencode-policy-", dir=root)
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(policy_value)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_name, policy_path)
+            finally:
+                try:
+                    os.unlink(temp_name)
+                except FileNotFoundError:
+                    pass
+        os.chmod(policy_path, 0o600)
         return str(root)
 
     @staticmethod
@@ -74,8 +122,8 @@ CONSULTATION_BACKEND_METHOD = r"""    @staticmethod
         payload: dict[str, Any] = {
             "model": {"providerID": provider, "modelID": model_id},
             # OpenCode Zen free-tier requires the official OpenCode prompt shape.
-            # Isolation remains enforced locally by the deny-all session permission
-            # plus the empty consultation directory.
+            # Isolation remains enforced by the empty consultation Location plus
+            # its project-local hard-deny OpenCode policy.
             "agent": "plan" if provider == "opencode" else "build",
             "parts": [{"type": "text", "text": boundary + requirements + reuse + prompt}],
         }
@@ -99,10 +147,10 @@ CONSULTATION_BACKEND_METHOD = r"""    @staticmethod
         run_directory = self.consultation_directory(directory, provided_only=provided_only)
         await self.health()
         await self.request("GET", "/config", directory=run_directory, timeout=15)
-        session_permissions = (
-            [{"permission": "*", "pattern": "*", "action": "deny"}]
-            if provided_only else self.permissions()
-        )
+        # Use the exact official OpenCode session permission profile so Zen
+        # accepts the caller. provided_only is isolated by the project-local
+        # hard-deny policy created above, which applies after agent rules.
+        session_permissions = self.permissions()
         session = await self.request("POST", "/session", directory=run_directory, payload={
             "permission": session_permissions,
         })
@@ -622,7 +670,7 @@ def _paid_council_digest'''
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.34.2-opencode-isolated"', "version")
+                          'BRIDGE_VERSION = "3.34.3-opencode-policy-isolated"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
