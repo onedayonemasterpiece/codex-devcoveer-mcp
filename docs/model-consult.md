@@ -80,3 +80,21 @@ the same key and request returns the existing council task rather than
 starting another inference. A mismatched payload for the same key is rejected,
 and an uncertain/lost dispatch is surfaced as durable readback rather than
 blindly repeated.
+
+
+### Directory-enforced OpenCode isolation
+
+OpenCode Zen free-tier calls must retain the official OpenCode session/prompt
+shape. For provided-only council runs, DevCoveer therefore enforces the
+tenant boundary in the dedicated empty consultation workspace instead of
+replacing the session permission payload.
+
+The workspace contains a deterministic `opencode.json` with global
+`permission: {"*":"deny"}`, explicit denies for file/search/shell/web/
+subagent/external-directory capabilities, and a plan-agent deny-all override.
+Before creating the provider session, DevCoveer reads effective `/config`
+for that workspace and fails closed unless those denies are present.
+
+NVIDIA provided-only consultation keeps the existing explicit deny-all
+session/tool mask. In both cases the evidence bundle remains the only
+caller-authorized semantic input.
