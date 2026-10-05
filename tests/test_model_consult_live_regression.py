@@ -27,7 +27,7 @@ def test_consultation_uses_safe_build_agent_and_empty_output_fails() -> None:
             assert f'"{tool}": False' in consult
         for tool in ("read", "glob", "grep", "list", "lsp", "websearch", "webfetch"):
             assert f'"{tool}": False' in consult
-        assert "model-consult-provided-only" in consult
+        assert "model-consult-provided-only" in backend
         assert '"action": "deny"' in consult
         assert "dispatchUnknown" in consult
         assert "dispatch_unknown" in bridge
