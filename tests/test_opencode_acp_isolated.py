@@ -84,6 +84,7 @@ def test_builder_materializes_isolated_acp_runner() -> None:
         assert "PR_SET_NO_NEW_PRIVS" in source
         assert '"HOME": str(home)' in source
         assert '"OPENAI_API_KEY"' not in source
+        assert 'Path("/proc/self")' not in source
         assert "session/request_permission" in source
         assert '"outcome": "cancelled"' in source
         assert "tool_attempted" in source
