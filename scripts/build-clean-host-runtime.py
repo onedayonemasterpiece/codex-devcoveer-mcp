@@ -25,6 +25,60 @@ CONSULTATION_BACKEND_METHOD = r"""    @staticmethod
             raise OpenCodeError("configuration", "provided-only consultation root is unsafe")
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(root, 0o700)
+        policy_path = root / "opencode.json"
+        if policy_path.exists() and policy_path.is_symlink():
+            raise OpenCodeError("configuration", "provided-only OpenCode policy path is unsafe")
+        policy = {
+            "$schema": "https://opencode.ai/config.json",
+            "permission": {
+                "*": "deny",
+                "read": "deny",
+                "edit": "deny",
+                "glob": "deny",
+                "grep": "deny",
+                "list": "deny",
+                "bash": "deny",
+                "task": "deny",
+                "skill": "deny",
+                "lsp": "deny",
+                "todowrite": "deny",
+                "webfetch": "deny",
+                "websearch": "deny",
+                "external_directory": "deny",
+            },
+            "agent": {
+                "plan": {
+                    "permission": {
+                        "*": "deny",
+                    },
+                },
+            },
+        }
+        encoded = (
+            json.dumps(policy, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n"
+        ).encode("utf-8")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(policy_path, flags, 0o600)
+        except OSError as exc:
+            raise OpenCodeError(
+                "configuration", "provided-only OpenCode policy cannot be written"
+            ) from exc
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
         return str(root)
 
     @staticmethod
@@ -74,8 +128,8 @@ CONSULTATION_BACKEND_METHOD = r"""    @staticmethod
         payload: dict[str, Any] = {
             "model": {"providerID": provider, "modelID": model_id},
             # OpenCode Zen free-tier requires the official OpenCode prompt shape.
-            # Isolation remains enforced locally by the deny-all session permission
-            # plus the empty consultation directory.
+            # For provided-only OpenCode runs, isolation is enforced by the verified
+            # directory-level deny-all policy in the empty consultation workspace.
             "agent": "plan" if provider == "opencode" else "build",
             "parts": [{"type": "text", "text": boundary + requirements + reuse + prompt}],
         }
@@ -98,10 +152,54 @@ CONSULTATION_BACKEND_METHOD = r"""    @staticmethod
             )
         run_directory = self.consultation_directory(directory, provided_only=provided_only)
         await self.health()
-        await self.request("GET", "/config", directory=run_directory, timeout=15)
+        effective_config = await self.request(
+            "GET", "/config", directory=run_directory, timeout=15
+        )
+        if provided_only and provider == "opencode":
+            permission = (
+                effective_config.get("permission")
+                if isinstance(effective_config, dict)
+                else None
+            )
+            agent = (
+                effective_config.get("agent")
+                if isinstance(effective_config, dict)
+                else None
+            )
+            plan = agent.get("plan") if isinstance(agent, dict) else None
+            plan_permission = (
+                plan.get("permission") if isinstance(plan, dict) else None
+            )
+            required_denials = (
+                "*",
+                "read",
+                "edit",
+                "glob",
+                "grep",
+                "list",
+                "bash",
+                "task",
+                "skill",
+                "lsp",
+                "todowrite",
+                "webfetch",
+                "websearch",
+                "external_directory",
+            )
+            if (
+                not isinstance(permission, dict)
+                or any(permission.get(key) != "deny" for key in required_denials)
+                or not isinstance(plan_permission, dict)
+                or plan_permission.get("*") != "deny"
+            ):
+                raise OpenCodeError(
+                    "configuration",
+                    "provided-only OpenCode directory policy was not applied",
+                )
         session_permissions = (
             [{"permission": "*", "pattern": "*", "action": "deny"}]
-            if provided_only else self.permissions()
+            if provided_only and provider != "opencode"
+            else self.permissions()
         )
         session = await self.request("POST", "/session", directory=run_directory, payload={
             "permission": session_permissions,
@@ -622,7 +720,7 @@ def _paid_council_digest'''
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.34.2-opencode-isolated"', "version")
+                          'BRIDGE_VERSION = "3.34.3-directory-isolation"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
