@@ -135,6 +135,18 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     groq_fallback = await _maybe_auto_groq_fallback(record, inspected, status=status)
     if groq_fallback is not None:
         return groq_fallback
+    is_consultation = (
+        isinstance(record.get("consultation"), dict)
+        and record["consultation"].get("kind") == "model_consultation"
+    )
+    final_response = inspected.get("finalResponse")
+    empty_consultation_output = (
+        is_consultation
+        and status == "completed"
+        and not (isinstance(final_response, str) and final_response.strip())
+    )
+    if empty_consultation_output:
+        status = "failed"
     durable_status = (
         "cancelling"
         if record.get("status") == "cancelling" and status == "running"
@@ -144,7 +156,10 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     if status in {"completed", "failed", "interrupted"}:
         changes["finishedAt"] = record.get("finishedAt") or inspected.get("updatedAt") or int(time.time() * 1000)
     if status == "failed":
-        changes["errorCategory"] = inspected.get("providerErrorCategory") or "model_error"
+        changes["errorCategory"] = (
+            "empty_output" if empty_consultation_output
+            else inspected.get("providerErrorCategory") or "model_error"
+        )
 
     # Immutable terminal evidence is owned by the session-evidence wrapper.
     # Keep this base reader focused on provider/session status and raw internal history.
@@ -163,7 +178,9 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
             "OpenCode task is still running. Check it again with read_task."
             if status == "running" else
             inspected.get("finalResponse") or
-            ("OpenCode session is idle with no assistant result." if status == "idle" else "OpenCode task failed.")
+            ("Model consultation returned no visible output." if empty_consultation_output else
+             "OpenCode session is idle with no assistant result." if status == "idle" else
+             "OpenCode task failed.")
         ),
     }
 
@@ -192,8 +209,7 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
         payload["suggestedAction"] = "continue_same_task_after_inspection"
     if (
         status in {"completed", "failed", "interrupted"}
-        and isinstance(updated.get("consultation"), dict)
-        and updated["consultation"].get("kind") == "model_consultation"
+        and is_consultation
     ):
         payload["advisory"] = True
         try:

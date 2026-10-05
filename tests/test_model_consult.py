@@ -77,9 +77,20 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert '"consult_model": Draft202012Validator(CONSULT_MODEL_INPUT_SCHEMA)' in bridge
         assert 'if name == "consult_model":' in bridge
         assert 'access="read"' in bridge
+        assert "start_consultation" in bridge
+        backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
+        start = backend.index("async def start_consultation")
+        end = backend.index("async def cancel", start)
+        consult = backend[start:end]
+        assert '"agent": "build"' in consult
+        for tool in ("bash", "task", "edit", "write", "patch", "apply_patch", "todowrite", "todoread"):
+            assert f'"{tool}": False' in consult
+        tool_block = bridge[bridge.index('name="consult_model"'):bridge.index('name="direct_ops_v2"')]
+        assert "read_only_hint=False" in tool_block
+        assert '"empty_output" if empty_consultation_output' in bridge
         assert "model_consultation" in bridge
         assert "persist_consultation as _persist_consultation" in bridge
-        assert 'BRIDGE_VERSION = "3.32.0-model-consult"' in bridge
+        assert 'BRIDGE_VERSION = "3.32.1-model-consult"' in bridge
         assert (out / "model_consult.py").is_file()
 
 

@@ -7,7 +7,7 @@ The consultant is deliberately narrower than `council_run`:
 - one model per consultation;
 - NVIDIA only;
 - aliases: `kimi_k3` and `deepseek`;
-- read-only OpenCode session;
+- read-only OpenCode outcome; NVIDIA consultations use the build agent with every mutation-capable tool explicitly disabled;
 - no automatic fallback to another model;
 - advisory output only: it cannot change requirements, source or runtime state;
 - the caller continues to own the decision and may ignore the consultation.
@@ -29,3 +29,5 @@ A provider error, timeout, rate limit or unavailable model is reported for the
 selected model. `consult_model` does not silently switch between Kimi and
 DeepSeek: this keeps reliability statistics attributable to the model that was
 actually requested.
+
+A terminal provider turn with no visible text is not considered successful. DevCoveer records it as failed with errorCategory=empty_output and the Markdown artifact records the failure rather than presenting an empty response as advice.
