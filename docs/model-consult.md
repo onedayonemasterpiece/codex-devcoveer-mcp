@@ -89,6 +89,11 @@ shape. For provided-only council runs, DevCoveer therefore enforces the
 tenant boundary in the dedicated empty consultation workspace instead of
 replacing the session permission payload.
 
+The workspace path is versioned (`model-consult-provided-only-v2`) because the
+OpenCode server caches effective configuration by directory. Any future change to
+this isolation policy must use a new directory key rather than reusing a cached
+path.
+
 The workspace contains a deterministic `opencode.json` with global
 `permission: {"*":"deny"}`, explicit denies for file/search/shell/web/
 subagent/external-directory capabilities, and a plan-agent deny-all override.
