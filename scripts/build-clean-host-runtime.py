@@ -71,14 +71,19 @@ CONSULTATION_BACKEND_METHOD = r"""    @staticmethod
         )
         requirements = "" if provided_only else requirements_prompt(Path(directory))
         reuse = "" if provided_only else reuse_prompt(Path(directory))
+        payload: dict[str, Any] = {
+            "model": {"providerID": provider, "modelID": model_id},
+            # OpenCode Zen free-tier requires the official OpenCode prompt shape.
+            # Isolation remains enforced locally by the deny-all session permission
+            # plus the empty consultation directory.
+            "agent": "plan" if provider == "opencode" else "build",
+            "parts": [{"type": "text", "text": boundary + requirements + reuse + prompt}],
+        }
+        if provider != "opencode":
+            payload["tools"] = self.consultation_tools(provided_only=provided_only)
         await self.request(
             "POST", f"/session/{session_id}/prompt_async", directory=run_directory,
-            payload={
-                "model": {"providerID": provider, "modelID": model_id},
-                "agent": "build",
-                "tools": self.consultation_tools(provided_only=provided_only),
-                "parts": [{"type": "text", "text": boundary + requirements + reuse + prompt}],
-            },
+            payload=payload,
             timeout=30,
         )
 
@@ -617,7 +622,7 @@ def _paid_council_digest'''
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.34.1-council-readback"', "version")
+                          'BRIDGE_VERSION = "3.34.2-opencode-isolated"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
