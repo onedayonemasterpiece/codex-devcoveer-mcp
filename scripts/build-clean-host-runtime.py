@@ -50,7 +50,7 @@ def function_block(source: str, name: str) -> tuple[int, int, str]:
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.31.1-operational-quality"', "version")
+                          'BRIDGE_VERSION = "3.32.0-model-consult"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
@@ -80,6 +80,13 @@ from source_handoff import (
 )
 from requirements_guard import requirements_prompt as _requirements_prompt
 from reuse_quality import reuse_prompt as _reuse_prompt
+from model_consult import (
+    CONSULT_MODEL_INPUT_SCHEMA,
+    consultation_metadata as _consultation_metadata,
+    consultation_prompt as _consultation_prompt,
+    model_spec as _consult_model_spec,
+    persist_consultation as _persist_consultation,
+)
 from street_story_operator import (
     OperatorError as StreetStoryOperatorError,
     StreetStoryOperator,
@@ -248,7 +255,16 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
         "source-handoff schemas",
     )
     tool_anchor = '    types.Tool(name="council_run", title="Run multi-model council",\n'
-    tool_block = '''    types.Tool(name="direct_ops_v2", title="Run stable Direct Ops gateway",
+    tool_block = '''    types.Tool(name="consult_model", title="Ask one advisory model consultant",
+        description=("Start one optional read-only NVIDIA consultation for a focused second opinion. "
+            "Choose Kimi K3 or DeepSeek V4.1 Flash and a purpose. The consultant cannot modify source, "
+            "requirements, runtime state or external systems; no automatic model fallback occurs. "
+            "Poll the returned taskId with read_task. On terminal readback DevCoveer writes a redacted "
+            "Markdown consultation artifact and returns its path and SHA-256."),
+        input_schema=CONSULT_MODEL_INPUT_SCHEMA, output_schema=GENERIC_OUTPUT_SCHEMA,
+        annotations=types.ToolAnnotations(read_only_hint=True, destructive_hint=False,
+            idempotent_hint=False, open_world_hint=True)),
+    types.Tool(name="direct_ops_v2", title="Run stable Direct Ops gateway",
         description=("Cache-resistant deterministic project/host operator gateway. "
             "Use operation=describe to discover current operations and payload schemas. "
             "The client schema stays stable while the server validates operation+payload "
@@ -340,7 +356,8 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
 '''
     source = replace_once(source, tool_anchor, tool_block + tool_anchor, "tool catalog")
     validator_anchor = '    "council_run": Draft202012Validator(COUNCIL_RUN_INPUT_SCHEMA),\n'
-    validators = ('    "direct_ops_v2": Draft202012Validator(DIRECT_OPS_V2_INPUT_SCHEMA),\n'
+    validators = ('    "consult_model": Draft202012Validator(CONSULT_MODEL_INPUT_SCHEMA),\n'
+                  '    "direct_ops_v2": Draft202012Validator(DIRECT_OPS_V2_INPUT_SCHEMA),\n'
                   '    "project_probe": Draft202012Validator(PROJECT_PROBE_INPUT_SCHEMA),\n'
                   '    "host_probe": Draft202012Validator(HOST_PROBE_INPUT_SCHEMA),\n'
                   '    "project_action": Draft202012Validator(PROJECT_ACTION_INPUT_SCHEMA),\n'
@@ -400,7 +417,61 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     source = replace_once(source, project_anchor, project_with_handoff,
                           "source-handoff project resolver")
     handler_anchor = '        if name == "council_run":\n'
-    handlers = '''        if name == "direct_ops_v2":
+    handlers = '''        if name == "consult_model":
+            assert project is not None
+            spec = _consult_model_spec(arguments["model"])
+            purpose = arguments["purpose"]
+            question = arguments["question"]
+            try:
+                selected = await OPENCODE_BACKEND.resolve_model(
+                    provider=spec["provider"], model=spec["selection"], directory=project.path,
+                )
+                if selected.get("routingRecommended") is False:
+                    return _tool_result({
+                        "status": "failed", "errorCategory": "model_unavailable",
+                        "model": spec["selection"],
+                        "content": "The requested consultant is temporarily unavailable; no fallback was attempted.",
+                    }, error=True)
+                if selected.get("capabilities", {}).get("toolcall") is not True:
+                    return _tool_result({
+                        "status": "failed", "errorCategory": "model_capability",
+                        "model": spec["selection"],
+                        "content": "The requested consultant is not currently agent-capable.",
+                    }, error=True)
+                started = await OPENCODE_BACKEND.start(
+                    directory=project.path, project=project.canonical,
+                    prompt=_consultation_prompt(purpose=purpose, question=question),
+                    access="read", provider=selected["provider"],
+                    model_id=selected["nativeModelId"],
+                    title=f"{project.canonical}: {spec['displayName']} consultation ({purpose})",
+                )
+            except OpenCodeError as exc:
+                return _tool_result({
+                    "status": "failed", "backend": "opencode",
+                    "provider": spec["provider"], "model": spec["selection"],
+                    "errorCategory": exc.category, "content": str(exc),
+                }, error=True)
+            consultation = _consultation_metadata(
+                alias=arguments["model"], purpose=purpose, question=question,
+            )
+            record = TASK_REGISTRY.create(
+                backend="opencode", backendSessionId=started["sessionId"],
+                project=project.canonical, cwd=project.path,
+                provider=selected["provider"], model=selected["nativeModelId"],
+                selection=selected["selection"], access="read", status="running",
+                routingReason=f"model_consult:{purpose}",
+                title=f"{project.canonical}: {spec['displayName']} consultation ({purpose})",
+                consultation=consultation,
+            )
+            return _tool_result({
+                "status": "running", "taskId": record["taskId"], "taskReference": record["taskId"],
+                "backend": "opencode", "provider": selected["provider"],
+                "model": selected["selection"], "purpose": purpose, "access": "read",
+                "advisory": True, "automaticFallback": False, "markdownOnCompletion": True,
+                "content": "Consultation started. Poll taskId with read_task; terminal readback returns the Markdown artifact.",
+            })
+
+        if name == "direct_ops_v2":
             assert project is not None
             try:
                 result = await _run_direct_ops_v2(
@@ -619,6 +690,12 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     source = replace_once(
         source, policy.OLD_START_TOOL, policy.NEW_START_TOOL, "start_task operating policy"
     )
+    source = replace_once(
+        source,
+        'if params.name in {"start_task", "continue_task", "cancel_task", "record_task_review"}:',
+        'if params.name in {"start_task", "continue_task", "cancel_task", "record_task_review", "consult_model"}:',
+        "consult task lifecycle lock",
+    )
 
     reminder_spec = importlib.util.spec_from_file_location(
         "direct_tool_reminder", ROOT / "scripts" / "install-direct-tool-reminder.py"
@@ -807,6 +884,7 @@ def main() -> int:
     backend.write_text(transform_backend(backend.read_text(encoding="utf-8")), encoding="utf-8")
     for name in DIRECT_FILES:
         shutil.copy2(ROOT / "runtime" / name, out / name)
+    shutil.copy2(ROOT / "runtime" / "model_consult.py", out / "model_consult.py")
     shutil.copy2(ROOT / "runtime" / "direct_probe_config.json",
                  out / "direct_probe_config.json")
     shutil.copy2(ROOT / "docs" / "quality" / "reuse-catalog.yaml",

@@ -190,4 +190,19 @@ async def _read_opencode_task(record: dict[str, Any], *, detail: str = "summary"
     if status == "idle":
         payload["executionStatus"] = "awaiting_final"
         payload["suggestedAction"] = "continue_same_task_after_inspection"
+    if (
+        status in {"completed", "failed", "interrupted"}
+        and isinstance(updated.get("consultation"), dict)
+        and updated["consultation"].get("kind") == "model_consultation"
+    ):
+        payload["advisory"] = True
+        try:
+            payload["consultationArtifact"] = _persist_consultation(
+                updated, status, inspected.get("finalResponse"),
+            )
+        except Exception as exc:
+            log.exception("consultation Markdown persistence failed (%s)", type(exc).__name__)
+            payload["consultationArtifact"] = {
+                "status": "failed", "errorCategory": "artifact_persistence",
+            }
     return payload

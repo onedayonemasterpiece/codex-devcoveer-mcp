@@ -44,6 +44,7 @@ def test_clean_host_installer_does_not_use_bootstrap_as_source() -> None:
 def test_clean_host_installer_accepts_probes_before_tunnel_switch() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
     required_tools = (
+        "consult_model",
         "project_probe", "host_probe", "project_action", "host_action",
         "list_models", "start_task", "read_task",
         "stage_source_handoff", "cleanup_source_handoff",
@@ -121,11 +122,13 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'name="host_probe"' in bridge
         assert 'name="project_action"' in bridge
         assert 'name="host_action"' in bridge
+        assert 'name="consult_model"' in bridge
+        assert (out / "model_consult.py").is_file()
         assert 'reason = "adaptive_opencode_default"' in bridge
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.31.1-operational-quality"' in bridge
+        assert 'BRIDGE_VERSION = "3.32.0-model-consult"' in bridge
         assert 'include_messages=(detail != "summary")' in bridge
         assert '"inspectionStatus":"metadata_only"' in bridge
         assert "Task is running. No message history was fetched" in bridge
