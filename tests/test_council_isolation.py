@@ -26,7 +26,7 @@ def test_generated_council_schema_supports_provided_only_and_idempotency() -> No
     tmp, out = _built_runtime()
     try:
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
-        assert 'BRIDGE_VERSION = "3.34.3-directory-isolation"' in bridge
+        assert 'BRIDGE_VERSION = "3.34.4-isolation-cache-key"' in bridge
         schema_start = bridge.index("COUNCIL_RUN_INPUT_SCHEMA")
         schema_end = bridge.index("TOOLS = [", schema_start)
         schema = bridge[schema_start:schema_end]
@@ -77,6 +77,7 @@ def test_every_provided_only_council_round_uses_deny_all_consultation_transport(
             "lsp", "websearch", "webfetch",
         ):
             assert f'"{tool}": False' in isolated
+        assert 'model-consult-provided-only-v2' in isolated
         assert 'policy_path = root / "opencode.json"' in isolated
         assert '"external_directory": "deny"' in isolated
         assert '"plan": {' in isolated
