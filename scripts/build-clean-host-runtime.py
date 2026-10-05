@@ -314,8 +314,8 @@ def _paid_council_digest'''
     source = replace_once(source, run_context_old, run_context_new, "council task context")
     source = replace_once(
         source,
-        '                + prompt + baseline_context\\n',
-        '                + provider_prompt + baseline_context\\n',
+        '                + prompt + baseline_context\n',
+        '                + provider_prompt + baseline_context\n',
         "council initial evidence prompt",
     )
 
@@ -517,8 +517,8 @@ def _paid_council_digest'''
 
     source = replace_once(
         source,
-        '                        directory=council_cwd,\\n',
-        '                        directory=runtime_cwd,\\n',
+        '                        directory=council_cwd,\n',
+        '                        directory=runtime_cwd,\n',
         "council model resolution isolation",
     )
 
