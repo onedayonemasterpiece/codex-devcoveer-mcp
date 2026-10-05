@@ -26,7 +26,7 @@ def test_generated_council_schema_supports_provided_only_and_idempotency() -> No
     tmp, out = _built_runtime()
     try:
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
-        assert 'BRIDGE_VERSION = "3.34.0-council-isolation"' in bridge
+        assert 'BRIDGE_VERSION = "3.34.1-council-readback"' in bridge
         schema_start = bridge.index("COUNCIL_RUN_INPUT_SCHEMA")
         schema_end = bridge.index("TOOLS = [", schema_start)
         schema = bridge[schema_start:schema_end]
@@ -98,5 +98,20 @@ def test_project_read_council_and_paid_confirmation_policy_remain_available() ->
         # Existing project-readable path remains as the explicit else branch.
         assert "await OPENCODE_BACKEND.start(" in bridge
         assert "await OPENCODE_BACKEND.prompt(" in bridge
+    finally:
+        tmp.cleanup()
+
+
+def test_registry_readback_scopes_isolated_tasks_by_canonical_project() -> None:
+    tmp, out = _built_runtime()
+    try:
+        bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
+        start = bridge.index("def _registry_task(")
+        end = bridge.index("def _registry_public", start)
+        registry = bridge[start:end]
+        assert 'record.get("project") == project.canonical' in registry
+        assert 'record.get("cwd") == project.path' not in registry
+        assert 'registered.get("backend") == "council"' in bridge
+        assert 'return _tool_result(_read_council_task(' in bridge
     finally:
         tmp.cleanup()
