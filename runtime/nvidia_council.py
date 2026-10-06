@@ -38,9 +38,9 @@ MODEL_PROFILES: dict[str, dict[str, Any]] = {
         "reasoning_effort": "max",
     },
     "deepseek-ai/deepseek-v4.1-flash": {
-        "temperature": 0.6,
+        "temperature": 1.0,
+        "top_p": 0.95,
         "max_tokens": 16384,
-        "reasoning_effort": "max",
     },
 }
 
