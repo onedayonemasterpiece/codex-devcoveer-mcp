@@ -723,13 +723,13 @@ def transform_nvidia_dual_slot(source: str) -> str:
     source = replace_once(
         source,
         'BRIDGE_VERSION = "3.34.4-isolation-cache-key"',
-        'BRIDGE_VERSION = "3.35.1-nvidia-multi-source"',
+        'BRIDGE_VERSION = "3.35.2-nvidia-bounded-progress"',
         "NVIDIA dual-slot bridge version",
     )
     source = replace_once(
         source,
         "PAID_COUNCIL_CONFIRMATION_TTL_SECONDS = 600\n",
-        "NVIDIA_COUNCIL_SLOT_CAPACITY = 2\n",
+        "NVIDIA_COUNCIL_SLOT_CAPACITY = 2\nCOUNCIL_TOTAL_TIMEOUT_SECONDS = 1200.0\n",
         "NVIDIA dual-slot capacity constant",
     )
 
@@ -793,9 +793,47 @@ def transform_nvidia_dual_slot(source: str) -> str:
         '''from mcp.server import NotificationOptions
 from nvidia_council import (
     NvidiaCouncilError as DirectNvidiaCouncilError,
+    cancel_task as _cancel_nvidia_task,
     invoke_nvidia as _invoke_nvidia,
+    release_task as _release_nvidia_task,
     slot_metadata as _nvidia_slot_metadata,
 )
+
+def _council_worker_identity(pid: int | None = None) -> str:
+    actual_pid = int(pid or os.getpid())
+    try:
+        stat_text = Path(f"/proc/{actual_pid}/stat").read_text(encoding="utf-8")
+        start_ticks = stat_text.split(") ", 1)[1].split()[19]
+    except (OSError, IndexError, ValueError):
+        start_ticks = "unknown"
+    return f"{actual_pid}:{start_ticks}"
+
+def _council_worker_alive(identity: str | None) -> bool:
+    if not isinstance(identity, str) or ":" not in identity:
+        return False
+    raw_pid, expected_ticks = identity.split(":", 1)
+    try:
+        pid = int(raw_pid)
+        stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        actual_ticks = stat_text.split(") ", 1)[1].split()[19]
+    except (OSError, IndexError, ValueError):
+        return False
+    return actual_ticks == expected_ticks
+
+def _council_progress(
+    task_id: str,
+    council: dict[str, Any],
+    *,
+    stage: str,
+    participants: list[dict[str, Any]],
+) -> None:
+    current = TASK_REGISTRY.get(task_id)
+    if current is None or current.get("status") not in {"starting", "running"}:
+        return
+    TASK_REGISTRY.update(
+        task_id,
+        council={**council, "stage": stage, "participants": participants},
+    )
 ''',
         "NVIDIA direct bridge import",
     )
@@ -1040,6 +1078,109 @@ from nvidia_council import (
 ''',
         "council readback resource policy",
     )
+
+    source = replace_once(
+        source,
+        '''        if isinstance(exc, asyncio.CancelledError):
+            return
+''',
+        '''        if isinstance(exc, asyncio.CancelledError):
+            raise
+''',
+        "council cancellation propagation",
+    )
+
+    launch_old = '''def _launch_council(
+    task_id: str, prompt: str, rounds: int, baseline_conclusion: str | None = None,
+    evidence_bundle: str | None = None,
+) -> None:
+    task = asyncio.create_task(_run_council_task(
+        task_id, prompt, rounds, baseline_conclusion, evidence_bundle,
+    ),
+'''
+    launch_new = '''async def _run_council_task_bounded(
+    task_id: str,
+    prompt: str,
+    rounds: int,
+    baseline_conclusion: str | None = None,
+    evidence_bundle: str | None = None,
+) -> None:
+    try:
+        await asyncio.wait_for(
+            _run_council_task(
+                task_id, prompt, rounds, baseline_conclusion, evidence_bundle,
+            ),
+            timeout=COUNCIL_TOTAL_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        _cancel_nvidia_task(task_id)
+        current = TASK_REGISTRY.get(task_id)
+        if current is not None and current.get("status") in {"starting", "running"}:
+            council = current.get("council") if isinstance(current.get("council"), dict) else {}
+            TASK_REGISTRY.update(
+                task_id,
+                status="failed",
+                finishedAt=int(time.time() * 1000),
+                errorCategory="council_timeout",
+                council={**council, "stage": "failed"},
+            )
+    finally:
+        _release_nvidia_task(task_id)
+
+def _launch_council(
+    task_id: str, prompt: str, rounds: int, baseline_conclusion: str | None = None,
+    evidence_bundle: str | None = None,
+) -> None:
+    current = TASK_REGISTRY.get(task_id)
+    if current is not None:
+        council = current.get("council") if isinstance(current.get("council"), dict) else {}
+        TASK_REGISTRY.update(
+            task_id,
+            council={
+                **council,
+                "workerIdentity": _council_worker_identity(),
+                "deadlineAtMs": int(time.time() * 1000 + COUNCIL_TOTAL_TIMEOUT_SECONDS * 1000),
+            },
+        )
+    task = asyncio.create_task(_run_council_task_bounded(
+        task_id, prompt, rounds, baseline_conclusion, evidence_bundle,
+    ),
+'''
+    source = replace_once(source, launch_old, launch_new, "bounded council launch")
+
+    read_old = '''def _read_council_task(record: dict[str, Any]) -> dict[str, Any]:
+    council = record.get("council") if isinstance(record.get("council"), dict) else {}
+    result = council.get("result") if isinstance(council.get("result"), dict) else None
+'''
+    read_new = '''def _read_council_task(record: dict[str, Any]) -> dict[str, Any]:
+    council = record.get("council") if isinstance(record.get("council"), dict) else {}
+    if (
+        record.get("status") in {"starting", "running"}
+        and isinstance(council.get("workerIdentity"), str)
+        and not _council_worker_alive(council.get("workerIdentity"))
+    ):
+        record = TASK_REGISTRY.update(
+            record["taskId"],
+            status="failed",
+            finishedAt=int(time.time() * 1000),
+            errorCategory="council_worker_lost",
+            council={**council, "stage": "failed"},
+        )
+        council = record.get("council") if isinstance(record.get("council"), dict) else {}
+    result = council.get("result") if isinstance(council.get("result"), dict) else None
+'''
+    source = replace_once(source, read_old, read_new, "council worker recovery")
+
+    cancel_old = '''            background = _COUNCIL_BACKGROUND.get(registered["taskId"])
+            if background is not None:
+                background.cancel()
+'''
+    cancel_new = '''            _cancel_nvidia_task(registered["taskId"])
+            background = _COUNCIL_BACKGROUND.get(registered["taskId"])
+            if background is not None:
+                background.cancel()
+'''
+    source = replace_once(source, cancel_old, cancel_new, "council NVIDIA cancellation")
     return source
 
 def transform_bridge(source: str) -> str:
