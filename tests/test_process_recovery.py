@@ -218,3 +218,194 @@ def test_legacy_capabilities_and_guards_remain():
     schema=gateway.describe_plane('project_action','run_tool')['payload_schema']['properties']
     assert {'bash_script','python_script'} <= set(schema['tool']['enum'])
     assert 'expected_head' in schema and 'expected_workspace_digest' in schema
+
+
+def _delivery_contract(target='owner_testable', required_scope='integration'):
+    return {
+        'schema_version': 1,
+        'kind': 'feature_delivery',
+        'outcome': 'Owner can verify the current candidate',
+        'target': target,
+        'scope_ref': 'owner-task:test',
+        'requirement_refs': [],
+        'criteria': [{
+            'id': 'D1',
+            'statement': 'Current candidate satisfies the requested behavior',
+            'required_scope': required_scope,
+        }],
+    }
+
+
+def test_old_process_recovery_database_is_migrated_in_place(tmp_path, monkeypatch):
+    import sqlite3
+    db_path = tmp_path / 'legacy.sqlite3'
+    monkeypatch.setattr(recovery, 'DB_PATH', db_path)
+    cwd = tmp_path / 'project'
+    cwd.mkdir()
+    now = 1.0
+    db = sqlite3.connect(db_path)
+    db.execute('''CREATE TABLE works (
+      work_id TEXT PRIMARY KEY, cwd TEXT NOT NULL, project TEXT NOT NULL,
+      request_key TEXT NOT NULL, goal TEXT NOT NULL, next_step TEXT NOT NULL,
+      incident_id TEXT, revision INTEGER NOT NULL, status TEXT NOT NULL,
+      artifacts TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL,
+      UNIQUE(cwd, request_key))''')
+    wid = 'work_' + 'a' * 24
+    db.execute(
+        'INSERT INTO works VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+        (wid, str(cwd.resolve()), 'fixture', 'legacy:key', 'Old task', 'Finished', None, 1, 'done', '[]', now, now),
+    )
+    db.commit()
+    db.close()
+
+    resumed = recovery.process_read(str(cwd), 'work_resume', {'work_id': wid})
+    assert resumed['work']['status'] == 'done'
+    assert resumed['work']['delivery'] == {}
+    assert resumed['work']['product_status'] == 'unverified'
+
+    opened = recovery.work_action(str(cwd), 'fixture', 'work_open', {
+        'goal': 'New task', 'request_key': 'new:key',
+    })
+    assert opened['work']['revision'] == 1
+    with sqlite3.connect(db_path) as reopened:
+        columns = {row[1] for row in reopened.execute('PRAGMA table_info(works)')}
+        assert 'delivery_state' in columns
+
+
+def test_delivery_done_is_atomic_and_requires_current_evidence_and_handoff(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery, 'DB_PATH', tmp_path / 'delivery.sqlite3')
+    opened = recovery.work_action(str(tmp_path), 'fixture', 'work_open', {
+        'goal': 'Ship the feature',
+        'request_key': 'delivery:atomic',
+        'delivery_contract': _delivery_contract(),
+    })['work']
+    assert opened['delivery']['policy_version'] == 'product-delivery-policy-v1'
+
+    with pytest.raises(core.ProbeError, match='Cannot mark delivery work done'):
+        recovery.work_action(str(tmp_path), 'fixture', 'work_checkpoint', {
+            'work_id': opened['work_id'],
+            'expected_revision': 1,
+            'next_step': 'Hand off',
+            'status': 'done',
+            'delivery_update': {
+                'candidate': {'deployment_ref': 'deploy:test'},
+                'criterion_results': [{
+                    'criterion_id': 'D1',
+                    'status': 'pass',
+                    'evidence_refs': ['external:integration-pass'],
+                    'actual_scope': 'integration',
+                    'verification': 'agent_attested',
+                    'evaluated_by': 'agent',
+                    'candidate_ref': 'deploy:test',
+                }],
+            },
+        })
+    still = recovery.process_read(str(tmp_path), 'work_resume', {'work_id': opened['work_id']})
+    assert still['work']['revision'] == 1
+    assert still['work']['status'] == 'active'
+
+    completed = recovery.work_action(str(tmp_path), 'fixture', 'work_checkpoint', {
+        'work_id': opened['work_id'],
+        'expected_revision': 1,
+        'next_step': 'Delivered',
+        'status': 'done',
+        'delivery_update': {
+            'candidate': {'deployment_ref': 'deploy:test'},
+            'criterion_results': [{
+                'criterion_id': 'D1',
+                'status': 'pass',
+                'evidence_refs': ['external:integration-pass'],
+                'actual_scope': 'integration',
+                'verification': 'agent_attested',
+                'evaluated_by': 'agent',
+                'candidate_ref': 'deploy:test',
+            }],
+            'handoff': {
+                'artifact_refs': ['deploy:test'],
+                'verify': 'Open the deployed owner path and exercise the requested behavior.',
+                'limitations': ['Owner acceptance is not inferred from delivery.'],
+            },
+        },
+    })['work']
+    assert completed['status'] == 'done'
+    assert completed['delivery']['product_status'] == 'ready'
+    assert completed['delivery']['completion_outcome'] == 'delivered'
+
+
+def test_server_verified_evidence_must_exist_on_same_work(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery, 'DB_PATH', tmp_path / 'server-evidence.sqlite3')
+    opened = recovery.work_action(str(tmp_path), 'fixture', 'work_open', {
+        'goal': 'Ship',
+        'request_key': 'delivery:server',
+        'delivery_contract': _delivery_contract(target='source_ready', required_scope='unit'),
+    })['work']
+    missing = 'op_' + 'f' * 24
+    with pytest.raises(core.ProbeError, match='unavailable server evidence'):
+        recovery.work_action(str(tmp_path), 'fixture', 'work_checkpoint', {
+            'work_id': opened['work_id'], 'expected_revision': 1,
+            'next_step': 'Done', 'status': 'done',
+            'delivery_update': {
+                'candidate': {'source_ref': 'commit:test'},
+                'criterion_results': [{
+                    'criterion_id': 'D1', 'status': 'pass',
+                    'evidence_refs': [missing], 'actual_scope': 'unit',
+                    'verification': 'server_verified', 'evaluated_by': 'test',
+                    'candidate_ref': 'commit:test',
+                }],
+            },
+        })
+
+
+def test_contract_replay_conflict_and_legacy_checkpoint_cannot_erase_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery, 'DB_PATH', tmp_path / 'replay.sqlite3')
+    body = {
+        'goal': 'Ship',
+        'request_key': 'delivery:replay',
+        'delivery_contract': _delivery_contract(target='source_ready', required_scope='source'),
+    }
+    opened = recovery.work_action(str(tmp_path), 'fixture', 'work_open', body)['work']
+    replay = recovery.work_action(str(tmp_path), 'fixture', 'work_open', body)
+    assert replay['reused'] is True
+    changed = dict(body)
+    changed['delivery_contract'] = _delivery_contract(target='owner_testable', required_scope='integration')
+    with pytest.raises(core.ProbeError, match='different delivery contract'):
+        recovery.work_action(str(tmp_path), 'fixture', 'work_open', changed)
+
+    checkpoint = recovery.work_action(str(tmp_path), 'fixture', 'work_checkpoint', {
+        'work_id': opened['work_id'], 'expected_revision': 1,
+        'next_step': 'Keep working',
+    })['work']
+    assert checkpoint['delivery']['contract']['target'] == 'source_ready'
+
+
+def test_delivery_stall_signal_is_nonblocking(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery, 'DB_PATH', tmp_path / 'stall.sqlite3')
+    current = recovery.work_action(str(tmp_path), 'fixture', 'work_open', {
+        'goal': 'Ship',
+        'request_key': 'delivery:stall',
+        'delivery_contract': _delivery_contract(target='source_ready', required_scope='unit'),
+    })['work']
+    for _ in range(3):
+        current = recovery.work_action(str(tmp_path), 'fixture', 'work_checkpoint', {
+            'work_id': current['work_id'],
+            'expected_revision': current['revision'],
+            'next_step': 'Run the one required check',
+        })['work']
+    signals = current['delivery']['advisories']
+    assert any(row['code'] == 'delivery_stalled' and row['blocking'] is False for row in signals)
+    assert current['status'] == 'active'
+
+
+def test_gateway_returns_compact_delivery_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery, 'DB_PATH', tmp_path / 'gateway-delivery.sqlite3')
+    result = run(gateway.run_direct_ops_v2(str(tmp_path), 'fixture', 'project_action', 'work_open', {
+        'goal': 'Ship',
+        'request_key': 'delivery:gateway',
+        'delivery_contract': _delivery_contract(target='source_ready', required_scope='unit'),
+    }))
+    assert result['deliveryPolicyVersion'] == 'product-delivery-policy-v1'
+    assert result['deliveryContext']['configured'] is True
+    assert result['deliveryContext']['target'] == 'source_ready'
+    described = gateway.describe_plane('project_action', 'work_checkpoint')
+    assert described['deliveryPolicy']['version'] == 'product-delivery-policy-v1'
+    assert described['deliveryPolicy']['blockingAdvisories'] is False
