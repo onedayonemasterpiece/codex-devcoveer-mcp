@@ -26,7 +26,7 @@ def test_generated_council_schema_supports_provided_only_and_idempotency() -> No
     tmp, out = _built_runtime()
     try:
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
-        assert 'BRIDGE_VERSION = "3.35.1-nvidia-multi-source"' in bridge
+        assert 'BRIDGE_VERSION = "3.35.2-nvidia-bounded-progress"' in bridge
         schema_start = bridge.index("COUNCIL_RUN_INPUT_SCHEMA")
         schema_end = bridge.index("TOOLS = [", schema_start)
         schema = bridge[schema_start:schema_end]
@@ -152,5 +152,29 @@ def test_opencode_provided_only_uses_official_prompt_shape_under_local_deny_all(
         assert 'else self.permissions()' in launch
         assert 'plan_permission.get("*") != "deny"' in launch
         assert '"permission": session_permissions' in launch
+    finally:
+        tmp.cleanup()
+
+
+def test_nvidia_council_persists_progress_has_total_deadline_and_recovers_lost_worker() -> None:
+    tmp, out = _built_runtime()
+    try:
+        bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
+        assert "COUNCIL_TOTAL_TIMEOUT_SECONDS = 1200.0" in bridge
+        assert "async def _run_council_task_bounded(" in bridge
+        assert "timeout=COUNCIL_TOTAL_TIMEOUT_SECONDS" in bridge
+        assert '"workerIdentity": _council_worker_identity()' in bridge
+        assert '"deadlineAtMs"' in bridge
+        assert 'errorCategory="council_timeout"' in bridge
+        assert 'errorCategory="council_worker_lost"' in bridge
+        assert "_council_worker_alive" in bridge
+        assert "_cancel_nvidia_task(registered[\"taskId\"])" in bridge
+        assert "_release_nvidia_task(task_id)" in bridge
+        assert '"providerStage"' in bridge
+        assert '"providerState"' in bridge
+        assert '"providerStartedAtMs"' in bridge
+        assert '"providerFinishedAtMs"' in bridge
+        assert "_council_progress(task_id, council" in bridge
+        assert "task_id=task_id" in bridge
     finally:
         tmp.cleanup()
