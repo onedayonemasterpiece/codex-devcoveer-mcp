@@ -71,12 +71,19 @@ def _unquote(value: str) -> str:
     return value
 
 
+def _source_paths(
+    paths: Path | tuple[Path, ...] | list[Path],
+) -> tuple[Path, ...]:
+    return (paths,) if isinstance(paths, Path) else tuple(paths)
+
+
 def _candidate_keys(
-    paths: tuple[Path, ...] | list[Path] = PROVIDER_ENVS,
+    paths: Path | tuple[Path, ...] | list[Path] = PROVIDER_ENVS,
 ) -> list[tuple[str, str]]:
+    source_paths = _source_paths(paths)
     found: list[tuple[str, str, str]] = []
     seen_fingerprints: set[str] = set()
-    for path in paths:
+    for path in source_paths:
         if not path.exists():
             continue
         try:
@@ -112,15 +119,16 @@ def _candidate_keys(
 
 
 def slot_metadata(
-    paths: tuple[Path, ...] | list[Path] = PROVIDER_ENVS,
+    paths: Path | tuple[Path, ...] | list[Path] = PROVIDER_ENVS,
 ) -> dict[str, Any]:
-    slots = _candidate_keys(paths)
+    source_paths = _source_paths(paths)
+    slots = _candidate_keys(source_paths)
     return {
         "configured": len(slots) >= MAX_SLOTS,
         "slotCount": len(slots),
         "requiredSlots": MAX_SLOTS,
         "sourceNames": [name for name, _value in slots],
-        "configuredSourceFiles": [path.name for path in paths if path.exists()],
+        "configuredSourceFiles": [path.name for path in source_paths if path.exists()],
         "credentialValuesExposed": False,
     }
 
