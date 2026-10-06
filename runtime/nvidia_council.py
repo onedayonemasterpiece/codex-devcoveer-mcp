@@ -22,7 +22,10 @@ import urllib.request
 
 
 NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
-PROVIDER_ENV = Path("/home/dev/.config/opencode/devcoveer-providers.env")
+PROVIDER_ENVS = (
+    Path("/home/dev/.config/opencode/devcoveer-providers.env"),
+    Path("/home/dev/.local/state/regional-knowledge-base/service.env"),
+)
 SLOT_ROOT = Path("/home/dev/.local/share/openai-codex-mcp/nvidia-council-slots")
 MAX_SLOTS = 2
 TRANSIENT_RETRY_DELAYS = (5.0, 15.0, 30.0, 60.0)
@@ -68,47 +71,56 @@ def _unquote(value: str) -> str:
     return value
 
 
-def _candidate_keys(path: Path = PROVIDER_ENV) -> list[tuple[str, str]]:
-    try:
-        _private_regular(path)
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError) as exc:
-        raise NvidiaCouncilError(
-            "configuration", "NVIDIA provider EnvironmentFile is unavailable"
-        ) from exc
-
-    found: list[tuple[str, str]] = []
+def _candidate_keys(
+    paths: tuple[Path, ...] | list[Path] = PROVIDER_ENVS,
+) -> list[tuple[str, str]]:
+    found: list[tuple[str, str, str]] = []
     seen_fingerprints: set[str] = set()
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    for path in paths:
+        if not path.exists():
             continue
-        if line.startswith("export "):
-            line = line[7:].lstrip()
-        name, value = line.split("=", 1)
-        name = name.strip().upper()
-        if not _KEY_NAME_RE.fullmatch(name):
-            continue
-        value = _unquote(value)
-        if not value or len(value) > 4096:
-            continue
-        fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()
-        if fingerprint in seen_fingerprints:
-            continue
-        seen_fingerprints.add(fingerprint)
-        found.append((name, value))
+        try:
+            _private_regular(path)
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise NvidiaCouncilError(
+                "configuration",
+                f"NVIDIA provider EnvironmentFile is unavailable: {path.name}",
+            ) from exc
 
-    found.sort(key=lambda item: item[0])
-    return found[:MAX_SLOTS]
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            name, value = line.split("=", 1)
+            name = name.strip().upper()
+            if not _KEY_NAME_RE.fullmatch(name):
+                continue
+            value = _unquote(value)
+            if not value or len(value) > 4096:
+                continue
+            fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()
+            if fingerprint in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fingerprint)
+            found.append((path.name, name, value))
+
+    found.sort(key=lambda item: (item[0], item[1]))
+    return [(f"{source}:{name}", value) for source, name, value in found[:MAX_SLOTS]]
 
 
-def slot_metadata(path: Path = PROVIDER_ENV) -> dict[str, Any]:
-    slots = _candidate_keys(path)
+def slot_metadata(
+    paths: tuple[Path, ...] | list[Path] = PROVIDER_ENVS,
+) -> dict[str, Any]:
+    slots = _candidate_keys(paths)
     return {
         "configured": len(slots) >= MAX_SLOTS,
         "slotCount": len(slots),
         "requiredSlots": MAX_SLOTS,
         "sourceNames": [name for name, _value in slots],
+        "configuredSourceFiles": [path.name for path in paths if path.exists()],
         "credentialValuesExposed": False,
     }
 
