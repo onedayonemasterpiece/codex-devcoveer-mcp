@@ -283,6 +283,7 @@ DIRECT_FILES = (
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
     "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "projects_hub_edge_operator.py", "requirements_guard.py", "reuse_quality.py",
+    "opencode_acp_isolated.py",
 )
 
 def sha(path: Path) -> str:
