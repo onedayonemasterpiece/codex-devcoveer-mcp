@@ -1357,6 +1357,7 @@ def write_opencode_provider_env(owner: dict[str, str]) -> int:
         "GROQ_API_KEY2": ["GROQ_API_KEY2", "GROQ_KEY2"],
         "GROQ_API_KEY3": ["GROQ_API_KEY3", "GROQ_KEY3"],
         "NVIDIA_API_KEY": ["NVIDIA_API_KEY"],
+        "NVIDIA_API_KEY2": ["NVIDIA_API_KEY2"],
     }
     values: dict[str, str] = {}
     for owner_name, aliases in runtime_names.items():
