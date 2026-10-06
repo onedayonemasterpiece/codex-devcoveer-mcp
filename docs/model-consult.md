@@ -60,26 +60,30 @@ consultation and is not a substitute for product tenant isolation.
 
 Tenant-scoped product analysis may use `council_run` with
 `context_mode=provided_only`, a caller-authorized `evidence_bundle`, and a
-stable `request_key`. This is distinct from the existing trusted
-project-readable council.
+stable `request_key`. This remains distinct from the trusted project-readable
+council.
 
-In provided-only mode every participant round uses the isolated consultation
-transport: initial answer, cross-review, revision, final expert review, and
-bounded transient retries all run from the dedicated empty consultation
-directory with a deny-all permission surface and file/search/web/subagent
-tools disabled. Project requirements and reuse context are not injected into
-those provider prompts.
+`tier=free` remains strictly OpenCode-only and never silently falls back to
+NVIDIA. `tier=pro` is the product council and runs exactly Kimi K3 plus
+DeepSeek V4.1 Flash.
 
-The council result remains attributed per model, and the existing free,
-extended, and pro budget rules are unchanged. Paid tiers still require the
-existing separate explicit confirmation flow; isolation does not bypass or
-weaken that policy.
+NVIDIA is treated as a slow bounded-capacity resource, not as an end-user
+budget confirmation surface. No confirmation token is required. Provided-only
+NVIDIA rounds use the direct NVIDIA chat-completions transport: the model
+receives only the constructed council prompt/evidence, with no OpenCode
+session, project filesystem, web tool or subagent capability.
 
-The stable `request_key` is reserved durably before council launch. Replaying
-the same key and request returns the existing council task rather than
-starting another inference. A mismatched payload for the same key is rejected,
-and an uncertain/lost dispatch is surfaced as durable readback rather than
-blindly repeated.
+The trusted provider EnvironmentFile must contain two distinct non-empty NVIDIA
+credentials. They map to two cross-process slot locks, so at most two NVIDIA
+inference calls execute concurrently across users/processes. A third provider
+call waits for a slot within the bounded council deadline. Credentials are
+never returned in task records, logs or tool results, and duplicate credential
+values do not create extra capacity.
+
+Every result remains attributed per model. Provider 429/5xx failures use bounded
+retries; credential/validation failures are terminal. The stable `request_key`
+is reserved durably before launch, so replaying the same request returns the
+same council task rather than starting another inference.
 
 
 ### Directory-enforced OpenCode isolation
@@ -100,6 +104,8 @@ subagent/external-directory capabilities, and a plan-agent deny-all override.
 Before creating the provider session, DevCoveer reads effective `/config`
 for that workspace and fails closed unless those denies are present.
 
-NVIDIA provided-only consultation keeps the existing explicit deny-all
-session/tool mask. In both cases the evidence bundle remains the only
-caller-authorized semantic input.
+NVIDIA provided-only council calls bypass OpenCode entirely and therefore have
+no agent/tool surface to deny. The direct transport reads only one of the two
+trusted provider credentials after acquiring its slot, sends the bounded prompt
+to NVIDIA, and releases/clears that slot after the call. The evidence bundle
+remains the only caller-authorized semantic input.
