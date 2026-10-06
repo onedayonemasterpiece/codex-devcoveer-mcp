@@ -1,0 +1,7 @@
+# Separate virtualenv: existing OpenAI tunnel/bridge environment is not mutated.
+mcp==2.0.0
+starlette==1.6.0
+uvicorn==0.53.0
+python-multipart==0.0.32
+httpx==0.28.1
+pytest==8.4.2

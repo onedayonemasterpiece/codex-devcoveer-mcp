@@ -43,6 +43,10 @@ The verifier creates an ephemeral `uv run` environment using Python 3.12.3, runs
 
 ## Operating contract
 
+An additional full-authority OAuth HTTP entrypoint for Grok and other MCP clients
+is documented in [`docs/public-mcp-grok.md`](docs/public-mcp-grok.md). It preserves
+the existing OpenAI tunnel and loads the canonical bridge's complete tool surface.
+
 The canonical development modes, model resource classes, live-stall diagnostics, short-term model-health memory and adaptive failover policy are defined in [`docs/operating-model-and-adaptive-routing.md`](docs/operating-model-and-adaptive-routing.md).
 
 Source-handoff behavior is defined in [`docs/source-handoff-p0.md`](docs/source-handoff-p0.md), direct diagnostics in [`docs/direct-probes.md`](docs/direct-probes.md), the evidence-first incident/logging workflow in [`docs/incident-observability.md`](docs/incident-observability.md), and the operational-quality delivery plan in [`docs/quality/implementation-plan.yaml`](docs/quality/implementation-plan.yaml). Live acceptance is recorded under `docs/reports/operational-quality-phase1-acceptance-20261003.md` after rollout.
