@@ -723,7 +723,7 @@ def transform_nvidia_dual_slot(source: str) -> str:
     source = replace_once(
         source,
         'BRIDGE_VERSION = "3.34.4-isolation-cache-key"',
-        'BRIDGE_VERSION = "3.35.0-nvidia-dual-slot"',
+        'BRIDGE_VERSION = "3.35.1-nvidia-existing-key-pair"',
         "NVIDIA dual-slot bridge version",
     )
     source = replace_once(
