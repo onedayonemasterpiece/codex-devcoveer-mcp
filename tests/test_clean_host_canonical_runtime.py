@@ -128,7 +128,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.34.4-isolation-cache-key"' in bridge
+        assert 'BRIDGE_VERSION = "3.35.0-nvidia-dual-slot"' in bridge
         assert 'include_messages=(detail != "summary")' in bridge
         assert '"inspectionStatus":"metadata_only"' in bridge
         assert "Task is running. No message history was fetched" in bridge
@@ -187,7 +187,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         for name in (
             "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py",
             "direct_probe_config.json", "opencode_backend.py",
-            "source_handoff.py", "requirements_guard.py", "reuse_quality.py", "street_story_operator.py", "projects_hub_edge_operator.py",
+            "source_handoff.py", "requirements_guard.py", "reuse_quality.py", "street_story_operator.py", "projects_hub_edge_operator.py", "nvidia_council.py",
         ):
             assert (out / name).is_file()
 
