@@ -37,6 +37,8 @@ _KEY_NAME_RE = re.compile(r"^(?:NVIDIA[A-Z0-9_]*KEY[A-Z0-9_]*|NVCF[A-Z0-9_]*KEY[
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{1,180}$")
 _IN_PROCESS = set()
 _IN_PROCESS_LOCK = threading.Lock()
+_TASK_CANCEL_EVENTS: dict[str, threading.Event] = {}
+_TASK_CANCEL_LOCK = threading.Lock()
 
 MODEL_PROFILES: dict[str, dict[str, Any]] = {
     "moonshotai/kimi-k3": {
@@ -50,6 +52,33 @@ MODEL_PROFILES: dict[str, dict[str, Any]] = {
         "max_tokens": 16384,
     },
 }
+
+
+def task_cancel_event(task_id: str) -> threading.Event:
+    clean = str(task_id or "").strip()
+    if not clean:
+        raise NvidiaCouncilError("validation", "NVIDIA council task_id is required")
+    with _TASK_CANCEL_LOCK:
+        event = _TASK_CANCEL_EVENTS.get(clean)
+        if event is None:
+            event = threading.Event()
+            _TASK_CANCEL_EVENTS[clean] = event
+        return event
+
+
+def cancel_task(task_id: str) -> bool:
+    event = task_cancel_event(task_id)
+    already = event.is_set()
+    event.set()
+    return not already
+
+
+def release_task(task_id: str) -> None:
+    clean = str(task_id or "").strip()
+    if not clean:
+        return
+    with _TASK_CANCEL_LOCK:
+        _TASK_CANCEL_EVENTS.pop(clean, None)
 
 
 class NvidiaCouncilError(RuntimeError):
@@ -407,15 +436,19 @@ async def invoke_nvidia(
     *,
     model: str,
     prompt: str,
+    task_id: str | None = None,
     capacity_timeout_seconds: float = DEFAULT_CAPACITY_TIMEOUT_SECONDS,
     provider_deadline_seconds: float = DEFAULT_PROVIDER_DEADLINE_SECONDS,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
+    effective_cancel = cancel_event
+    if effective_cancel is None and task_id is not None:
+        effective_cancel = task_cancel_event(task_id)
     return await asyncio.to_thread(
         _invoke_blocking,
         model=model,
         prompt=prompt,
         capacity_timeout_seconds=capacity_timeout_seconds,
         provider_deadline_seconds=provider_deadline_seconds,
-        cancel_event=cancel_event,
+        cancel_event=effective_cancel,
     )
