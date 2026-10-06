@@ -722,6 +722,12 @@ def transform_nvidia_dual_slot(source: str) -> str:
     """Remove end-user NVIDIA budget confirmation and use two direct credential slots."""
     source = replace_once(
         source,
+        'BRIDGE_VERSION = "3.34.4-isolation-cache-key"',
+        'BRIDGE_VERSION = "3.35.0-nvidia-dual-slot"',
+        "NVIDIA dual-slot bridge version",
+    )
+    source = replace_once(
+        source,
         "PAID_COUNCIL_CONFIRMATION_TTL_SECONDS = 600\n",
         "NVIDIA_COUNCIL_SLOT_CAPACITY = 2\n",
         "NVIDIA dual-slot capacity constant",
