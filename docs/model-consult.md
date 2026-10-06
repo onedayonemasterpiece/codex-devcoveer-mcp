@@ -63,17 +63,20 @@ Tenant-scoped product analysis may use `council_run` with
 stable `request_key`. This is distinct from the existing trusted
 project-readable council.
 
-In provided-only mode every participant round uses the isolated consultation
-transport: initial answer, cross-review, revision, final expert review, and
-bounded transient retries all run from the dedicated empty consultation
-directory with a deny-all permission surface and file/search/web/subagent
-tools disabled. Project requirements and reuse context are not injected into
-those provider prompts.
+In provided-only mode OpenCode participants use the dedicated empty consultation
+directory with a deny-all permission surface and file/search/web/subagent tools
+disabled. NVIDIA participants do not run through an OpenCode agent at all:
+DevCoveer sends only the caller-authorized council prompt/evidence to NVIDIA's
+OpenAI-compatible chat endpoint. Project requirements, repository files, reuse
+context and tool access are not injected into those direct provider calls.
 
-The council result remains attributed per model, and the existing free,
-extended, and pro budget rules are unchanged. Paid tiers still require the
-existing separate explicit confirmation flow; isolation does not bypass or
-weaken that policy.
+NVIDIA is an admission/capacity resource, not an end-user budget confirmation
+surface. DevCoveer requires two distinct configured NVIDIA credentials and
+maps them to two cross-process slot locks; at most two NVIDIA inference calls
+run concurrently, and a saturated additional call waits for bounded capacity.
+The product pro preset is Kimi K3 + DeepSeek V4.1 Flash. No confirmation token
+or user budget approval is required. The free tier remains OpenCode-only and
+never silently falls back to NVIDIA.
 
 The stable `request_key` is reserved durably before council launch. Replaying
 the same key and request returns the existing council task rather than
@@ -100,6 +103,8 @@ subagent/external-directory capabilities, and a plan-agent deny-all override.
 Before creating the provider session, DevCoveer reads effective `/config`
 for that workspace and fails closed unless those denies are present.
 
-NVIDIA provided-only consultation keeps the existing explicit deny-all
-session/tool mask. In both cases the evidence bundle remains the only
-caller-authorized semantic input.
+NVIDIA provided-only council calls bypass OpenCode entirely and therefore have
+no agent/tool surface to deny. The direct transport reads only one of the two
+trusted provider credentials after acquiring its slot, sends the bounded prompt
+to NVIDIA, and releases/clears that slot after the call. The evidence bundle
+remains the only caller-authorized semantic input.
