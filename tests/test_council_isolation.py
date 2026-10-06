@@ -100,10 +100,15 @@ def test_project_read_path_remains_and_nvidia_tiers_need_no_user_confirmation() 
         assert '"status": "confirmation_required"' not in bridge
         assert '"requiresExplicitUserConfirmation": False' in bridge
         assert '"nvidiaSlotCapacity": NVIDIA_COUNCIL_SLOT_CAPACITY' in bridge
-        assert '"nvidia/moonshotai/kimi-k3"' in bridge
-        assert '"nvidia/deepseek-ai/deepseek-v4.1-flash"' in bridge
-        assert "nvidia/nvidia/nemotron-3-super-120b-a12b" not in bridge
-        assert "nvidia/nvidia/nemotron-3-ultra-550b-a55b" not in bridge
+        preset_start = bridge.index("COUNCIL_PRESETS:")
+        preset_end = bridge.index("WRITE_PERMISSION_PROFILE", preset_start)
+        presets = bridge[preset_start:preset_end]
+        pro_start = presets.index('"pro": (')
+        pro_block = presets[pro_start:presets.index("    ),", pro_start) + 7]
+        assert '"nvidia/moonshotai/kimi-k3"' in pro_block
+        assert '"nvidia/deepseek-ai/deepseek-v4.1-flash"' in pro_block
+        assert "nvidia/nvidia/nemotron-3-super-120b-a12b" not in pro_block
+        assert "nvidia/nvidia/nemotron-3-ultra-550b-a55b" not in pro_block
         # Existing trusted project-readable path remains available.
         assert "await OPENCODE_BACKEND.start(" in bridge
         assert "await OPENCODE_BACKEND.prompt(" in bridge
