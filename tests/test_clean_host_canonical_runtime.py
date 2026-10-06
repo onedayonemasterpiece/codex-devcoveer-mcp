@@ -128,7 +128,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.35.2-nvidia-bounded-progress"' in bridge
+        assert 'BRIDGE_VERSION = "3.36.0-product-delivery-v1"' in bridge
         assert 'include_messages=(detail != "summary")' in bridge
         assert '"inspectionStatus":"metadata_only"' in bridge
         assert "Task is running. No message history was fetched" in bridge
@@ -175,6 +175,13 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'if key not in native_properties:' in gateway
         assert 'if "request_key" not in native_properties:' in gateway
         backend = (out / "opencode_backend.py").read_text(encoding="utf-8")
+        assert (out / "product_delivery.py").is_file()
+        assert "PRODUCT_DELIVERY_POLICY_VERSION" in bridge
+        assert "_delivery_policy_prompt(bound_work)" in bridge
+        assert '"work_id": {' in bridge
+        assert "work_binding_conflict" in bridge
+        assert '"deliveryContext": delivery_context' in bridge
+        assert "task_work_context as _task_work_context" in bridge
         assert "requirements_prompt(Path(directory))" in backend
         assert "boundary + requirements + reuse + prompt" in backend
         assert "reuse_prompt(Path(directory))" in backend
@@ -187,7 +194,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         for name in (
             "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py",
             "direct_probe_config.json", "opencode_backend.py",
-            "source_handoff.py", "requirements_guard.py", "reuse_quality.py", "street_story_operator.py", "projects_hub_edge_operator.py", "nvidia_council.py",
+            "source_handoff.py", "requirements_guard.py", "reuse_quality.py", "product_delivery.py", "street_story_operator.py", "projects_hub_edge_operator.py", "nvidia_council.py",
         ):
             assert (out / name).is_file()
 
