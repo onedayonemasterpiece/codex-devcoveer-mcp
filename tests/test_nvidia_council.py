@@ -4,6 +4,8 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+import threading
+import time
 
 import pytest
 
@@ -125,3 +127,75 @@ def test_direct_council_models_are_exact_product_pair() -> None:
     }
     assert mod.MAX_SLOTS == 2
     assert mod.NVIDIA_ENDPOINT == "https://integrate.api.nvidia.com/v1/chat/completions"
+
+
+def test_cancel_event_stops_capacity_wait(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mod, "SLOT_ROOT", tmp_path / "locks")
+    keys = [("NVIDIA_KEY_A", "a"), ("NVIDIA_KEY_B", "b")]
+    first = mod._try_acquire_slot(keys)
+    second = mod._try_acquire_slot(keys)
+    assert first is not None and second is not None
+    cancelled = threading.Event()
+    cancelled.set()
+    started = time.monotonic()
+    with pytest.raises(mod.NvidiaCouncilError) as exc:
+        mod._acquire_slot(keys, timeout_seconds=10.0, cancel_event=cancelled)
+    assert exc.value.category == "cancelled"
+    assert time.monotonic() - started < 0.5
+    mod._release_slot(first[0], first[1])
+    mod._release_slot(second[0], second[1])
+
+
+def test_provider_deadline_bounds_transient_retry_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod, "SLOT_ROOT", tmp_path / "locks")
+    monkeypatch.setattr(
+        mod,
+        "_candidate_keys",
+        lambda *_args, **_kwargs: [
+            ("NVIDIA_KEY_A", "a"),
+            ("NVIDIA_KEY_B", "b"),
+        ],
+    )
+
+    calls = {"count": 0}
+
+    def fail_fast(**_kwargs):
+        calls["count"] += 1
+        raise mod.NvidiaCouncilError("provider_unavailable", "temporary")
+
+    monkeypatch.setattr(mod, "_invoke_once", fail_fast)
+    started = time.monotonic()
+    with pytest.raises(mod.NvidiaCouncilError) as exc:
+        mod._invoke_blocking(
+            model="moonshotai/kimi-k3",
+            prompt="bounded retry",
+            capacity_timeout_seconds=1.0,
+            provider_deadline_seconds=0.05,
+            cancel_event=None,
+        )
+    assert exc.value.category == "timeout"
+    assert calls["count"] == 1
+    assert time.monotonic() - started < 1.0
+
+
+def test_task_cancel_registry_is_idempotent_and_releasable() -> None:
+    task_id = "dvt_" + "c" * 32
+    mod.release_task(task_id)
+    event = mod.task_cancel_event(task_id)
+    assert event.is_set() is False
+    assert mod.cancel_task(task_id) is True
+    assert event.is_set() is True
+    assert mod.cancel_task(task_id) is False
+    mod.release_task(task_id)
+    replacement = mod.task_cancel_event(task_id)
+    assert replacement is not event
+    assert replacement.is_set() is False
+    mod.release_task(task_id)
+
+
+def test_provider_deadline_defaults_are_bounded() -> None:
+    assert mod.DEFAULT_PROVIDER_DEADLINE_SECONDS == 360.0
+    assert mod.DEFAULT_CAPACITY_TIMEOUT_SECONDS == 900.0
+    assert mod.SOCKET_STALL_TIMEOUT_SECONDS == 180.0
