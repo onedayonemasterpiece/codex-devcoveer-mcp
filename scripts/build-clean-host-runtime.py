@@ -282,7 +282,7 @@ DIRECT_FILES = (
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
-    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "projects_hub_edge_operator.py", "requirements_guard.py", "reuse_quality.py", "nvidia_council.py",
+    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "product_delivery.py", "projects_hub_edge_operator.py", "requirements_guard.py", "reuse_quality.py", "nvidia_council.py",
 )
 
 def sha(path: Path) -> str:
@@ -1219,6 +1219,301 @@ def _launch_council(
     source = replace_once(source, cancel_old, cancel_new, "council NVIDIA cancellation")
     return source
 
+
+def transform_product_delivery(source: str) -> str:
+    """Inject Product delivery policy v1 into task start/continue/read paths."""
+    source = replace_once(
+        source,
+        'BRIDGE_VERSION = "3.35.2-nvidia-bounded-progress"',
+        'BRIDGE_VERSION = "3.36.0-product-delivery-v1"',
+        "product delivery bridge version",
+    )
+    source = replace_once(
+        source,
+        "from requirements_guard import requirements_prompt as _requirements_prompt\n",
+        "from requirements_guard import requirements_prompt as _requirements_prompt\n"
+        "from product_delivery import POLICY_VERSION as PRODUCT_DELIVERY_POLICY_VERSION, policy_prompt as _delivery_policy_prompt\n"
+        "from process_recovery import task_work_context as _task_work_context\n",
+        "product delivery bridge imports",
+    )
+
+    work_property = '''        "work_id": {
+            "type": "string", "pattern": r"^work_[0-9a-f]{24}$",
+            "description": (
+                "Optional existing recovery work to bind to this task. Omit on continuation "
+                "to inherit an existing binding; a conflicting work_id is rejected."
+            ),
+        },
+'''
+    def add_work_id(schema_marker: str, next_marker: str) -> None:
+        nonlocal source
+        start = source.find(schema_marker)
+        end = source.find(next_marker, start)
+        if start < 0 or end < 0:
+            raise SystemExit(f"product delivery schema block missing: {schema_marker}")
+        block = source[start:end]
+        needle = '        "reasoning_effort": REASONING_EFFORT_INPUT_PROPERTY,\n'
+        if block.count(needle) != 1:
+            raise SystemExit(f"product delivery reasoning anchor mismatch: {schema_marker}")
+        block = block.replace(needle, needle + work_property, 1)
+        source = source[:start] + block + source[end:]
+
+    add_work_id("START_TASK_INPUT_SCHEMA: dict[str, Any] = {", "LIST_TASKS_INPUT_SCHEMA:")
+    add_work_id("CONTINUE_TASK_INPUT_SCHEMA: dict[str, Any] = {", "LIST_MODELS_INPUT_SCHEMA:")
+
+    delivery_helpers = r'''
+def _resolve_delivery_binding(
+    cwd: str, requested_work_id: str | None, existing_work_id: str | None = None,
+) -> tuple[str | None, dict[str, Any] | None, dict[str, Any]]:
+    if existing_work_id and requested_work_id and existing_work_id != requested_work_id:
+        raise ProbeError(
+            "work_binding_conflict",
+            "task is already bound to a different work_id; continue the existing work instead of rebinding it",
+            status="denied",
+        )
+    work_id = existing_work_id or requested_work_id
+    work, context = _task_work_context(cwd, work_id)
+    return work_id, work, context
+
+
+def _delivery_error(exc: ProbeError) -> types.CallToolResult:
+    return _tool_result({
+        "status": "failed",
+        "errorCategory": exc.category,
+        "content": str(exc),
+        "deliveryPolicyVersion": PRODUCT_DELIVERY_POLICY_VERSION,
+    }, error=True)
+
+
+'''
+    source = replace_once(
+        source,
+        "\ndef _first_prompt(project: str, prompt: str, access: str) -> str:\n",
+        "\n" + delivery_helpers + "def _first_prompt(project: str, prompt: str, access: str) -> str:\n",
+        "product delivery helper anchor",
+    )
+
+    start_marker = '        if name == "start_task":\n'
+    start = source.find(start_marker)
+    end = source.find('        if name == "list_tasks":\n', start)
+    if start < 0 or end < 0:
+        raise SystemExit("product delivery start_task block missing")
+    block = source[start:end]
+    incident_tail = '''            if isinstance(incident_preflight, dict) and incident_preflight.get("agent_context"):
+                task_prompt = str(incident_preflight["agent_context"]) + "\\n\\n" + task_prompt
+            if route["backend"] == "opencode":
+'''
+    incident_new = '''            if isinstance(incident_preflight, dict) and incident_preflight.get("agent_context"):
+                task_prompt = str(incident_preflight["agent_context"]) + "\\n\\n" + task_prompt
+            try:
+                bound_work_id, bound_work, delivery_context = _resolve_delivery_binding(
+                    project.path, arguments.get("work_id")
+                )
+            except ProbeError as exc:
+                return _delivery_error(exc)
+            task_prompt = _delivery_policy_prompt(bound_work) + task_prompt
+            if route["backend"] == "opencode":
+'''
+    if block.count(incident_tail) != 1:
+        raise SystemExit("product delivery start preflight anchor mismatch")
+    block = block.replace(incident_tail, incident_new, 1)
+    registry_tail = '                routingReason=route["reason"], title=task_name,\n'
+    if block.count(registry_tail) != 2:
+        raise SystemExit(f"product delivery task registry anchors mismatch: {block.count(registry_tail)}")
+    block = block.replace(
+        registry_tail,
+        '                routingReason=route["reason"], title=task_name,\n'
+        '                workId=bound_work_id, deliveryPolicyVersion=PRODUCT_DELIVERY_POLICY_VERSION,\n',
+    )
+    opencode_payload = '                    "access": access, "selectionVerified": True,\n'
+    if block.count(opencode_payload) != 1:
+        raise SystemExit("product delivery OpenCode start result anchor mismatch")
+    block = block.replace(
+        opencode_payload,
+        opencode_payload + '                    "deliveryContext": delivery_context,\n'
+        '                    "deliveryPolicyVersion": PRODUCT_DELIVERY_POLICY_VERSION,\n',
+        1,
+    )
+    native_payload = '                "selectionVerified": True,\n'
+    if block.count(native_payload) != 1:
+        raise SystemExit("product delivery native start result anchor mismatch")
+    block = block.replace(
+        native_payload,
+        native_payload + '                "deliveryContext": delivery_context,\n'
+        '                "deliveryPolicyVersion": PRODUCT_DELIVERY_POLICY_VERSION,\n',
+        1,
+    )
+    source = source[:start] + block + source[end:]
+
+    opencode_marker = '        if registered is not None and registered.get("backend") == "opencode":\n'
+    native_marker = '        if registered is not None and registered.get("backend") == "codex":\n'
+    start = source.find(opencode_marker)
+    end = source.find(native_marker, start)
+    if start < 0 or end < 0:
+        raise SystemExit("product delivery OpenCode continuation block missing")
+    block = source[start:end]
+    read_old = '''            if name == "read_task":
+                return _tool_result(await _read_opencode_task(
+                    registered, detail=arguments.get("detail", "summary"),
+                ))
+'''
+    read_new = '''            if name == "read_task":
+                payload = await _read_opencode_task(
+                    registered, detail=arguments.get("detail", "summary"),
+                )
+                _work, delivery_context = _task_work_context(
+                    str(registered["cwd"]), registered.get("workId")
+                )
+                payload["deliveryContext"] = delivery_context
+                payload["deliveryPolicyVersion"] = PRODUCT_DELIVERY_POLICY_VERSION
+                return _tool_result(payload)
+'''
+    if block.count(read_old) != 1:
+        raise SystemExit("product delivery OpenCode read anchor mismatch")
+    block = block.replace(read_old, read_new, 1)
+    continue_anchor = '''            assert name == "continue_task"
+            current = await _read_opencode_task(registered)
+'''
+    continue_new = '''            assert name == "continue_task"
+            try:
+                bound_work_id, bound_work, delivery_context = _resolve_delivery_binding(
+                    str(registered["cwd"]), arguments.get("work_id"), registered.get("workId")
+                )
+            except ProbeError as exc:
+                return _delivery_error(exc)
+            current = await _read_opencode_task(registered)
+'''
+    if block.count(continue_anchor) != 1:
+        raise SystemExit("product delivery OpenCode continue anchor mismatch")
+    block = block.replace(continue_anchor, continue_new, 1)
+    prompt_anchor = '                    prompt=arguments["prompt"], provider=provider_id, model_id=model_id,\n'
+    if block.count(prompt_anchor) != 1:
+        raise SystemExit("product delivery OpenCode prompt anchor mismatch")
+    block = block.replace(
+        prompt_anchor,
+        '                    prompt=_delivery_policy_prompt(bound_work) + arguments["prompt"], provider=provider_id, model_id=model_id,\n',
+        1,
+    )
+    update_anchor = '                provider=provider_id, model=model_id, selection=selection,\n'
+    if block.count(update_anchor) != 1:
+        raise SystemExit(f"product delivery OpenCode update fields mismatch: {block.count(update_anchor)}")
+    block = block.replace(
+        update_anchor,
+        update_anchor
+        + '                workId=bound_work_id, deliveryPolicyVersion=PRODUCT_DELIVERY_POLICY_VERSION,\n',
+        1,
+    )
+    continue_result = '                "action": "continued_same_session",\n'
+    if block.count(continue_result) != 1:
+        raise SystemExit("product delivery OpenCode result anchor mismatch")
+    block = block.replace(
+        continue_result,
+        continue_result + '                "deliveryContext": delivery_context,\n'
+        '                "deliveryPolicyVersion": PRODUCT_DELIVERY_POLICY_VERSION,\n',
+        1,
+    )
+    source = source[:start] + block + source[end:]
+
+    native_start = source.find(native_marker)
+    if native_start < 0:
+        raise SystemExit("product delivery native lifecycle block missing")
+    block = source[native_start:]
+    read_payload_anchor = '''            if registered_codex is not None:
+                payload["taskId"] = registered_codex["taskId"]
+            if arguments.get("detail", "summary") == "full":
+'''
+    read_payload_new = '''            native_work_id = registered_codex.get("workId") if registered_codex is not None else None
+            _work, delivery_context = _task_work_context(entry.path, native_work_id)
+            payload["deliveryContext"] = delivery_context
+            payload["deliveryPolicyVersion"] = PRODUCT_DELIVERY_POLICY_VERSION
+            if registered_codex is not None:
+                payload["taskId"] = registered_codex["taskId"]
+            if arguments.get("detail", "summary") == "full":
+'''
+    if block.count(read_payload_anchor) != 1:
+        raise SystemExit("product delivery native read result anchor mismatch")
+    block = block.replace(read_payload_anchor, read_payload_new, 1)
+    metadata_anchor = '''        if metadata is None or metadata.get("cwd") != entry.path:
+            return _tool_result({
+                "status": "failed",
+                "threadId": thread_id,
+                "content": (
+                    "This task has no trusted bridge sandbox metadata. Start a new task "
+                    "or continue it explicitly with the Codex CLI."
+                ),
+                "resumeCommand": f"codex resume {thread_id}",
+            }, error=True)
+        if arguments.get("provider") not in (None, "codex"):
+'''
+    metadata_new = '''        if metadata is None or metadata.get("cwd") != entry.path:
+            return _tool_result({
+                "status": "failed",
+                "threadId": thread_id,
+                "content": (
+                    "This task has no trusted bridge sandbox metadata. Start a new task "
+                    "or continue it explicitly with the Codex CLI."
+                ),
+                "resumeCommand": f"codex resume {thread_id}",
+            }, error=True)
+        try:
+            existing_work_id = registered_codex.get("workId") if registered_codex is not None else None
+            bound_work_id, bound_work, delivery_context = _resolve_delivery_binding(
+                entry.path, arguments.get("work_id"), existing_work_id
+            )
+        except ProbeError as exc:
+            return _delivery_error(exc)
+        if registered_codex is not None and (
+            registered_codex.get("workId") != bound_work_id
+            or registered_codex.get("deliveryPolicyVersion") != PRODUCT_DELIVERY_POLICY_VERSION
+        ):
+            registered_codex = TASK_REGISTRY.update(
+                registered_codex["taskId"],
+                workId=bound_work_id,
+                deliveryPolicyVersion=PRODUCT_DELIVERY_POLICY_VERSION,
+            )
+        if arguments.get("provider") not in (None, "codex"):
+'''
+    if block.count(metadata_anchor) != 1:
+        raise SystemExit("product delivery native binding anchor mismatch")
+    block = block.replace(metadata_anchor, metadata_new, 1)
+    steer_prompt = '                    "input": [{"type": "text", "text": arguments["prompt"]}],\n'
+    if block.count(steer_prompt) != 1:
+        raise SystemExit(f"product delivery native steer prompt mismatch: {block.count(steer_prompt)}")
+    block = block.replace(
+        steer_prompt,
+        '                    "input": [{"type": "text", "text": _delivery_policy_prompt(bound_work) + arguments["prompt"]}],\n',
+        1,
+    )
+    steer_result = '                "action": "steered_active_turn",\n'
+    if block.count(steer_result) != 1:
+        raise SystemExit("product delivery native steer result anchor mismatch")
+    block = block.replace(
+        steer_result,
+        steer_result + '                "deliveryContext": delivery_context,\n'
+        '                "deliveryPolicyVersion": PRODUCT_DELIVERY_POLICY_VERSION,\n',
+        1,
+    )
+    turn_prompt = '            "input": [{"type": "text", "text": arguments["prompt"]}],\n'
+    if block.count(turn_prompt) != 1:
+        raise SystemExit(f"product delivery native continuation prompt mismatch: {block.count(turn_prompt)}")
+    block = block.replace(
+        turn_prompt,
+        '            "input": [{"type": "text", "text": _delivery_policy_prompt(bound_work) + arguments["prompt"]}],\n',
+        1,
+    )
+    final_payload = '            "selectionVerified": True,\n'
+    if block.count(final_payload) != 1:
+        raise SystemExit(f"product delivery native continuation result mismatch: {block.count(final_payload)}")
+    block = block.replace(
+        final_payload,
+        final_payload + '            "deliveryContext": delivery_context,\n'
+        '            "deliveryPolicyVersion": PRODUCT_DELIVERY_POLICY_VERSION,\n',
+        1,
+    )
+    source = source[:native_start] + block
+    return source
+
+
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
                           'BRIDGE_VERSION = "3.34.4-isolation-cache-key"', "version")
@@ -2060,6 +2355,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     source = account_module.patch_bridge(source)
     source = transform_council_isolation(source)
     source = transform_nvidia_dual_slot(source)
+    source = transform_product_delivery(source)
     return source
 
 def transform_backend(source: str) -> str:
