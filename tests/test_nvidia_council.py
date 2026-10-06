@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -199,3 +200,55 @@ def test_provider_deadline_defaults_are_bounded() -> None:
     assert mod.DEFAULT_PROVIDER_DEADLINE_SECONDS == 360.0
     assert mod.DEFAULT_CAPACITY_TIMEOUT_SECONDS == 900.0
     assert mod.SOCKET_STALL_TIMEOUT_SECONDS == 180.0
+
+
+def test_deepseek_uses_bounded_non_stream_json_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "choices": [
+                        {"message": {"role": "assistant", "content": "deepseek ok"}}
+                    ],
+                    "usage": {"completion_tokens": 7},
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["accept"] = request.get_header("Accept")
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    text, usage = mod._invoke_once(
+        key="secret",
+        model="deepseek-ai/deepseek-v4.1-flash",
+        prompt="bounded council stage",
+        deadline_monotonic=time.monotonic() + 30.0,
+    )
+    assert text == "deepseek ok"
+    assert usage == {"completion_tokens": 7}
+    assert captured["body"]["stream"] is False
+    assert captured["body"]["max_tokens"] == 4096
+    assert captured["body"]["temperature"] == 1.0
+    assert captured["body"]["top_p"] == 0.95
+    assert captured["accept"] == "application/json"
+    assert 0 < captured["timeout"] <= mod.SOCKET_STALL_TIMEOUT_SECONDS
+
+
+def test_kimi_keeps_streaming_profile() -> None:
+    profile = mod.MODEL_PROFILES["moonshotai/kimi-k3"]
+    assert profile["max_tokens"] == 16384
+    assert profile.get("stream", True) is True
+    assert profile["reasoning_effort"] == "max"
