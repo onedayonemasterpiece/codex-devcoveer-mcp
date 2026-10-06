@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import stat
 import threading
 import time
@@ -28,6 +29,9 @@ PROVIDER_ENVS = (
 )
 SLOT_ROOT = Path("/home/dev/.local/share/openai-codex-mcp/nvidia-council-slots")
 MAX_SLOTS = 2
+DEFAULT_CAPACITY_TIMEOUT_SECONDS = 900.0
+DEFAULT_PROVIDER_DEADLINE_SECONDS = 360.0
+SOCKET_STALL_TIMEOUT_SECONDS = 180.0
 TRANSIENT_RETRY_DELAYS = (5.0, 15.0, 30.0, 60.0)
 _KEY_NAME_RE = re.compile(r"^(?:NVIDIA[A-Z0-9_]*KEY[A-Z0-9_]*|NVCF[A-Z0-9_]*KEY[A-Z0-9_]*)$")
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{1,180}$")
@@ -179,11 +183,16 @@ def _release_slot(index: int, fd: int) -> None:
 
 
 def _acquire_slot(
-    keys: list[tuple[str, str]], *, timeout_seconds: float
+    keys: list[tuple[str, str]],
+    *,
+    timeout_seconds: float,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[int, int, str, int]:
     started = time.monotonic()
     deadline = started + max(1.0, timeout_seconds)
     while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise NvidiaCouncilError("cancelled", "NVIDIA council call was cancelled")
         result = _try_acquire_slot(keys)
         if result is not None:
             index, fd, key = result
@@ -193,7 +202,10 @@ def _acquire_slot(
                 "capacity",
                 "Both NVIDIA council credential slots are busy",
             )
-        time.sleep(0.1)
+        if cancel_event is not None:
+            cancel_event.wait(0.1)
+        else:
+            time.sleep(0.1)
 
 
 def _category(status: int) -> str:
@@ -223,7 +235,12 @@ def _extract_event_text(payload: dict[str, Any]) -> str:
 
 
 def _invoke_once(
-    *, key: str, model: str, prompt: str, timeout_seconds: float
+    *,
+    key: str,
+    model: str,
+    prompt: str,
+    deadline_monotonic: float,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     profile = dict(MODEL_PROFILES.get(model, {}))
     body: dict[str, Any] = {
@@ -248,8 +265,16 @@ def _invoke_once(
     chunks: list[str] = []
     usage: dict[str, Any] | None = None
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        remaining = deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            raise NvidiaCouncilError("timeout", "NVIDIA provider deadline expired")
+        socket_timeout = max(1.0, min(SOCKET_STALL_TIMEOUT_SECONDS, remaining))
+        with urllib.request.urlopen(request, timeout=socket_timeout) as response:
             for raw in response:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise NvidiaCouncilError("cancelled", "NVIDIA council call was cancelled")
+                if time.monotonic() >= deadline_monotonic:
+                    raise NvidiaCouncilError("timeout", "NVIDIA provider deadline expired")
                 line = raw.decode("utf-8", "replace").strip()
                 if not line or not line.startswith("data:"):
                     continue
@@ -280,6 +305,10 @@ def _invoke_once(
             f"NVIDIA chat completion failed with HTTP {status}",
             status=status,
         ) from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise NvidiaCouncilError(
+            "provider_unavailable", "NVIDIA chat completion transport timed out"
+        ) from exc
     except urllib.error.URLError as exc:
         raise NvidiaCouncilError(
             "provider_unavailable", "NVIDIA chat completion transport failed"
@@ -296,7 +325,8 @@ def _invoke_blocking(
     model: str,
     prompt: str,
     capacity_timeout_seconds: float,
-    request_timeout_seconds: float,
+    provider_deadline_seconds: float,
+    cancel_event: threading.Event | None,
 ) -> dict[str, Any]:
     if not _MODEL_RE.fullmatch(model):
         raise NvidiaCouncilError("validation", "Invalid NVIDIA model identifier")
@@ -315,21 +345,43 @@ def _invoke_blocking(
     total_wait_ms = 0
     started = time.monotonic()
     last_error: NvidiaCouncilError | None = None
+    provider_deadline: float | None = None
     delays = (0.0,) + TRANSIENT_RETRY_DELAYS
     for attempt, delay in enumerate(delays, start=1):
+        if cancel_event is not None and cancel_event.is_set():
+            raise NvidiaCouncilError("cancelled", "NVIDIA council call was cancelled")
+        if provider_deadline is not None and time.monotonic() >= provider_deadline:
+            raise NvidiaCouncilError("timeout", "NVIDIA provider deadline expired")
         if delay:
-            time.sleep(delay)
+            if provider_deadline is not None and time.monotonic() + delay >= provider_deadline:
+                raise NvidiaCouncilError("timeout", "NVIDIA provider deadline expired")
+            if cancel_event is not None:
+                if cancel_event.wait(delay):
+                    raise NvidiaCouncilError("cancelled", "NVIDIA council call was cancelled")
+            else:
+                time.sleep(delay)
+        remaining_capacity = capacity_timeout_seconds
+        if provider_deadline is not None:
+            remaining_capacity = min(
+                remaining_capacity,
+                max(1.0, provider_deadline - time.monotonic()),
+            )
         index, fd, key, waited_ms = _acquire_slot(
-            keys, timeout_seconds=capacity_timeout_seconds
+            keys,
+            timeout_seconds=remaining_capacity,
+            cancel_event=cancel_event,
         )
         total_wait_ms += waited_ms
+        if provider_deadline is None:
+            provider_deadline = time.monotonic() + max(1.0, provider_deadline_seconds)
         attempts = attempt
         try:
             text, usage = _invoke_once(
                 key=key,
                 model=model,
                 prompt=clean_prompt,
-                timeout_seconds=request_timeout_seconds,
+                deadline_monotonic=provider_deadline,
+                cancel_event=cancel_event,
             )
             return {
                 "text": text,
@@ -355,13 +407,15 @@ async def invoke_nvidia(
     *,
     model: str,
     prompt: str,
-    capacity_timeout_seconds: float = 900.0,
-    request_timeout_seconds: float = 900.0,
+    capacity_timeout_seconds: float = DEFAULT_CAPACITY_TIMEOUT_SECONDS,
+    provider_deadline_seconds: float = DEFAULT_PROVIDER_DEADLINE_SECONDS,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     return await asyncio.to_thread(
         _invoke_blocking,
         model=model,
         prompt=prompt,
         capacity_timeout_seconds=capacity_timeout_seconds,
-        request_timeout_seconds=request_timeout_seconds,
+        provider_deadline_seconds=provider_deadline_seconds,
+        cancel_event=cancel_event,
     )
