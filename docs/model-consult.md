@@ -88,9 +88,22 @@ still count as one slot. Credential values are never returned in task records,
 logs or tool results.
 
 Every result remains attributed per model. Provider 429/5xx failures use bounded
-retries; credential/validation failures are terminal. The stable `request_key`
-is reserved durably before launch, so replaying the same request returns the
-same council task rather than starting another inference.
+retries; credential/validation failures are terminal. Capacity waiting is
+separate from provider execution: once a slot is acquired, all retries for that
+provider stage share one provider deadline rather than each receiving a fresh
+long timeout.
+
+A council has a bounded total lifetime. Each direct NVIDIA round persists its
+stage/state/start/finish timestamps into the durable task record, so operators
+can distinguish capacity wait/provider execution/completion instead of seeing
+an opaque long-running `initial` stage. Cancelling a council signals the
+direct NVIDIA transport, stopping slot wait and suppressing later retries/rounds.
+If the MCP process restarts, `read_task` detects a durable council whose
+recorded worker identity no longer exists and terminates it as
+`council_worker_lost` instead of leaving it `running` forever.
+
+The stable `request_key` is reserved durably before launch, so replaying the
+same request returns the same council task rather than starting another inference.
 
 
 ### Directory-enforced OpenCode isolation
