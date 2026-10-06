@@ -958,9 +958,13 @@ from nvidia_council import (
                         item["status"] = "critique_completed"
                         return
 '''
-    source = replace_once(
-        source, critique_anchor, critique_direct + critique_anchor,
-        "council direct NVIDIA critique round",
+    critique_position = source.find(critique_anchor)
+    if critique_position < 0:
+        raise SystemExit("clean-host bridge direct NVIDIA critique anchor missing")
+    source = (
+        source[:critique_position]
+        + critique_direct
+        + source[critique_position:]
     )
 
     revision_anchor = '''                    if item.get("providedOnly") is True:
