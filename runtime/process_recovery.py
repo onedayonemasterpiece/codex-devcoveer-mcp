@@ -15,6 +15,15 @@ from contextlib import contextmanager
 from typing import Any, Awaitable, Callable
 
 from direct_probe_core import ProbeError, _redact_text
+from product_delivery import (
+    apply_contract as delivery_apply_contract,
+    apply_update as delivery_apply_update,
+    assess as delivery_assess,
+    observe as delivery_observe,
+    refresh_requirements as delivery_refresh_requirements,
+    render_delivery_context,
+    validate_done as delivery_validate_done,
+)
 
 DB_PATH = Path.home() / '.local/state/openai-codex-mcp/process-recovery.sqlite3'
 CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar('direct_operation_context', default={})
@@ -67,6 +76,9 @@ def _db():
         CREATE INDEX IF NOT EXISTS operations_work ON operations(work_id, seq);
         CREATE INDEX IF NOT EXISTS operations_cwd ON operations(cwd, seq);
         ''')
+        columns = {row['name'] for row in db.execute('PRAGMA table_info(works)').fetchall()}
+        if 'delivery_state' not in columns:
+            db.execute("ALTER TABLE works ADD COLUMN delivery_state TEXT NOT NULL DEFAULT '{}'")
         yield db
         db.commit()
     except BaseException:
@@ -92,7 +104,49 @@ def _work(db, cwd: str, work_id: str):
 def _work_public(row) -> dict[str, Any]:
     value = dict(row)
     value['artifact_refs'] = json.loads(value.pop('artifacts'))
+    raw_delivery = value.pop('delivery_state', '{}') or '{}'
+    try:
+        delivery = json.loads(raw_delivery)
+    except (TypeError, ValueError):
+        delivery = {}
+    if isinstance(delivery, dict) and delivery:
+        try:
+            delivery, _changed = delivery_refresh_requirements(value['cwd'], delivery)
+        except ProbeError:
+            delivery = dict(delivery)
+            delivery['product_status'] = 'unverified'
+            delivery['requirements_readback_error'] = True
+        value['delivery'] = delivery
+        value['product_status'] = delivery.get('product_status', 'unverified')
+    else:
+        value['delivery'] = {}
+        value['product_status'] = 'unverified' if value.get('status') == 'done' else 'not_configured'
     return value
+
+
+def _delivery_evidence_exists(db, cwd: str, work_id: str, ref: str) -> bool:
+    if not isinstance(ref, str):
+        return False
+    if ref.startswith('op_') and len(ref) == 27:
+        row = db.execute(
+            'SELECT state,work_id FROM operations WHERE operation_id=? AND cwd=?',
+            (ref, cwd),
+        ).fetchone()
+        return bool(
+            row is not None
+            and row['state'] == 'completed'
+            and row['work_id'] in (None, work_id)
+        )
+    return False
+
+
+def task_work_context(cwd: str, work_id: str | None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    cwd = _root(cwd)
+    if not work_id:
+        return None, render_delivery_context(None)
+    with _db() as db:
+        work = _work_public(_work(db, cwd, work_id))
+    return work, render_delivery_context(work)
 
 
 def work_action(cwd: str, project: str, operation: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -107,21 +161,83 @@ def work_action(cwd: str, project: str, operation: str, body: dict[str, Any]) ->
             if old is not None:
                 if old['goal'] != goal or old['incident_id'] != body.get('incident_id'):
                     raise ProbeError('request_key_conflict', 'work request_key already identifies a different goal or incident', status='denied')
-                return {'status': 'ok', 'reused': True, 'work': _work_public(old)}
+                if 'delivery_contract' in body:
+                    public = _work_public(old)
+                    if public.get('delivery', {}).get('contract') != body['delivery_contract']:
+                        raise ProbeError(
+                            'request_key_conflict',
+                            'work request_key already identifies a work with a different delivery contract; update it through revision-checked work_checkpoint',
+                            status='denied',
+                        )
+                return {
+                    'status': 'ok',
+                    'reused': True,
+                    'work': _work_public(old),
+                }
             wid = 'work_' + secrets.token_hex(12)
-            db.execute('INSERT INTO works VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', (
-                wid, cwd, project, key, goal, _safe(body.get('next_step', '')),
-                body.get('incident_id'), 1, 'active', '[]', now, now))
+            from product_delivery import initial_state
+            delivery = initial_state(cwd, body.get('delivery_contract'))
+            db.execute(
+                '''INSERT INTO works(
+                   work_id,cwd,project,request_key,goal,next_step,incident_id,revision,status,artifacts,created,updated,delivery_state
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (
+                    wid, cwd, project, key, goal, _safe(body.get('next_step', '')),
+                    body.get('incident_id'), 1, 'active', '[]', now, now, _json(delivery),
+                ),
+            )
             row = _work(db, cwd, wid)
             return {'status': 'ok', 'reused': False, 'work': _work_public(row)}
+
         row = _work(db, cwd, body['work_id'])
         if row['revision'] != body['expected_revision']:
             raise ProbeError('checkpoint_conflict', 'checkpoint changed; work_resume before updating it', status='denied')
-        db.execute('UPDATE works SET next_step=?,status=?,artifacts=?,revision=revision+1,updated=? WHERE work_id=?', (
-            _safe(body['next_step']), body.get('status', row['status']),
-            _json(_safe(body.get('artifact_refs', json.loads(row['artifacts'])))), now, row['work_id']))
-        return {'status': 'ok', 'work': _work_public(_work(db, cwd, row['work_id']))}
 
+        try:
+            delivery = json.loads(row['delivery_state'] or '{}')
+        except (TypeError, ValueError):
+            delivery = {}
+        material_changed = False
+        if 'delivery_contract' in body:
+            delivery, changed = delivery_apply_contract(cwd, delivery, body['delivery_contract'])
+            material_changed = material_changed or changed
+        if delivery:
+            delivery, changed = delivery_refresh_requirements(cwd, delivery)
+            material_changed = material_changed or changed
+        if 'delivery_update' in body:
+            if not delivery:
+                raise ProbeError(
+                    'delivery_contract_required',
+                    'delivery_update requires an existing delivery_contract; bind the contract in this checkpoint first',
+                    status='denied',
+                )
+            delivery, changed = delivery_apply_update(delivery, body.get('delivery_update'))
+            material_changed = material_changed or changed
+
+        requested_status = body.get('status', row['status'])
+        if material_changed and row['status'] == 'done' and 'status' not in body:
+            requested_status = 'active'
+
+        if delivery:
+            evidence_exists = lambda ref: _delivery_evidence_exists(db, cwd, row['work_id'], ref)
+            delivery, _issues = delivery_assess(delivery, evidence_exists)
+            if requested_status == 'done':
+                delivery = delivery_validate_done(delivery, evidence_exists)
+            else:
+                delivery = delivery_observe(delivery)
+
+        db.execute(
+            'UPDATE works SET next_step=?,status=?,artifacts=?,delivery_state=?,revision=revision+1,updated=? WHERE work_id=?',
+            (
+                _safe(body['next_step']),
+                requested_status,
+                _json(_safe(body.get('artifact_refs', json.loads(row['artifacts'])))),
+                _json(delivery),
+                now,
+                row['work_id'],
+            ),
+        )
+        return {'status': 'ok', 'work': _work_public(_work(db, cwd, row['work_id']))}
 
 def resolve_context(cwd: str, body: dict[str, Any]) -> dict[str, Any]:
     context = {key: body[key] for key in ('work_id', 'incident_id', 'request_key') if key in body}
@@ -286,12 +402,76 @@ WORK_ID = {'type': 'string', 'pattern': r'^work_[0-9a-f]{24}$'}
 OP_ID = {'type': 'string', 'pattern': r'^op_[0-9a-f]{24}$'}
 INCIDENT_ID = {'type': 'string', 'pattern': r'^inc_[0-9a-f]{24}$'}
 TEXT = {'type': 'string', 'maxLength': 4000}
+CRITERION_ID = {'type': 'string', 'minLength': 1, 'maxLength': 64, 'pattern': r'^[A-Za-z0-9][A-Za-z0-9._:-]*$'}
+SCOPE = {'enum': ['analysis', 'document', 'source', 'unit', 'integration', 'live', 'owner']}
+DELIVERY_CONTRACT_SCHEMA = _schema({
+    'schema_version': {'const': 1},
+    'kind': {'enum': ['feature_delivery', 'bugfix', 'investigation', 'documentation', 'maintenance']},
+    'outcome': {**TEXT, 'minLength': 1},
+    'target': {'enum': ['artifact_ready', 'source_ready', 'owner_testable', 'owner_accepted']},
+    'scope_ref': {'type': 'string', 'minLength': 1, 'maxLength': 2000},
+    'requirement_refs': {'type': 'array', 'maxItems': 32, 'uniqueItems': True, 'items': CRITERION_ID},
+    'criteria': {
+        'type': 'array', 'minItems': 1, 'maxItems': 32,
+        'items': _schema({
+            'id': CRITERION_ID,
+            'statement': {'type': 'string', 'minLength': 1, 'maxLength': 1200},
+            'required_scope': SCOPE,
+            'allow_agent_attested': {'type': 'boolean'},
+        }, ('id', 'statement', 'required_scope')),
+    },
+}, ('schema_version', 'kind', 'outcome', 'target', 'scope_ref', 'criteria'))
+DELIVERY_UPDATE_SCHEMA = _schema({
+    'candidate': _schema({
+        'source_ref': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
+        'build_ref': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
+        'artifact_ref': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
+        'deployment_ref': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
+        'fingerprint': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
+        'notes': {'type': 'string', 'maxLength': 2000},
+    }),
+    'criterion_results': {
+        'type': 'array', 'maxItems': 64,
+        'items': _schema({
+            'criterion_id': CRITERION_ID,
+            'status': {'enum': ['pass', 'fail', 'unverified']},
+            'evidence_refs': {'type': 'array', 'maxItems': 16, 'items': {'type': 'string', 'minLength': 1, 'maxLength': 2000}},
+            'actual_scope': SCOPE,
+            'verification': {'enum': ['server_verified', 'agent_attested']},
+            'evaluated_by': {'enum': ['agent', 'test', 'server', 'owner']},
+            'candidate_ref': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
+            'note': {'type': 'string', 'maxLength': 2000},
+        }, ('criterion_id', 'status')),
+    },
+    'blockers': {
+        'type': 'array', 'maxItems': 32,
+        'items': _schema({
+            'criterion_id': CRITERION_ID,
+            'reason': {'type': 'string', 'minLength': 1, 'maxLength': 2000},
+            'source': {'enum': ['requirement', 'required_check', 'authority', 'defect', 'uncertainty', 'advisory']},
+            'blocking_scope': {'enum': ['criterion', 'target', 'all', 'none']},
+            'evidence_ref': {'type': 'string', 'maxLength': 2000},
+            'next_action': {'type': 'string', 'maxLength': 2000},
+        }, ('reason', 'source', 'blocking_scope')),
+    },
+    'waiting': _schema({
+        'kind': {'enum': ['none', 'external_job', 'provider', 'owner']},
+        'ref': {'type': 'string', 'maxLength': 2000},
+    }, ('kind',)),
+    'handoff': _schema({
+        'artifact_refs': {'type': 'array', 'maxItems': 32, 'items': {'type': 'string', 'minLength': 1, 'maxLength': 2000}},
+        'verify': {'type': 'string', 'maxLength': 2000},
+        'limitations': {'type': 'array', 'maxItems': 16, 'items': {'type': 'string', 'maxLength': 1000}},
+    }),
+    'completion_outcome': {'enum': ['delivered', 'cancelled', 'superseded', 'failed']},
+})
 SCHEMAS = {
  'work_open': _schema({'goal': {**TEXT, 'minLength': 1}, 'request_key': KEY, 'next_step': TEXT,
-                       'incident_id': INCIDENT_ID}, ('goal', 'request_key')),
+                       'incident_id': INCIDENT_ID, 'delivery_contract': DELIVERY_CONTRACT_SCHEMA}, ('goal', 'request_key')),
  'work_checkpoint': _schema({'work_id': WORK_ID, 'expected_revision': {'type': 'integer', 'minimum': 1},
       'next_step': TEXT, 'status': {'enum': ['active', 'waiting', 'done']},
-      'artifact_refs': {'type': 'array', 'maxItems': 32, 'items': {'type': 'string', 'maxLength': 1000}}},
+      'artifact_refs': {'type': 'array', 'maxItems': 32, 'items': {'type': 'string', 'maxLength': 1000}},
+      'delivery_contract': DELIVERY_CONTRACT_SCHEMA, 'delivery_update': DELIVERY_UPDATE_SCHEMA},
       ('work_id', 'expected_revision', 'next_step')),
  'work_list': _schema({'limit': {'type': 'integer', 'minimum': 1, 'maximum': 50}}),
  'work_resume': _schema({'work_id': WORK_ID}, ('work_id',)),
