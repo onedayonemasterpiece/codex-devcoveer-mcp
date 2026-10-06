@@ -282,7 +282,7 @@ DIRECT_FILES = (
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
     "direct_probe_host_services.py", "direct_probe_host_runtime.py",
-    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "projects_hub_edge_operator.py", "requirements_guard.py", "reuse_quality.py",
+    "direct_probe_disk_forensics.py", "direct_ops2.py", "direct_ops2_host.py", "direct_ops2_worktrees.py", "direct_jobs.py", "direct_job_runner.py", "direct_github_actions.py", "direct_ops_gateway.py", "direct_tool_catalog.py", "incident_registry.py", "process_recovery.py", "process_support.py", "projects_hub_edge_operator.py", "requirements_guard.py", "reuse_quality.py", "nvidia_council.py",
 )
 
 def sha(path: Path) -> str:
@@ -717,6 +717,320 @@ def _paid_council_digest'''
 
     return source
 
+
+def transform_nvidia_dual_slot(source: str) -> str:
+    """Remove end-user NVIDIA budget confirmation and use two direct credential slots."""
+    source = replace_once(
+        source,
+        "PAID_COUNCIL_CONFIRMATION_TTL_SECONDS = 600\n",
+        "NVIDIA_COUNCIL_SLOT_CAPACITY = 2\n",
+        "NVIDIA dual-slot capacity constant",
+    )
+
+    old_pro = '''    # Pro uses three strong NVIDIA participants throughout the full debate.
+    "pro": (
+        {"provider": "opencode", "model": "opencode/nemotron-3-ultra-free"},
+        {"provider": "nvidia", "model": "nvidia/moonshotai/kimi-k3"},
+        {"provider": "nvidia", "model": "nvidia/nvidia/nemotron-3-super-120b-a12b"},
+        {"provider": "nvidia", "model": "nvidia/nvidia/nemotron-3-ultra-550b-a55b"},
+    ),
+'''
+    new_pro = '''    # Pro is the product council: exactly two strong NVIDIA participants.
+    # They are admitted through two distinct credential/project slots.
+    "pro": (
+        {"provider": "nvidia", "model": "nvidia/moonshotai/kimi-k3"},
+        {"provider": "nvidia", "model": "nvidia/deepseek-ai/deepseek-v4.1-flash"},
+    ),
+'''
+    source = replace_once(source, old_pro, new_pro, "NVIDIA pro council preset")
+
+    tier_old = '''                "Council cost policy. free (default) uses only OpenCode Zen; extended uses "
+                "the free debate plus one final NVIDIA review; pro uses the strongest "
+                "configured NVIDIA participants throughout the debate. extended/pro never "
+                "launch on the first call: the tool returns a one-time confirmation token "
+                "that may be replayed only after the user explicitly confirms the displayed budget."
+'''
+    tier_new = '''                "Council resource policy. free (default) uses only OpenCode Zen and never "
+                "falls back to NVIDIA. extended uses the free debate plus one final NVIDIA review. "
+                "pro runs Kimi K3 and DeepSeek V4.1 Flash through two distinct NVIDIA credential "
+                "slots. NVIDIA is capacity-admitted, not an end-user budget confirmation surface."
+'''
+    source = replace_once(source, tier_old, tier_new, "council tier description")
+
+    paid_start = source.find('        "paid_confirmation_token": {')
+    paid_end = source.find('        "participants": {', paid_start)
+    if paid_start < 0 or paid_end < 0:
+        raise SystemExit("clean-host bridge paid confirmation schema block missing")
+    source = source[:paid_start] + source[paid_end:]
+
+    source = replace_once(
+        source,
+        '_PAID_COUNCIL_CONFIRMATIONS: dict[str, dict[str, Any]] = {}\n\n',
+        '',
+        "paid confirmation global",
+    )
+    paid_helpers_start = source.find('def _paid_council_digest(')
+    paid_helpers_end = source.find('def _council_requests_for_tier(', paid_helpers_start)
+    if paid_helpers_start < 0 or paid_helpers_end < 0:
+        raise SystemExit("clean-host bridge paid confirmation helpers missing")
+    source = source[:paid_helpers_start] + source[paid_helpers_end:]
+    source = replace_once(
+        source,
+        'if key not in {"paid_confirmation_token", "evidence_bundle"}',
+        'if key != "evidence_bundle"',
+        "council fingerprint obsolete paid token",
+    )
+
+    source = replace_once(
+        source,
+        'from mcp.server import NotificationOptions\n',
+        '''from mcp.server import NotificationOptions
+from nvidia_council import (
+    NvidiaCouncilError as DirectNvidiaCouncilError,
+    invoke_nvidia as _invoke_nvidia,
+    slot_metadata as _nvidia_slot_metadata,
+)
+''',
+        "NVIDIA direct bridge import",
+    )
+
+    tool_old = '''            "tier=extended runs the free debate plus one target NVIDIA expert review; tier=pro "
+            "uses strong NVIDIA models throughout the full debate. Paid tiers always require a "
+            "two-step confirmation: the first call performs no inference and returns a one-time "
+            "token plus the budget; show that plan to the user and wait for explicit confirmation "
+            "before replaying the exact request with paid_confirmation_token. Participants are selected by the tier preset "
+'''
+    tool_new = '''            "tier=extended runs the free debate plus one target NVIDIA expert review; tier=pro "
+            "runs Kimi K3 and DeepSeek V4.1 Flash throughout the full debate. NVIDIA calls do not "
+            "require end-user budget confirmation: provided-only NVIDIA work is admitted through "
+            "two distinct cross-process credential/project slots, so at most two NVIDIA inferences "
+            "run concurrently. A saturated third call waits for capacity. Participants are selected by the tier preset "
+'''
+    source = replace_once(source, tool_old, tool_new, "council tool resource policy")
+
+    confirmation_start = source.find('            paid_token = arguments.get("paid_confirmation_token")')
+    participants_anchor = source.find('            participants: list[dict[str, Any]] = []', confirmation_start)
+    if confirmation_start < 0 or participants_anchor < 0:
+        raise SystemExit("clean-host bridge council confirmation handler block missing")
+    preflight = '''            if provided_only and any(
+                item["provider"] == "nvidia" for item in requested_participants
+            ):
+                slot_info = _nvidia_slot_metadata()
+                if (
+                    slot_info.get("configured") is not True
+                    or int(slot_info.get("slotCount") or 0) < NVIDIA_COUNCIL_SLOT_CAPACITY
+                ):
+                    return _tool_result({
+                        "status": "failed",
+                        "errorCategory": "nvidia_capacity_configuration",
+                        "councilLevel": tier,
+                        "resourcePolicy": cost_policy,
+                        "nvidiaSlotCapacity": NVIDIA_COUNCIL_SLOT_CAPACITY,
+                        "content": (
+                            "Provided-only NVIDIA council requires two distinct configured "
+                            "credential/project slots; no inference was started."
+                        ),
+                    }, error=True)
+'''
+    source = source[:confirmation_start] + preflight + source[participants_anchor:]
+
+    resolve_old = '''                try:
+                    selected = await OPENCODE_BACKEND.resolve_model(
+                        provider=requested["provider"], model=requested["model"],
+                        directory=runtime_cwd,
+                    )
+                except OpenCodeError as exc:
+                    return _tool_result({"status": "failed", "errorCategory": exc.category,
+                        "participant": requested, "content": str(exc)}, error=True)
+'''
+    resolve_new = '''                if provided_only and requested["provider"] == "nvidia":
+                    direct_model = str(requested["model"]).removeprefix("nvidia/")
+                    if direct_model not in {
+                        "moonshotai/kimi-k3",
+                        "deepseek-ai/deepseek-v4.1-flash",
+                    }:
+                        return _tool_result({
+                            "status": "failed",
+                            "errorCategory": "council_policy",
+                            "participant": requested,
+                            "content": "Unsupported direct NVIDIA council model.",
+                        }, error=True)
+                    selected = {
+                        "provider": "nvidia",
+                        "nativeModelId": direct_model,
+                        "selection": "nvidia/" + direct_model,
+                        "free": False,
+                    }
+                else:
+                    try:
+                        selected = await OPENCODE_BACKEND.resolve_model(
+                            provider=requested["provider"], model=requested["model"],
+                            directory=runtime_cwd,
+                        )
+                    except OpenCodeError as exc:
+                        return _tool_result({"status": "failed", "errorCategory": exc.category,
+                            "participant": requested, "content": str(exc)}, error=True)
+'''
+    source = replace_once(source, resolve_old, resolve_new, "direct NVIDIA model resolution")
+
+    post_confirmation_start = source.find(
+        '            if tier != "free" and not _validate_paid_council_confirmation('
+    )
+    record_anchor = source.find('            record_fields = {', post_confirmation_start)
+    if post_confirmation_start < 0 or record_anchor < 0:
+        raise SystemExit("clean-host bridge post-resolution confirmation block missing")
+    source = source[:post_confirmation_start] + source[record_anchor:]
+
+    source = replace_once(
+        source,
+        '''            cost_policy = {
+                "free": "free_only_no_nvidia",
+                "extended": "nvidia_economical_one_review_with_bounded_transient_retries",
+                "pro": "nvidia_full_debate_with_bounded_transient_retries",
+            }[tier]
+''',
+        '''            cost_policy = {
+                "free": "free_only_no_nvidia",
+                "extended": "nvidia_dual_slot_one_final_review",
+                "pro": "nvidia_dual_slot_kimi_deepseek_full_debate",
+            }[tier]
+''',
+        "council resource policy names",
+    )
+
+    source = replace_once(
+        source,
+        '                "paidAuthorizationVerified": tier != "free",\n',
+        '''                "requiresExplicitUserConfirmation": False,
+                "resourcePolicy": cost_policy,
+                "nvidiaSlotCapacity": NVIDIA_COUNCIL_SLOT_CAPACITY,
+''',
+        "council running NVIDIA resource receipt",
+    )
+
+    initial_anchor = '''            if item.get("providedOnly") is True:
+                started = await OPENCODE_BACKEND.start_consultation(
+'''
+    initial_direct = '''            if item.get("providedOnly") is True and item["provider"] == "nvidia":
+                direct = await _invoke_nvidia(model=item["model"], prompt=initial_prompt)
+                item["inferenceCallsUsed"] = int(item.get("inferenceCallsUsed") or 0) + int(
+                    direct.get("attempts") or 1
+                )
+                item["nvidiaSlot"] = int(direct["slot"])
+                item["capacityWaitMs"] = int(item.get("capacityWaitMs") or 0) + int(
+                    direct.get("capacityWaitMs") or 0
+                )
+                item["providerLatencyMs"] = int(item.get("providerLatencyMs") or 0) + int(
+                    direct.get("latencyMs") or 0
+                )
+                item["initial"] = str(direct["text"])[:COUNCIL_TEXT_LIMIT]
+                item["status"] = "initial_completed"
+                return
+'''
+    source = replace_once(
+        source, initial_anchor, initial_direct + initial_anchor,
+        "council direct NVIDIA initial round",
+    )
+
+    critique_anchor = '''                    if item.get("providedOnly") is True:
+                        await OPENCODE_BACKEND.prompt_consultation(
+'''
+    critique_direct = '''                    if item.get("providedOnly") is True and item["provider"] == "nvidia":
+                        direct_prompt = provider_prompt + "\\n\\n" + critique_prompt
+                        direct = await _invoke_nvidia(model=item["model"], prompt=direct_prompt)
+                        item["inferenceCallsUsed"] = int(item.get("inferenceCallsUsed") or 0) + int(
+                            direct.get("attempts") or 1
+                        )
+                        item["nvidiaSlot"] = int(direct["slot"])
+                        item["capacityWaitMs"] = int(item.get("capacityWaitMs") or 0) + int(
+                            direct.get("capacityWaitMs") or 0
+                        )
+                        item["providerLatencyMs"] = int(item.get("providerLatencyMs") or 0) + int(
+                            direct.get("latencyMs") or 0
+                        )
+                        item["critique"] = str(direct["text"])[:COUNCIL_TEXT_LIMIT]
+                        item["status"] = "critique_completed"
+                        return
+'''
+    source = replace_once(
+        source, critique_anchor, critique_direct + critique_anchor,
+        "council direct NVIDIA critique round",
+    )
+
+    revision_anchor = '''                    if item.get("providedOnly") is True:
+                        await OPENCODE_BACKEND.prompt_consultation(
+'''
+    revision_position = source.find(revision_anchor, source.find("COUNCIL REVISION ROUND"))
+    if revision_position < 0:
+        raise SystemExit("clean-host bridge direct NVIDIA revision anchor missing")
+    revision_direct = '''                    if item.get("providedOnly") is True and item["provider"] == "nvidia":
+                        direct_prompt = (
+                            provider_prompt
+                            + "\\n\\nYOUR INITIAL POSITION:\\n"
+                            + str(item.get("initial") or "")
+                            + "\\n\\nYOUR CRITIQUE:\\n"
+                            + str(item.get("critique") or "")
+                            + "\\n\\n"
+                            + revision_prompt
+                        )
+                        direct = await _invoke_nvidia(model=item["model"], prompt=direct_prompt)
+                        item["inferenceCallsUsed"] = int(item.get("inferenceCallsUsed") or 0) + int(
+                            direct.get("attempts") or 1
+                        )
+                        item["nvidiaSlot"] = int(direct["slot"])
+                        item["capacityWaitMs"] = int(item.get("capacityWaitMs") or 0) + int(
+                            direct.get("capacityWaitMs") or 0
+                        )
+                        item["providerLatencyMs"] = int(item.get("providerLatencyMs") or 0) + int(
+                            direct.get("latencyMs") or 0
+                        )
+                        item["revision"] = _structured_council_revision(str(direct["text"]))
+                        item["status"] = "completed"
+                        return
+'''
+    source = (
+        source[:revision_position]
+        + revision_direct
+        + source[revision_position:]
+    )
+
+    expert_anchor = '''                    if item.get("providedOnly") is True:
+                        started = await OPENCODE_BACKEND.start_consultation(
+'''
+    expert_direct = '''                    if item.get("providedOnly") is True and item["provider"] == "nvidia":
+                        direct_prompt = provider_prompt + "\\n\\n" + expert_prompt
+                        direct = await _invoke_nvidia(model=item["model"], prompt=direct_prompt)
+                        item["inferenceCallsUsed"] = int(item.get("inferenceCallsUsed") or 0) + int(
+                            direct.get("attempts") or 1
+                        )
+                        item["nvidiaSlot"] = int(direct["slot"])
+                        item["capacityWaitMs"] = int(item.get("capacityWaitMs") or 0) + int(
+                            direct.get("capacityWaitMs") or 0
+                        )
+                        item["providerLatencyMs"] = int(item.get("providerLatencyMs") or 0) + int(
+                            direct.get("latencyMs") or 0
+                        )
+                        item["expertReview"] = _structured_expert_review(str(direct["text"]))
+                        item["status"] = "completed"
+                        return
+'''
+    source = replace_once(
+        source, expert_anchor, expert_direct + expert_anchor,
+        "council direct NVIDIA expert round",
+    )
+
+    source = replace_once(
+        source,
+        '''        "usagePlan": council.get("usagePlan"),
+''',
+        '''        "usagePlan": council.get("usagePlan"),
+        "resourcePolicy": council.get("costPolicy"),
+        "nvidiaSlotCapacity": NVIDIA_COUNCIL_SLOT_CAPACITY,
+        "requiresExplicitUserConfirmation": False,
+''',
+        "council readback resource policy",
+    )
+    return source
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
@@ -1558,6 +1872,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     account_spec.loader.exec_module(account_module)
     source = account_module.patch_bridge(source)
     source = transform_council_isolation(source)
+    source = transform_nvidia_dual_slot(source)
     return source
 
 def transform_backend(source: str) -> str:
