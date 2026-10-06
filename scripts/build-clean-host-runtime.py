@@ -956,7 +956,13 @@ def _council_progress(
                 started = await OPENCODE_BACKEND.start_consultation(
 '''
     initial_direct = '''            if item.get("providedOnly") is True and item["provider"] == "nvidia":
-                direct = await _invoke_nvidia(model=item["model"], prompt=initial_prompt)
+                item["providerStage"] = "initial"
+                item["providerState"] = "waiting_or_running"
+                item["providerStartedAtMs"] = int(time.time() * 1000)
+                _council_progress(task_id, council, stage="initial", participants=participants)
+                direct = await _invoke_nvidia(
+                    model=item["model"], prompt=initial_prompt, task_id=task_id,
+                )
                 item["inferenceCallsUsed"] = int(item.get("inferenceCallsUsed") or 0) + int(
                     direct.get("attempts") or 1
                 )
@@ -968,7 +974,10 @@ def _council_progress(
                     direct.get("latencyMs") or 0
                 )
                 item["initial"] = str(direct["text"])[:COUNCIL_TEXT_LIMIT]
+                item["providerState"] = "completed"
+                item["providerFinishedAtMs"] = int(time.time() * 1000)
                 item["status"] = "initial_completed"
+                _council_progress(task_id, council, stage="initial", participants=participants)
                 return
 '''
     source = replace_once(
@@ -981,7 +990,13 @@ def _council_progress(
 '''
     critique_direct = '''                    if item.get("providedOnly") is True and item["provider"] == "nvidia":
                         direct_prompt = provider_prompt + "\\n\\n" + critique_prompt
-                        direct = await _invoke_nvidia(model=item["model"], prompt=direct_prompt)
+                        item["providerStage"] = "critique"
+                        item["providerState"] = "waiting_or_running"
+                        item["providerStartedAtMs"] = int(time.time() * 1000)
+                        _council_progress(task_id, council, stage="critique", participants=participants)
+                        direct = await _invoke_nvidia(
+                            model=item["model"], prompt=direct_prompt, task_id=task_id,
+                        )
                         item["inferenceCallsUsed"] = int(item.get("inferenceCallsUsed") or 0) + int(
                             direct.get("attempts") or 1
                         )
@@ -993,7 +1008,10 @@ def _council_progress(
                             direct.get("latencyMs") or 0
                         )
                         item["critique"] = str(direct["text"])[:COUNCIL_TEXT_LIMIT]
+                        item["providerState"] = "completed"
+                        item["providerFinishedAtMs"] = int(time.time() * 1000)
                         item["status"] = "critique_completed"
+                        _council_progress(task_id, council, stage="critique", participants=participants)
                         return
 '''
     critique_position = source.find(critique_anchor)
@@ -1021,7 +1039,13 @@ def _council_progress(
                             + "\\n\\n"
                             + revision_prompt
                         )
-                        direct = await _invoke_nvidia(model=item["model"], prompt=direct_prompt)
+                        item["providerStage"] = "revision"
+                        item["providerState"] = "waiting_or_running"
+                        item["providerStartedAtMs"] = int(time.time() * 1000)
+                        _council_progress(task_id, council, stage="revision", participants=participants)
+                        direct = await _invoke_nvidia(
+                            model=item["model"], prompt=direct_prompt, task_id=task_id,
+                        )
                         item["inferenceCallsUsed"] = int(item.get("inferenceCallsUsed") or 0) + int(
                             direct.get("attempts") or 1
                         )
@@ -1033,7 +1057,10 @@ def _council_progress(
                             direct.get("latencyMs") or 0
                         )
                         item["revision"] = _structured_council_revision(str(direct["text"]))
+                        item["providerState"] = "completed"
+                        item["providerFinishedAtMs"] = int(time.time() * 1000)
                         item["status"] = "completed"
+                        _council_progress(task_id, council, stage="revision", participants=participants)
                         return
 '''
     source = (
@@ -1047,7 +1074,13 @@ def _council_progress(
 '''
     expert_direct = '''                    if item.get("providedOnly") is True and item["provider"] == "nvidia":
                         direct_prompt = provider_prompt + "\\n\\n" + expert_prompt
-                        direct = await _invoke_nvidia(model=item["model"], prompt=direct_prompt)
+                        item["providerStage"] = "expert_review"
+                        item["providerState"] = "waiting_or_running"
+                        item["providerStartedAtMs"] = int(time.time() * 1000)
+                        _council_progress(task_id, council, stage="expert_review", participants=participants)
+                        direct = await _invoke_nvidia(
+                            model=item["model"], prompt=direct_prompt, task_id=task_id,
+                        )
                         item["inferenceCallsUsed"] = int(item.get("inferenceCallsUsed") or 0) + int(
                             direct.get("attempts") or 1
                         )
@@ -1059,7 +1092,10 @@ def _council_progress(
                             direct.get("latencyMs") or 0
                         )
                         item["expertReview"] = _structured_expert_review(str(direct["text"]))
+                        item["providerState"] = "completed"
+                        item["providerFinishedAtMs"] = int(time.time() * 1000)
                         item["status"] = "completed"
+                        _council_progress(task_id, council, stage="expert_review", participants=participants)
                         return
 '''
     source = replace_once(
