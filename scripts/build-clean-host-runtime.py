@@ -1394,18 +1394,15 @@ def _delivery_error(exc: ProbeError) -> types.CallToolResult:
         '                    prompt=_delivery_policy_prompt(bound_work) + arguments["prompt"], provider=provider_id, model_id=model_id,\n',
         1,
     )
-    update_anchor = '''            updated = TASK_REGISTRY.update(registered["taskId"], status="running",
-                provider=provider_id, model=model_id, selection=selection,
-                finishedAt=None, errorCategory=None)
-'''
-    update_new = '''            updated = TASK_REGISTRY.update(registered["taskId"], status="running",
-                provider=provider_id, model=model_id, selection=selection,
-                workId=bound_work_id, deliveryPolicyVersion=PRODUCT_DELIVERY_POLICY_VERSION,
-                finishedAt=None, errorCategory=None)
-'''
+    update_anchor = '                provider=provider_id, model=model_id, selection=selection,\n'
     if block.count(update_anchor) != 1:
-        raise SystemExit("product delivery OpenCode update anchor mismatch")
-    block = block.replace(update_anchor, update_new, 1)
+        raise SystemExit(f"product delivery OpenCode update fields mismatch: {block.count(update_anchor)}")
+    block = block.replace(
+        update_anchor,
+        update_anchor
+        + '                workId=bound_work_id, deliveryPolicyVersion=PRODUCT_DELIVERY_POLICY_VERSION,\n',
+        1,
+    )
     continue_result = '                "action": "continued_same_session",\n'
     if block.count(continue_result) != 1:
         raise SystemExit("product delivery OpenCode result anchor mismatch")
