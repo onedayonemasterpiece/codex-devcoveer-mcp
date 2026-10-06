@@ -34,19 +34,60 @@ def test_two_distinct_nvidia_credentials_are_detected_without_exposure(tmp_path:
         "configured": True,
         "slotCount": 2,
         "requiredSlots": 2,
-        "sourceNames": ["NVIDIA_API_KEY_ALPHA", "NVIDIA_API_KEY_BETA"],
+        "sourceNames": [
+            "providers.env:NVIDIA_API_KEY_ALPHA",
+            "providers.env:NVIDIA_API_KEY_BETA",
+        ],
+        "configuredSourceFiles": ["providers.env"],
         "credentialValuesExposed": False,
     }
     assert "secret" not in repr(meta)
 
 
-def test_duplicate_nvidia_key_does_not_create_second_project_slot(tmp_path: Path) -> None:
-    path = _env(
-        tmp_path / "providers.env",
-        "NVIDIA_API_KEY_ALPHA=same-secret\n"
-        "NVIDIA_API_KEY_BETA=same-secret\n",
+def test_two_project_env_files_create_two_distinct_slots(tmp_path: Path) -> None:
+    first = _env(
+        tmp_path / "devcoveer-providers.env",
+        "NVIDIA_API_KEY=alpha-secret-value\n",
     )
-    meta = mod.slot_metadata(path)
+    second = _env(
+        tmp_path / "regional-service.env",
+        "NVIDIA_API_KEY=beta-secret-value\n",
+    )
+    meta = mod.slot_metadata((first, second))
+    assert meta["configured"] is True
+    assert meta["slotCount"] == 2
+    assert meta["sourceNames"] == [
+        "devcoveer-providers.env:NVIDIA_API_KEY",
+        "regional-service.env:NVIDIA_API_KEY",
+    ]
+    assert meta["configuredSourceFiles"] == [
+        "devcoveer-providers.env",
+        "regional-service.env",
+    ]
+
+
+def test_missing_optional_source_is_fail_closed_not_exception(tmp_path: Path) -> None:
+    first = _env(
+        tmp_path / "devcoveer-providers.env",
+        "NVIDIA_API_KEY=alpha-secret-value\n",
+    )
+    missing = tmp_path / "missing-regional.env"
+    meta = mod.slot_metadata((first, missing))
+    assert meta["configured"] is False
+    assert meta["slotCount"] == 1
+    assert meta["configuredSourceFiles"] == ["devcoveer-providers.env"]
+
+
+def test_duplicate_nvidia_key_does_not_create_second_project_slot(tmp_path: Path) -> None:
+    first = _env(
+        tmp_path / "devcoveer-providers.env",
+        "NVIDIA_API_KEY=same-secret\n",
+    )
+    second = _env(
+        tmp_path / "regional-service.env",
+        "NVIDIA_API_KEY=same-secret\n",
+    )
+    meta = mod.slot_metadata((first, second))
     assert meta["configured"] is False
     assert meta["slotCount"] == 1
 

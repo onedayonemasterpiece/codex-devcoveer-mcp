@@ -73,12 +73,19 @@ NVIDIA rounds use the direct NVIDIA chat-completions transport: the model
 receives only the constructed council prompt/evidence, with no OpenCode
 session, project filesystem, web tool or subagent capability.
 
-The trusted provider EnvironmentFile must contain two distinct non-empty NVIDIA
+The NVIDIA council credential pool is intentionally assembled from exactly two
+trusted project-owned EnvironmentFiles:
+
+- `/home/dev/.config/opencode/devcoveer-providers.env`;
+- `/home/dev/.local/state/regional-knowledge-base/service.env`.
+
+Across those sources DevCoveer requires two distinct non-empty NVIDIA
 credentials. They map to two cross-process slot locks, so at most two NVIDIA
 inference calls execute concurrently across users/processes. A third provider
-call waits for a slot within the bounded council deadline. Credentials are
-never returned in task records, logs or tool results, and duplicate credential
-values do not create extra capacity.
+call waits for a slot within the bounded council deadline. Missing sources keep
+capacity below two and fail closed; duplicate credential values across projects
+still count as one slot. Credential values are never returned in task records,
+logs or tool results.
 
 Every result remains attributed per model. Provider 429/5xx failures use bounded
 retries; credential/validation failures are terminal. The stable `request_key`
