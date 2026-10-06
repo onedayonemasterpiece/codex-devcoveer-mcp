@@ -33,6 +33,7 @@ def test_opencode_provider_env_keeps_groq_pool_but_not_upstream_gigachat_secret(
     assert '"GROQ_API_KEY2": ["GROQ_API_KEY2", "GROQ_KEY2"]' in body
     assert '"GROQ_API_KEY3": ["GROQ_API_KEY3", "GROQ_KEY3"]' in body
     assert '"NVIDIA_API_KEY": ["NVIDIA_API_KEY"]' in body
+    assert '"NVIDIA_API_KEY2": ["NVIDIA_API_KEY2"]' in body
 
     # GigaChat is consumed by local gpt2giga gateway services; it must not be
     # handed straight to the long-lived OpenCode server.
