@@ -49,7 +49,8 @@ MODEL_PROFILES: dict[str, dict[str, Any]] = {
     "deepseek-ai/deepseek-v4.1-flash": {
         "temperature": 1.0,
         "top_p": 0.95,
-        "max_tokens": 16384,
+        "max_tokens": 4096,
+        "stream": False,
     },
 }
 
@@ -272,10 +273,11 @@ def _invoke_once(
     cancel_event: threading.Event | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     profile = dict(MODEL_PROFILES.get(model, {}))
+    stream = bool(profile.pop("stream", True))
     body: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "stream": True,
+        "stream": stream,
         "temperature": float(profile.pop("temperature", 0.6)),
         "max_tokens": int(profile.pop("max_tokens", 8192)),
         **profile,
@@ -286,7 +288,7 @@ def _invoke_once(
         method="POST",
         headers={
             "Authorization": "Bearer " + key,
-            "Accept": "text/event-stream",
+            "Accept": "text/event-stream" if stream else "application/json",
             "Content-Type": "application/json",
             "User-Agent": "devcoveer-nvidia-council/1",
         },
@@ -299,23 +301,55 @@ def _invoke_once(
             raise NvidiaCouncilError("timeout", "NVIDIA provider deadline expired")
         socket_timeout = max(1.0, min(SOCKET_STALL_TIMEOUT_SECONDS, remaining))
         with urllib.request.urlopen(request, timeout=socket_timeout) as response:
-            for raw in response:
+            if stream:
+                for raw in response:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise NvidiaCouncilError("cancelled", "NVIDIA council call was cancelled")
+                    if time.monotonic() >= deadline_monotonic:
+                        raise NvidiaCouncilError("timeout", "NVIDIA provider deadline expired")
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    value = line[5:].strip()
+                    if value == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(value)
+                    except ValueError:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    error = event.get("error")
+                    if isinstance(error, dict):
+                        raise NvidiaCouncilError(
+                            "provider_error",
+                            str(error.get("message") or "NVIDIA provider error")[:500],
+                        )
+                    text = _extract_event_text(event)
+                    if text:
+                        chunks.append(text)
+                    if isinstance(event.get("usage"), dict):
+                        usage = dict(event["usage"])
+            else:
                 if cancel_event is not None and cancel_event.is_set():
                     raise NvidiaCouncilError("cancelled", "NVIDIA council call was cancelled")
+                raw = response.read(4_000_001)
+                if len(raw) > 4_000_000:
+                    raise NvidiaCouncilError(
+                        "provider_error", "NVIDIA non-stream response exceeded size limit"
+                    )
                 if time.monotonic() >= deadline_monotonic:
                     raise NvidiaCouncilError("timeout", "NVIDIA provider deadline expired")
-                line = raw.decode("utf-8", "replace").strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                value = line[5:].strip()
-                if value == "[DONE]":
-                    break
                 try:
-                    event = json.loads(value)
-                except ValueError:
-                    continue
+                    event = json.loads(raw.decode("utf-8"))
+                except (UnicodeError, ValueError) as exc:
+                    raise NvidiaCouncilError(
+                        "provider_error", "NVIDIA non-stream response was invalid JSON"
+                    ) from exc
                 if not isinstance(event, dict):
-                    continue
+                    raise NvidiaCouncilError(
+                        "provider_error", "NVIDIA non-stream response was not an object"
+                    )
                 error = event.get("error")
                 if isinstance(error, dict):
                     raise NvidiaCouncilError(
