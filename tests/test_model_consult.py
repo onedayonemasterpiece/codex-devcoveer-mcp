@@ -141,7 +141,7 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert "dispatch_unknown" in bridge
         assert "request_key" in bridge
         assert "persist_consultation as _persist_consultation" in bridge
-        assert 'BRIDGE_VERSION = "3.35.0-nvidia-dual-slot"' in bridge
+        assert 'BRIDGE_VERSION = "3.35.1-nvidia-existing-key-pair"' in bridge
         assert (out / "model_consult.py").is_file()
 
 
