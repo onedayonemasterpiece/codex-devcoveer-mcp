@@ -277,7 +277,7 @@ TASK_REGISTRY_REQUEST_METHOD = r"""    def reserve_request(
 """
 
 DIRECT_FILES = (
-    "codex_account.py",
+    "codex_account.py", "codex_consult.py",
     "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_core.py", "direct_probe_project.py",
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
@@ -1554,6 +1554,12 @@ from model_consult import (
     model_spec as _consult_model_spec,
     persist_consultation as _persist_consultation,
 )
+from codex_consult import (
+    CodexConsultError as _CodexConsultError,
+    cancel_consultation as _cancel_codex_consultation,
+    public_status as _read_codex_consultation,
+    start_consultation as _start_codex_consultation,
+)
 from street_story_operator import (
     OperatorError as StreetStoryOperatorError,
     StreetStoryOperator,
@@ -1912,6 +1918,207 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                 context_mode=context_mode,
                 evidence_bundle=evidence_bundle if isinstance(evidence_bundle, str) else None,
             )
+            if spec.get("backend") == "codex":
+                if not provided_only:
+                    return _tool_result({
+                        "status": "failed",
+                        "errorCategory": "isolation_required",
+                        "content": "Codex consultants are available only with context_mode=provided_only.",
+                    }, error=True)
+                consultation = _consultation_metadata(
+                    alias=arguments["model"],
+                    purpose=purpose,
+                    question=question,
+                    context_mode=context_mode,
+                    request_key=request_key if isinstance(request_key, str) else None,
+                    request_fingerprint=request_fingerprint,
+                )
+                record_fields = {
+                    "backend": "codex_consult",
+                    "project": project.canonical,
+                    "cwd": project.path,
+                    "provider": "codex",
+                    "model": spec["nativeModelId"],
+                    "selection": spec["selection"],
+                    "reasoningEffort": spec["reasoningEffort"],
+                    "access": "read",
+                    "status": "dispatching",
+                    "routingReason": f"model_consult:{purpose}",
+                    "title": f"{project.canonical}: {spec['displayName']} consultation ({purpose})",
+                    "consultation": consultation,
+                }
+                if isinstance(request_key, str):
+                    try:
+                        record, replayed = TASK_REGISTRY.reserve_request(
+                            request_kind="consult_model",
+                            request_key=request_key,
+                            request_fingerprint=request_fingerprint,
+                            **record_fields,
+                        )
+                    except ValueError as exc:
+                        return _tool_result({
+                            "status": "failed",
+                            "errorCategory": "idempotency_conflict",
+                            "content": str(exc),
+                        }, error=True)
+                    if replayed:
+                        current = _read_codex_consultation(record["taskId"])
+                        current_status = str(current.get("status") or "dispatch_unknown")
+                        if current_status in {"completed", "failed", "interrupted"}:
+                            changes = {
+                                "status": current_status,
+                                "finishedAt": record.get("finishedAt") or int(time.time() * 1000),
+                            }
+                            if current_status == "failed":
+                                changes["errorCategory"] = str(
+                                    current.get("errorCategory") or "model_error"
+                                )
+                            record = TASK_REGISTRY.update(record["taskId"], **changes)
+                        return _tool_result({
+                            **current,
+                            "status": current_status,
+                            "taskId": record["taskId"],
+                            "taskReference": record["taskId"],
+                            "backend": "codex_consult",
+                            "provider": "codex",
+                            "model": record.get("selection"),
+                            "purpose": purpose,
+                            "access": "read",
+                            "contextMode": "provided_only",
+                            "advisory": True,
+                            "automaticFallback": False,
+                            "markdownOnCompletion": True,
+                            "replayed": True,
+                            "content": (
+                                "Existing isolated Codex consultation returned from durable "
+                                "idempotency state; no second inference was dispatched."
+                            ),
+                        })
+                else:
+                    record = TASK_REGISTRY.create(**record_fields)
+
+                quota = await _codex_read_status(history)
+                admission = quota.get("admission") if isinstance(quota, dict) else None
+                remaining = (
+                    admission.get("effective_remaining_percent")
+                    if isinstance(admission, dict) else None
+                )
+                if (
+                    not isinstance(admission, dict)
+                    or admission.get("eligible") is not True
+                    or isinstance(remaining, bool)
+                    or not isinstance(remaining, (int, float))
+                    or float(remaining) <= 10.0
+                ):
+                    record = TASK_REGISTRY.update(
+                        record["taskId"],
+                        status="failed",
+                        errorCategory="codex_quota_reserve",
+                        finishedAt=int(time.time() * 1000),
+                    )
+                    return _tool_result({
+                        "status": "failed",
+                        "taskId": record["taskId"],
+                        "taskReference": record["taskId"],
+                        "backend": "codex_consult",
+                        "provider": "codex",
+                        "model": spec["selection"],
+                        "errorCategory": "codex_quota_reserve",
+                        "remainingPercent": remaining,
+                        "content": (
+                            "Codex consultation was not started because the native subscription "
+                            "quota is unavailable or not strictly above the 10% reserve."
+                        ),
+                    }, error=True)
+                try:
+                    selected_model, selected_effort = await _resolve_model_selection(
+                        history, spec["nativeModelId"], spec["reasoningEffort"],
+                    )
+                except MCPError as exc:
+                    record = TASK_REGISTRY.update(
+                        record["taskId"],
+                        status="failed",
+                        errorCategory="model_unavailable",
+                        finishedAt=int(time.time() * 1000),
+                    )
+                    return _tool_result({
+                        "status": "failed",
+                        "taskId": record["taskId"],
+                        "taskReference": record["taskId"],
+                        "backend": "codex_consult",
+                        "provider": "codex",
+                        "model": spec["selection"],
+                        "errorCategory": "model_unavailable",
+                        "content": str(exc),
+                    }, error=True)
+                if not isinstance(selected_model, str) or not isinstance(selected_effort, str):
+                    record = TASK_REGISTRY.update(
+                        record["taskId"],
+                        status="failed",
+                        errorCategory="model_unavailable",
+                        finishedAt=int(time.time() * 1000),
+                    )
+                    return _tool_result({
+                        "status": "failed",
+                        "taskId": record["taskId"],
+                        "errorCategory": "model_unavailable",
+                        "content": "Codex consultant profile did not resolve to an exact model and effort.",
+                    }, error=True)
+                try:
+                    started = _start_codex_consultation(
+                        task_id=record["taskId"],
+                        prompt=_consultation_prompt(
+                            purpose=purpose,
+                            question=question,
+                            context_mode=context_mode,
+                            evidence_bundle=evidence_bundle if isinstance(evidence_bundle, str) else None,
+                        ),
+                        model=selected_model,
+                        effort=selected_effort,
+                    )
+                except _CodexConsultError as exc:
+                    record = TASK_REGISTRY.update(
+                        record["taskId"],
+                        status="failed",
+                        errorCategory="codex_consult_start",
+                        finishedAt=int(time.time() * 1000),
+                    )
+                    return _tool_result({
+                        "status": "failed",
+                        "taskId": record["taskId"],
+                        "taskReference": record["taskId"],
+                        "backend": "codex_consult",
+                        "provider": "codex",
+                        "model": spec["selection"],
+                        "errorCategory": "codex_consult_start",
+                        "content": str(exc),
+                    }, error=True)
+                record = TASK_REGISTRY.update(
+                    record["taskId"],
+                    status=str(started.get("status") or "running"),
+                    errorCategory=None,
+                )
+                return _tool_result({
+                    "status": str(started.get("status") or "running"),
+                    "taskId": record["taskId"],
+                    "taskReference": record["taskId"],
+                    "backend": "codex_consult",
+                    "provider": "codex",
+                    "model": selected_model,
+                    "reasoningEffort": selected_effort,
+                    "purpose": purpose,
+                    "access": "read",
+                    "contextMode": "provided_only",
+                    "remainingPercent": remaining,
+                    "advisory": True,
+                    "automaticFallback": False,
+                    "markdownOnCompletion": True,
+                    "content": (
+                        "Isolated Codex consultation started. Poll taskId with read_task; "
+                        "the model receives only the supplied evidence bundle."
+                    ),
+                })
+
             try:
                 selected = await OPENCODE_BACKEND.resolve_model(
                     provider=spec["provider"], model=spec["selection"], directory=project.path,
@@ -2222,6 +2429,91 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
 '''
     source = replace_once(source, handler_anchor, handlers + handler_anchor, "probe dispatch")
 
+    codex_consult_task_anchor = '        if registered is not None and registered.get("backend") == "opencode":\n'
+    codex_consult_task_handler = '''        if registered is not None and registered.get("backend") == "codex_consult":
+            if name == "continue_task":
+                return _tool_result({
+                    "status": "conflict",
+                    "taskId": registered["taskId"],
+                    "content": "Model consultations are immutable; start a new consultation for another prompt.",
+                }, error=True)
+            if name == "cancel_task":
+                try:
+                    current = _cancel_codex_consultation(registered["taskId"])
+                except _CodexConsultError as exc:
+                    return _tool_result({
+                        "status": "outcome_unknown",
+                        "taskId": registered["taskId"],
+                        "errorCategory": "cancel_failed",
+                        "content": str(exc),
+                    }, error=True)
+                current_status = str(current.get("status") or "interrupted")
+                changes = {"status": current_status}
+                if current_status in {"completed", "failed", "interrupted"}:
+                    changes["finishedAt"] = registered.get("finishedAt") or int(time.time() * 1000)
+                updated = TASK_REGISTRY.update(registered["taskId"], **changes)
+                return _tool_result({
+                    "status": current_status,
+                    "taskId": updated["taskId"],
+                    "taskReference": updated["taskId"],
+                    "backend": "codex_consult",
+                    "content": "Isolated Codex consultation is no longer running.",
+                })
+            assert name == "read_task"
+            current = _read_codex_consultation(registered["taskId"])
+            current_status = str(current.get("status") or "dispatch_unknown")
+            changes = {"status": current_status}
+            if current_status in {"completed", "failed", "interrupted"}:
+                changes["finishedAt"] = registered.get("finishedAt") or int(time.time() * 1000)
+            if current_status == "failed":
+                changes["errorCategory"] = str(current.get("errorCategory") or "model_error")
+            updated = TASK_REGISTRY.update(registered["taskId"], **changes)
+            final_response = current.get("finalResponse")
+            payload = {
+                **current,
+                "status": current_status,
+                "taskId": updated["taskId"],
+                "taskReference": updated["taskId"],
+                "task": _registry_public(updated),
+                "backend": "codex_consult",
+                "provider": "codex",
+                "model": updated.get("selection"),
+                "reasoningEffort": updated.get("reasoningEffort"),
+                "latestTurn": current.get("latestTurn"),
+                "content": (
+                    final_response
+                    if isinstance(final_response, str) and final_response.strip()
+                    else "Isolated Codex consultation is still running."
+                    if current_status in {"running", "dispatching"}
+                    else "Isolated Codex consultation ended without a visible result."
+                ),
+            }
+            if current_status in {"completed", "failed", "interrupted"}:
+                payload["executionStatus"] = current_status
+                payload["advisory"] = True
+                try:
+                    payload["consultationArtifact"] = _persist_consultation(
+                        updated,
+                        current_status,
+                        final_response if isinstance(final_response, str) else None,
+                    )
+                except Exception as exc:
+                    log.exception(
+                        "Codex consultation Markdown persistence failed (%s)", type(exc).__name__
+                    )
+                    payload["consultationArtifact"] = {
+                        "status": "failed", "errorCategory": "artifact_persistence"
+                    }
+            return _tool_result(payload)
+
+'''
+    source = replace_once(
+        source,
+        codex_consult_task_anchor,
+        codex_consult_task_handler + codex_consult_task_anchor,
+        "Codex consultation task lifecycle",
+    )
+
     call_refresh_anchor = """    async def call_tool(_ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
         try:
 """
@@ -2359,6 +2651,12 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     return source
 
 def transform_backend(source: str) -> str:
+    source = replace_once(
+        source,
+        '        if record["backend"] not in {"codex", "opencode", "council"}:\n',
+        '        if record["backend"] not in {"codex", "opencode", "council", "codex_consult"}:\n',
+        "task registry Codex consultation backend",
+    )
     source = replace_once(
         source,
         "    def get(self, task_id: str) -> dict[str, Any] | None:\n",

@@ -22,10 +22,26 @@ from model_consult import (  # noqa: E402
 )
 
 
-def test_consult_aliases_are_exact_nvidia_models() -> None:
+def test_consult_aliases_include_existing_and_quota_gated_codex_profiles() -> None:
     assert model_spec("kimi_k3")["selection"] == "nvidia/moonshotai/kimi-k3"
     assert model_spec("deepseek")["selection"] == "nvidia/deepseek-ai/deepseek-v4.1-flash"
-    assert CONSULT_MODEL_INPUT_SCHEMA["properties"]["model"]["enum"] == ["deepseek", "kimi_k3"]
+    expected_codex = {
+        "gpt_6_luna_medium": ("gpt-6-luna", "medium"),
+        "gpt_6_luna_high": ("gpt-6-luna", "high"),
+        "gpt_6_1_sol_low": ("gpt-6.1-sol", "low"),
+        "gpt_6_1_sol_medium": ("gpt-6.1-sol", "medium"),
+        "gpt_6_1_sol_high": ("gpt-6.1-sol", "high"),
+        "gpt_6_astra_low": ("gpt-6-astra", "low"),
+        "gpt_6_astra_medium": ("gpt-6-astra", "medium"),
+    }
+    for alias, (model, effort) in expected_codex.items():
+        spec = model_spec(alias)
+        assert spec["backend"] == "codex"
+        assert spec["nativeModelId"] == model
+        assert spec["reasoningEffort"] == effort
+    assert set(CONSULT_MODEL_INPUT_SCHEMA["properties"]["model"]["enum"]) == {
+        "deepseek", "kimi_k3", *expected_codex
+    }
 
 
 def test_consult_prompt_is_read_only_advisory() -> None:
@@ -142,7 +158,18 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert "request_key" in bridge
         assert "persist_consultation as _persist_consultation" in bridge
         assert 'BRIDGE_VERSION = "3.36.0-product-delivery-v1"' in bridge
+        assert '"backend": "codex_consult"' in bridge
+        assert 'float(remaining) <= 10.0' in bridge
+        assert '_start_codex_consultation' in bridge
+        assert 'registered.get("backend") == "codex_consult"' in bridge
         assert (out / "model_consult.py").is_file()
+        assert (out / "codex_consult.py").is_file()
+        codex_consult = (out / "codex_consult.py").read_text(encoding="utf-8")
+        assert "--ignore-user-config" in codex_consult
+        assert "--ignore-rules" in codex_consult
+        assert "permissions.devcoveer-provided-only.network.enabled=false" in codex_consult
+        assert '":root"="deny"' in codex_consult
+        assert 'shell_environment_policy.inherit="none"' in codex_consult
 
 
 def test_installer_requires_consult_model_in_candidate_and_wrapper() -> None:
