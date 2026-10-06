@@ -112,6 +112,7 @@ OWNER_REQUIRED_INPUTS = {
     "GROQ_API_KEY",
     "GROQ_API_KEY2",
     "GROQ_API_KEY3",
+    "ATRIA_API_KEY",
     "NVIDIA_API_KEY",
     "GIGACHAT_API_KEY",
     "GIGACHAT_API_KEY2",
@@ -1356,6 +1357,7 @@ def write_opencode_provider_env(owner: dict[str, str]) -> int:
         "GROQ_API_KEY": ["GROQ_API_KEY", "GROQ_KEY"],
         "GROQ_API_KEY2": ["GROQ_API_KEY2", "GROQ_KEY2"],
         "GROQ_API_KEY3": ["GROQ_API_KEY3", "GROQ_KEY3"],
+        "ATRIA_API_KEY": ["ATRIA_API_KEY"],
         "NVIDIA_API_KEY": ["NVIDIA_API_KEY"],
     }
     values: dict[str, str] = {}

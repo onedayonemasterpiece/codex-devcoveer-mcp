@@ -199,7 +199,7 @@ async def _model_discovery_payload(
         "count": len(models),
         "models": models,
         "routing": {
-            "policy": "zen_then_groq_then_nvidia_then_metered",
+            "policy": "zen_then_groq_then_atria_and_nvidia_then_metered",
             "automaticFallback": True,
             "automaticFallbackScope": "ordered_providers_for_automatic_tasks",
             "globalModelLock": False,

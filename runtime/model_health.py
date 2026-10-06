@@ -65,7 +65,7 @@ def resource_class(provider: str) -> str:
         return "renewable_free_burst"
     if provider.startswith("groq"):
         return "renewable_key_pool"
-    if provider == "nvidia":
+    if provider in {"atria", "nvidia"}:
         return "elastic_nonscarce"
     if provider.startswith("giga"):
         return "metered_reserve"

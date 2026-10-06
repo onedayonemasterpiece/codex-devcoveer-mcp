@@ -138,6 +138,8 @@ def test_resource_order_is_zen_then_groq_then_nvidia_then_metered():
     assert resource_class("groq") == "renewable_key_pool"
     assert resource_class("groq3") == "renewable_key_pool"
     assert resource_class("nvidia") == "elastic_nonscarce"
+    assert resource_class("atria") == "elastic_nonscarce"
+    assert resource_priority("atria") == resource_priority("nvidia")
     assert resource_class("giga1") == "metered_reserve"
     assert resource_priority("opencode") < resource_priority("groq") < resource_priority("nvidia") < resource_priority("giga1")
 
@@ -167,7 +169,7 @@ def test_bridge_fragments_are_parseable_and_enforce_runtime_routing_contract():
     assert '"genericAgentFilter": "toolcall_and_text_io"' in discovery
     assert 'provider_id.startswith("groq")' in discovery
     assert '{"groq": 0, "groq2": 1, "groq3": 2}' in discovery
-    assert '"policy": "zen_then_groq_then_nvidia_then_metered"' in discovery
+    assert '"policy": "zen_then_groq_then_atria_and_nvidia_then_metered"' in discovery
     assert '"automaticFallback": True' in discovery
     assert '"automaticFallbackScope": "ordered_providers_for_automatic_tasks"' in discovery
     assert '"groqKeyOrder": ["groq", "groq2", "groq3"]' in discovery

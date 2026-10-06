@@ -26,13 +26,13 @@ def model(provider, name='model', **fields):
 
 
 def test_priority_and_groq_pool_and_admission():
-    items = [model('gigachat'), model('nvidia'), model('groq3','openai/gpt-oss-120b'),
+    items = [model('gigachat'), model('nvidia'), model('atria', 'Atria-Dawn-Preview'), model('groq3','openai/gpt-oss-120b'),
              model('groq','openai/gpt-oss-120b'), model('opencode','nemotron-3-ultra-free'),
              model('groq2','openai/gpt-oss-120b'), model('groq','openai/gpt-oss-20b')]
-    assert [m['provider'] for m in candidates(items)] == ['opencode','groq','groq2','groq3','nvidia','gigachat']
-    items[4]['free'] = False
-    items[3]['routingRecommended'] = False
-    assert [m['provider'] for m in candidates(items)] == ['groq2','groq3','nvidia','gigachat']
+    assert [m['provider'] for m in candidates(items)] == ['opencode','groq','groq2','groq3','atria','nvidia','gigachat']
+    items[5]['free'] = False
+    items[4]['routingRecommended'] = False
+    assert [m['provider'] for m in candidates(items)] == ['groq2','groq3','atria','nvidia','gigachat']
     items[1]['capabilities']['toolcall'] = False
     assert 'nvidia' not in [m['provider'] for m in candidates(items)]
 

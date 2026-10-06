@@ -30,7 +30,7 @@ def candidates(models: list[dict], attempted: list[str] = ()) -> list[dict]:
         if any(modalities.get(k) and 'text' not in modalities[k] for k in ('input', 'output')): continue
         if p == 'opencode' and not item.get('free'): continue
         if p.startswith('groq') and (p not in ('groq', 'groq2', 'groq3') or native != 'openai/gpt-oss-120b'): continue
-        if p not in ('opencode', 'groq', 'groq2', 'groq3', 'nvidia') and not p.startswith('giga'): continue
+        if p not in ('opencode', 'groq', 'groq2', 'groq3', 'atria', 'nvidia') and not p.startswith('giga'): continue
         # Bound expensive endpoint rotation and leave room for the reserve tier.
         if p == 'nvidia' and sum(s.startswith('nvidia/') for s in attempted) >= 3: continue
         if item.get('routingRecommended') is False or item['selection'] in attempted: continue
@@ -53,6 +53,9 @@ class RoutingBackend(OpenCodeBackend):
         result = await super().catalog(directory=directory)
         for item in result['models']:
             p = item['provider']; selection = item['selection']
+            # Custom credentialed providers are not part of the renewable-free tier,
+            # even when their catalog omits pricing data.
+            if p == 'atria': item['free'] = False
             h = self.health_store.summary(selection)
             ph = self.health_store.provider_summary(p)
             blocked = h['currentRuntimeStatus'] in ('eol', 'temporarily_unavailable')

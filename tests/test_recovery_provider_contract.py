@@ -32,6 +32,7 @@ def test_opencode_provider_env_keeps_groq_pool_but_not_upstream_gigachat_secret(
     assert '"GROQ_API_KEY": ["GROQ_API_KEY", "GROQ_KEY"]' in body
     assert '"GROQ_API_KEY2": ["GROQ_API_KEY2", "GROQ_KEY2"]' in body
     assert '"GROQ_API_KEY3": ["GROQ_API_KEY3", "GROQ_KEY3"]' in body
+    assert '"ATRIA_API_KEY": ["ATRIA_API_KEY"]' in body
     assert '"NVIDIA_API_KEY": ["NVIDIA_API_KEY"]' in body
 
     # GigaChat is consumed by local gpt2giga gateway services; it must not be
@@ -46,8 +47,9 @@ def test_adaptive_routing_knows_all_groq_lanes_and_giga_family() -> None:
 
     assert '{"groq": 0, "groq2": 1, "groq3": 2}' in routing
     assert '"groqKeyOrder": ["groq", "groq2", "groq3"]' in routing
-    assert '"policy": "zen_then_groq_then_nvidia_then_metered"' in routing
+    assert '"policy": "zen_then_groq_then_atria_and_nvidia_then_metered"' in routing
     assert 'provider.startswith("groq")' in health
+    assert 'provider in {"atria", "nvidia"}' in health
     assert 'provider.startswith("giga")' in health
 
 
