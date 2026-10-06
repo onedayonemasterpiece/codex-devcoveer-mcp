@@ -12,6 +12,7 @@ from direct_probes import (
     run_project_probe,
 )
 from requirements_guard import requirements_summary_context
+from product_delivery import POLICY_VERSION as DELIVERY_POLICY_VERSION, POLICY_TEXT, render_delivery_context
 from direct_actions import (
     HOST_ACTION_INPUT_SCHEMA,
     PROJECT_ACTION_INPUT_SCHEMA,
@@ -137,6 +138,13 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
         "For multi-step work, work_open once and carry work_id. Use stable request_key for mutations; "
         "after a lost response use operation_get/work_resume before retrying. Long commands use job_start. "
         "Never treat a lost response as proof that a side effect did not happen.")
+    if operation is None or operation in {"work_open", "work_checkpoint", "work_resume"}:
+        result["deliveryPolicy"] = {
+            "version": DELIVERY_POLICY_VERSION,
+            "blockingAdvisories": False,
+            "checkpointInference": False,
+            "guidance": POLICY_TEXT.strip(),
+        }
     return result
 
 
@@ -228,8 +236,13 @@ async def run_direct_ops_v2(project_root, project_id, plane, operation, payload=
             scope = await asyncio.to_thread(incident_project_scope, project_id, project_root)
             await asyncio.to_thread(get_incident, scope, body["incident_id"])
         if operation in WORK_ACTIONS:
-            return await asyncio.to_thread(work_action, project_root, project_id, operation, body)
-        return await asyncio.to_thread(process_read, project_root, operation, body)
+            result = await asyncio.to_thread(work_action, project_root, project_id, operation, body)
+        else:
+            result = await asyncio.to_thread(process_read, project_root, operation, body)
+        if operation in {"work_open", "work_checkpoint", "work_resume"} and isinstance(result.get("work"), dict):
+            result["deliveryContext"] = render_delivery_context(result["work"])
+            result["deliveryPolicyVersion"] = DELIVERY_POLICY_VERSION
+        return result
     metadata = {key: body[key] for key in ("work_id", "incident_id", "request_key") if key in body}
     mode = body.get("execution_mode", "auto")
     if "execution_mode" in body and (operation != "run_tool" or mode not in {"auto", "sync", "job"}):
