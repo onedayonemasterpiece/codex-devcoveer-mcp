@@ -23,6 +23,10 @@ import urllib.request
 
 NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
 PROVIDER_ENV = Path("/home/dev/.config/opencode/devcoveer-providers.env")
+DATASET_LOOP_PROVIDER_ENV = Path(
+    "/home/dev/.local/share/dataset-loop-mcp/secrets/service.env"
+)
+DATASET_LOOP_KEY_NAMES = frozenset({"NVIDIA_KEY0", "NVIDIA_KEY1"})
 SLOT_ROOT = Path("/home/dev/.local/share/openai-codex-mcp/nvidia-council-slots")
 MAX_SLOTS = 2
 TRANSIENT_RETRY_DELAYS = (5.0, 15.0, 30.0, 60.0)
@@ -68,17 +72,27 @@ def _unquote(value: str) -> str:
     return value
 
 
-def _candidate_keys(path: Path = PROVIDER_ENV) -> list[tuple[str, str]]:
+def _read_key_source(
+    path: Path,
+    *,
+    exact_names: frozenset[str] | None = None,
+    optional: bool,
+) -> list[tuple[str, str]]:
+    if not path.exists():
+        if optional:
+            return []
+        raise NvidiaCouncilError(
+            "configuration", "NVIDIA credential source is unavailable"
+        )
     try:
         _private_regular(path)
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as exc:
         raise NvidiaCouncilError(
-            "configuration", "NVIDIA provider EnvironmentFile is unavailable"
+            "configuration", "NVIDIA credential source is unavailable"
         ) from exc
 
     found: list[tuple[str, str]] = []
-    seen_fingerprints: set[str] = set()
     for raw in lines:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -87,11 +101,36 @@ def _candidate_keys(path: Path = PROVIDER_ENV) -> list[tuple[str, str]]:
             line = line[7:].lstrip()
         name, value = line.split("=", 1)
         name = name.strip().upper()
-        if not _KEY_NAME_RE.fullmatch(name):
+        if exact_names is not None:
+            if name not in exact_names:
+                continue
+        elif not _KEY_NAME_RE.fullmatch(name):
             continue
         value = _unquote(value)
         if not value or len(value) > 4096:
             continue
+        found.append((name, value))
+    return found
+
+
+def _candidate_keys(path: Path | None = None) -> list[tuple[str, str]]:
+    # Explicit path mode is deterministic for tests/diagnostics and never
+    # consults another secret store.
+    if path is not None:
+        raw = _read_key_source(path, exact_names=None, optional=False)
+    else:
+        raw = [
+            *_read_key_source(PROVIDER_ENV, exact_names=None, optional=True),
+            *_read_key_source(
+                DATASET_LOOP_PROVIDER_ENV,
+                exact_names=DATASET_LOOP_KEY_NAMES,
+                optional=True,
+            ),
+        ]
+
+    found: list[tuple[str, str]] = []
+    seen_fingerprints: set[str] = set()
+    for name, value in raw:
         fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()
         if fingerprint in seen_fingerprints:
             continue
