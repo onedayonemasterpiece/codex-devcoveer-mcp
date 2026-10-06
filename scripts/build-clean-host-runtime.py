@@ -1034,7 +1034,7 @@ from nvidia_council import (
 
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
-                          'BRIDGE_VERSION = "3.34.4-isolation-cache-key"', "version")
+                          'BRIDGE_VERSION = "3.35.0-nvidia-dual-slot"', "version")
     import_anchor = """from opencode_backend import (
     DEFAULT_OPENCODE_MODEL as BACKEND_DEFAULT_OPENCODE_MODEL,
     OpenCodeBackend,
