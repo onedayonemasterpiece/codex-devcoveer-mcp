@@ -197,7 +197,6 @@ if [[ ! -x "$VENV/bin/python" ]]; then
     asdev python3 -m venv "$VENV"
   fi
 fi
-
 if command -v uv >/dev/null 2>&1; then
   asdev uv pip install --python "$VENV/bin/python" \
     "mcp==2.0.0" "PyYAML>=6,<7" "jsonschema>=4,<5" "anyio>=4,<5"
@@ -209,6 +208,71 @@ fi
 asdev "$VENV/bin/python" -m py_compile \
   "$BOOT_RUNTIME/codex-chatgpt-bridge.py" \
   "$BOOT_RUNTIME/opencode_backend.py"
+
+echo
+echo "== 5b. native Codex write permission profile =="
+# The native bridge deliberately runs its app-server with CODEX_HOME=/home/dev/.codex
+# and selects this profile only for owner-authorized write tasks. Keep the profile
+# in that exact native home; the separate DevCoveer auth home is not consulted by
+# NativeHistoryClient. Codex requires a default_permissions key whenever any
+# [permissions.*] profile exists, so preserve an existing user default and otherwise
+# use the built-in :workspace default. Never make devcoveer-write the user's default.
+install -d -m 0700 -o "$DEV" -g "$DEV" "$H/.codex"
+runuser -u "$DEV" -- env HOME="$H" python3 - <<'PY'
+import tomllib
+from pathlib import Path
+
+path = Path("/home/dev/.codex/config.toml")
+text = path.read_text(encoding="utf-8") if path.exists() else ""
+config = tomllib.loads(text) if text.strip() else {}
+has_default_permissions = "default_permissions" in config
+prefix = "[permissions.devcoveer-write"
+out: list[str] = []
+skipping = False
+for line in text.splitlines():
+    stripped = line.strip()
+    if stripped.startswith(prefix):
+        skipping = True
+        continue
+    if skipping and stripped.startswith("[") and not stripped.startswith(prefix):
+        skipping = False
+    if not skipping:
+        out.append(line)
+if not has_default_permissions:
+    out = ['default_permissions = ":workspace"', ""] + out
+while out and not out[-1].strip():
+    out.pop()
+if out:
+    out.append("")
+out.extend(
+    [
+        "# Managed by DevCoveer: bounded native Codex write profile.",
+        "[permissions.devcoveer-write]",
+        'description = "DevCoveer bounded repository write access"',
+        "",
+        "[permissions.devcoveer-write.filesystem]",
+        '":minimal" = "read"',
+        '"/home/dev/.local/bin/codex" = "read"',
+        '"/home/dev/.local/lib/node_modules/@openai/codex" = "read"',
+        '":tmpdir" = "write"',
+        '":slash_tmp" = "write"',
+        '"/home/dev/.codex/worktrees" = "write"',
+        "glob_scan_max_depth = 6",
+        "",
+        '[permissions.devcoveer-write.filesystem."/home/dev/projects"]',
+        '"." = "write"',
+        '"**/.env" = "deny"',
+        '"**/.env.*" = "deny"',
+        '"**/*.env" = "deny"',
+        "",
+        "[permissions.devcoveer-write.network]",
+        "enabled = true",
+        'mode = "full"',
+    ]
+)
+path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+path.chmod(0o600)
+PY
 
 echo
 echo "== 6. public stdio MCP entrypoint =="
@@ -290,7 +354,7 @@ echo
 echo "== 8. tunnel runtime credential =="
 # Prefer a purpose-specific mode-0600 key file. Never print its contents.
 if [[ ! -s "$KEY_FILE" ]]; then
-  if [[ -n "${CONTROL_PLANE_API_KEY:-}" ]]; then
+  if [[ -n "${CONTROL_PLANE_API_KEY:<redacted> ]]; then
     umask 077
     printf '%s' "$CONTROL_PLANE_API_KEY" >"$KEY_FILE"
     chown dev:dev "$KEY_FILE"
@@ -306,7 +370,7 @@ for raw in src.read_text(encoding="utf-8").splitlines():
     line=raw.strip()
     if line.startswith("export "):
         line=line[7:].lstrip()
-    if line.startswith("CONTROL_PLANE_API_KEY="):
+    if line.startswith("CONTROL_PLANE_API_KEY=<redacted>
         value=line.split("=",1)[1].strip()
         if len(value)>=2 and value[0]==value[-1] and value[0] in {"'", '"'}:
             value=value[1:-1]
@@ -326,7 +390,7 @@ if [[ ! -s "$KEY_FILE" ]]; then
     echo "One account secret is unavoidable: the old host's tunnel runtime API key"
     echo "was not stored in Git. Paste a Runtime API key with Tunnels Read + Use."
     echo "Input is hidden and will be written only to $KEY_FILE (mode 0600)."
-    read -r -s -p "CONTROL_PLANE_API_KEY: " key
+    read -r -s -p "CONTROL_PLANE_API_KEY: <redacted> key
     echo
     if [[ -z "$key" ]]; then
       echo "NEEDS_RUNTIME_KEY"
@@ -361,7 +425,7 @@ Type=simple
 WorkingDirectory=/home/dev
 Environment=HOME=/home/dev
 Environment=PATH=/home/dev/.local/bin:/home/dev/.opencode/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/dev/.local/bin/tunnel-client run --control-plane.tunnel-id=$TUNNEL_ID --control-plane.api-key=file:$KEY_FILE --mcp.command=/home/dev/.local/bin/codex-mcp-server --health.listen-addr=127.0.0.1:18080 --log.level=info --log.format=struct-text
+ExecStart=/home/dev/.local/bin/tunnel-client run --control-plane.tunnel-id=$TUNNEL_ID --control-plane.api-key=<redacted> --mcp.command=/home/dev/.local/bin/codex-mcp-server --health.listen-addr=127.0.0.1:18080 --log.level=info --log.format=struct-text
 Restart=always
 RestartSec=3
 UMask=0077

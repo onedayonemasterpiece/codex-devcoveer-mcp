@@ -167,7 +167,7 @@ def test_progress_phase_from_native_command_items():
 def test_progress_phase_never_returns_raw_command():
     turn = {
         "status": "inProgress",
-        "items": [{"type": "commandExecution", "command": "SECRET=abc pytest -q"}],
+        "items": [{"type": "commandExecution", "command": "SECRET=<redacted> pytest -q"}],
     }
     result = progress_from_turn(turn)
     assert result == {"progressPhase": "testing"}
@@ -206,3 +206,26 @@ def test_devcoveer_pins_codex_cli_0160():
     assert "'@openai/codex@0.160.0'" in installer
     assert '"scripts/install-codex-cli-0160.sh"' in config
     assert "0.153.0" not in bootstrap
+
+def test_bootstrap_provisions_native_write_permission_profile():
+    root = Path(__file__).resolve().parents[1]
+    bootstrap = (root / "scripts" / "bootstrap-devcoveer2-control-plane.sh").read_text()
+
+    assert 'Path("/home/dev/.codex/config.toml")' in bootstrap
+    assert "[permissions.devcoveer-write]" in bootstrap
+    assert "[permissions.devcoveer-write.filesystem]" in bootstrap
+    assert '[permissions.devcoveer-write.filesystem."/home/dev/projects"]' in bootstrap
+    assert '"/home/dev/.local/bin/codex" = "read"' in bootstrap
+    assert '"/home/dev/.local/lib/node_modules/@openai/codex" = "read"' in bootstrap
+    assert '"/home/dev/.codex/worktrees" = "write"' in bootstrap
+    assert '"." = "write"' in bootstrap
+    assert '"**/.env" = "deny"' in bootstrap
+    assert '"**/.env.*" = "deny"' in bootstrap
+    assert '"**/*.env" = "deny"' in bootstrap
+    assert "[permissions.devcoveer-write.network]" in bootstrap
+    assert "enabled = true" in bootstrap
+    assert 'mode = "full"' in bootstrap
+    assert 'default_permissions = ":workspace"' in bootstrap
+    assert 'default_permissions = "devcoveer-write"' not in bootstrap
+    assert '$DEV_USER' not in bootstrap
+    assert '$DEV_HOME' not in bootstrap
