@@ -214,7 +214,7 @@ def test_long_gateway_command_uses_existing_durable_job(monkeypatch,tmp_path):
 
 def test_legacy_capabilities_and_guards_remain():
     desc=gateway.describe_plane('project_action')
-    assert {'run_tool','job_start','git_commit_push','apply_source_patch','artifact_fetch'} <= set(desc['operations'])
+    assert {'run_tool','job_start','git_commit_push','git_push_existing','apply_source_patch','artifact_fetch'} <= set(desc['operations'])
     schema=gateway.describe_plane('project_action','run_tool')['payload_schema']['properties']
     assert {'bash_script','python_script'} <= set(schema['tool']['enum'])
     assert 'expected_head' in schema and 'expected_workspace_digest' in schema

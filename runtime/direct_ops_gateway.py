@@ -126,7 +126,7 @@ def describe_plane(plane: str, operation: str | None = None) -> dict[str, Any]:
         if operation.startswith("incident_") or operation in SCHEMAS: keep.add("incidents")
         if operation in {"logs", "log_search", "service", "service_config", "resources"}: keep.add("observability")
         if operation in {"write_text", "apply_source_patch", "source_handoff_list", "source_handoff_gc"}: keep.add("source")
-        if operation in {"requirements_context", "requirements_update", "write_text", "apply_source_patch", "git_commit_push", "github_pr_merge"}: keep.add("requirements")
+        if operation in {"requirements_context", "requirements_update", "write_text", "apply_source_patch", "git_commit_push", "git_push_existing", "github_pr_merge"}: keep.add("requirements")
         if operation == "artifact_fetch": keep.add("artifacts")
         result["operator_guidance"] = {k:v for k,v in result["operator_guidance"].items() if k in keep}
     result["gateway_revision"] = "process-recovery-1"
