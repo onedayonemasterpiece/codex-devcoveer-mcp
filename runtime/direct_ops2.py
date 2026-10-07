@@ -458,35 +458,70 @@ async def git_commit_push(root: Path, binding: dict[str, Any], action: dict[str,
 
 
 async def git_push_existing(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
-    branch_res = await _git(
-        root, "symbolic-ref", "--quiet", "--short", "HEAD",
-        ok_codes=(0, 1), output_limit=512,
-    )
-    branch = branch_res.stdout.decode().strip() if branch_res.exit_code == 0 else ""
-    if _BRANCH_WRITE_RE.fullmatch(branch) is None:
-        raise ProbeError(
-            "branch_denied",
-            "direct push requires current chatgpt/* branch",
-            status="denied",
-        )
-
-    staged = await _git(root, "diff", "--cached", "--quiet", ok_codes=(0, 1))
-    unstaged = await _git(root, "diff", "--quiet", ok_codes=(0, 1))
-    if staged.exit_code != 0 or unstaged.exit_code != 0:
-        raise ProbeError(
-            "dirty_worktree",
-            "push-existing requires no staged or unstaged tracked changes",
-            status="denied",
-        )
-
-    head = (await _git(root, "rev-parse", "HEAD", output_limit=256)).stdout.decode().strip()
+    requested_branch = str(action.get("branch") or "").strip()
     expected = str(action.get("expected_sha") or "")
-    if head != expected:
-        raise ProbeError(
-            "precondition_failed",
-            "HEAD does not match expected_sha",
-            status="denied",
+
+    if requested_branch:
+        branch = requested_branch
+        if _BRANCH_WRITE_RE.fullmatch(branch) is None:
+            raise ProbeError(
+                "branch_denied",
+                "direct push requires a chatgpt/* branch",
+                status="denied",
+            )
+        local_ref = f"refs/heads/{branch}"
+        resolved = await _git(
+            root,
+            "rev-parse",
+            "--verify",
+            f"{local_ref}^{{commit}}",
+            ok_codes=(0, 1),
+            output_limit=256,
         )
+        if resolved.exit_code != 0:
+            raise ProbeError(
+                "not_found",
+                "requested local branch does not exist",
+                status="not_found",
+            )
+        head = resolved.stdout.decode().strip()
+        if head != expected:
+            raise ProbeError(
+                "precondition_failed",
+                "requested branch does not match expected_sha",
+                status="denied",
+            )
+        push_source = local_ref
+    else:
+        branch_res = await _git(
+            root, "symbolic-ref", "--quiet", "--short", "HEAD",
+            ok_codes=(0, 1), output_limit=512,
+        )
+        branch = branch_res.stdout.decode().strip() if branch_res.exit_code == 0 else ""
+        if _BRANCH_WRITE_RE.fullmatch(branch) is None:
+            raise ProbeError(
+                "branch_denied",
+                "direct push requires current chatgpt/* branch",
+                status="denied",
+            )
+
+        staged = await _git(root, "diff", "--cached", "--quiet", ok_codes=(0, 1))
+        unstaged = await _git(root, "diff", "--quiet", ok_codes=(0, 1))
+        if staged.exit_code != 0 or unstaged.exit_code != 0:
+            raise ProbeError(
+                "dirty_worktree",
+                "push-existing requires no staged or unstaged tracked changes",
+                status="denied",
+            )
+
+        head = (await _git(root, "rev-parse", "HEAD", output_limit=256)).stdout.decode().strip()
+        if head != expected:
+            raise ProbeError(
+                "precondition_failed",
+                "HEAD does not match expected_sha",
+                status="denied",
+            )
+        push_source = "HEAD"
 
     remote = _validate_alias(action.get("remote", "origin"))
     repo, _url = await resolve_github_remote(root, binding, remote)
@@ -494,7 +529,7 @@ async def git_push_existing(root: Path, binding: dict[str, Any], action: dict[st
         root,
         "push",
         remote,
-        f"HEAD:refs/heads/{branch}",
+        f"{push_source}:refs/heads/{branch}",
         ok_codes=(0, 1),
         timeout=120,
     )
