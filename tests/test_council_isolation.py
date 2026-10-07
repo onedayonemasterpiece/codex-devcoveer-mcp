@@ -26,7 +26,7 @@ def test_generated_council_schema_supports_provided_only_and_idempotency() -> No
     tmp, out = _built_runtime()
     try:
         bridge = (out / "codex-chatgpt-bridge.py").read_text(encoding="utf-8")
-        assert 'BRIDGE_VERSION = "3.36.0-product-delivery-v1"' in bridge
+        assert 'BRIDGE_VERSION = "3.37.0-codex-explicit-opt-in-v1"' in bridge
         schema_start = bridge.index("COUNCIL_RUN_INPUT_SCHEMA")
         schema_end = bridge.index("TOOLS = [", schema_start)
         schema = bridge[schema_start:schema_end]

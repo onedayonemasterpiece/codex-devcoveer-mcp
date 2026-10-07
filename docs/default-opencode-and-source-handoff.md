@@ -6,9 +6,15 @@ This document is the durable execution contract for ChatGPT clients using Codex 
 
 A plain `@Codex DevCoveer` request means **OpenCode**. `start_task` with no provider is routed through the existing OpenCode model resolver and its resource/health policy (Zen first, then NVIDIA, then metered reserve as configured).
 
-Native Codex is limited-capacity and **explicit opt-in only**. Use it only when the user explicitly asks for Codex, for example `@Codex DevCoveer Codex`; the client must express that opt-in as `provider="codex"`. A Codex-looking model name by itself does not opt in. There is no silent fallback from OpenCode to native Codex.
+Native Codex is limited-capacity and **explicit opt-in only**. Use it only when the user explicitly asks for Codex, for example `@Codex DevCoveer Codex`. A native task start requires two independent signals: `provider="codex"` and `codex_user_opt_in`, which must be a verbatim excerpt from the current user message containing standalone `codex`. The bridge stores only a SHA-256 authorization receipt, not the raw excerpt.
+
+The plugin/product identifier `codex-devcoveer` is deliberately excluded from the standalone-word match. Merely connecting or naming the plugin therefore cannot authorize native Codex. A Codex-looking model name by itself also does not opt in. There is no silent fallback from OpenCode to native Codex.
+
+An already-running native Codex task created under this policy carries its authorization receipt, so ordinary continuation of that same task remains possible without repeatedly asking the user to restate `Codex`. Legacy/unreceipted native tasks require a fresh explicit opt-in before they can be continued. Starting a separate native Codex consultation is a new inference and requires its own explicit opt-in.
 
 `reasoning_effort` is native-Codex-specific and therefore also requires explicit `provider="codex"`.
+
+The account quota/reserve gate is only a capacity check and never substitutes for user authorization.
 
 ## ChatGPT source and documentation authorship
 
