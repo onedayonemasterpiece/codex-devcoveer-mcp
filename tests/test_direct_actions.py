@@ -359,6 +359,61 @@ def test_git_push_existing_pushes_clean_exact_head_without_new_commit(tmp_path: 
         )
 
 
+def test_git_push_existing_can_push_exact_local_branch_without_checkout(
+    tmp_path: Path, monkeypatch
+):
+    seed = init_repo(tmp_path / "seed")
+    bare = tmp_path / "remote.git"
+    subprocess.check_call(["/usr/bin/git", "init", "-q", "--bare", str(bare)])
+    git(seed, "remote", "add", "origin", str(bare))
+    git(seed, "push", "-q", "-u", "origin", "main")
+
+    git(seed, "checkout", "-q", "-b", "chatgpt/detached-candidate")
+    (seed / "a.txt").write_text("candidate\n")
+    git(seed, "add", "a.txt")
+    git(seed, "commit", "-q", "-m", "candidate")
+    candidate_sha = git(seed, "rev-parse", "HEAD")
+    git(seed, "checkout", "-q", "main")
+    # Dirty current checkout must not affect publication of an immutable other ref.
+    (seed / "a.txt").write_text("unrelated local edit\n")
+
+    cfg = write_cfg(tmp_path / "cfg.json", seed)
+
+    async def fake_remote(_root, _binding, _alias):
+        return "o/r", str(bare)
+
+    monkeypatch.setattr(ops, "resolve_github_remote", fake_remote)
+
+    result = run(
+        da.run_project_action(
+            str(seed),
+            "p",
+            {
+                "kind": "git_push_existing",
+                "remote": "origin",
+                "branch": "chatgpt/detached-candidate",
+                "expected_sha": candidate_sha,
+            },
+            config_path=cfg,
+        )
+    )
+    assert result["status"] == "ok"
+    assert result["branch"] == "chatgpt/detached-candidate"
+    assert result["commit_sha"] == candidate_sha
+    assert git(seed, "branch", "--show-current") == "main"
+    remote_head = subprocess.check_output(
+        [
+            "/usr/bin/git",
+            "--git-dir",
+            str(bare),
+            "rev-parse",
+            "refs/heads/chatgpt/detached-candidate",
+        ],
+        text=True,
+    ).strip()
+    assert remote_head == candidate_sha
+
+
 def test_apply_source_patch_treats_executable_looking_text_as_inert_source(tmp_path: Path):
     repo = init_repo(tmp_path / "repo")
     cfg = write_cfg(tmp_path / "cfg.json", repo)
