@@ -14,6 +14,36 @@ from session_evidence import redact
 
 CONSULT_ROOT = Path("/home/dev/.local/share/openai-codex-mcp/model-consultations")
 TASK_RE = re.compile(r"^dvt_[0-9a-f]{32}$")
+CODEX_USER_OPT_IN_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "minLength": 5,
+    "maxLength": 500,
+    "description": (
+        "Verbatim excerpt from the current user message that explicitly requests native Codex. "
+        "The plugin/product name codex-devcoveer does not count as authorization. The bridge "
+        "validates the excerpt and stores only a SHA-256 receipt, never the raw quote."
+    ),
+}
+_CODEX_USER_OPT_IN_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])codex(?![A-Za-z0-9_-])", re.IGNORECASE
+)
+
+
+def codex_user_opt_in_receipt(value: Any) -> dict[str, str]:
+    """Validate one explicit native-Codex user quote and return a content-free audit receipt."""
+    if not isinstance(value, str):
+        raise ValueError("native Codex requires an explicit current-user opt-in excerpt")
+    quote = value.strip()
+    if not 5 <= len(quote) <= 500 or _CODEX_USER_OPT_IN_RE.search(quote) is None:
+        raise ValueError(
+            "native Codex requires a verbatim current-user excerpt containing standalone 'codex'; "
+            "the codex-devcoveer plugin name alone is not authorization"
+        )
+    return {
+        "kind": "explicit_user_codex_request",
+        "sha256": hashlib.sha256(quote.encode("utf-8")).hexdigest(),
+    }
+
 
 CONSULT_MODELS: dict[str, dict[str, str]] = {
     "kimi_k3": {
@@ -87,6 +117,9 @@ CONSULT_MODELS: dict[str, dict[str, str]] = {
         "reasoningEffort": "medium",
     },
 }
+CODEX_CONSULT_ALIASES = tuple(sorted(
+    alias for alias, spec in CONSULT_MODELS.items() if spec.get("backend") == "codex"
+))
 CONSULT_PURPOSES = ("requirements", "edge_cases", "architecture", "code_review", "ideas")
 
 CONSULT_MODEL_INPUT_SCHEMA: dict[str, Any] = {
@@ -124,9 +157,19 @@ CONSULT_MODEL_INPUT_SCHEMA: dict[str, Any] = {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
             "description": "Stable idempotency key for durable dispatch reservation/readback.",
         },
+        "codex_user_opt_in": CODEX_USER_OPT_IN_PROPERTY,
     },
     "required": ["project", "model", "purpose", "question"],
     "additionalProperties": False,
+    "allOf": [
+        {
+            "if": {
+                "properties": {"model": {"enum": list(CODEX_CONSULT_ALIASES)}},
+                "required": ["model"],
+            },
+            "then": {"required": ["codex_user_opt_in"]},
+        }
+    ],
 }
 
 
