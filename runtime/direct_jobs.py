@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -203,6 +204,25 @@ async def job_status(root: Path, job_id: str, *, tail_lines: int = 40) -> dict[s
     if _atomic_json_if_absent(result_path, terminal):
         return {**base, **terminal}
     return {**base, **_public_result(result_path, tail_lines)}
+
+
+_TERMINAL_JOB_STATUSES = {"succeeded", "failed", "timed_out", "cancelled", "interrupted", "terminal"}
+
+async def job_wait(root: Path, job_id: str, *, timeout_seconds: int = 20,
+                   poll_interval_ms: int = 500, tail_lines: int = 40,
+                   return_on_progress: bool = True) -> dict[str, Any]:
+    timeout_seconds=max(1,min(int(timeout_seconds),25)); poll_interval_ms=max(250,min(int(poll_interval_ms),2000))
+    started=time.monotonic(); current=await job_status(root,job_id,tail_lines=tail_lines)
+    baseline=(current.get("status"),current.get("last_output_at"))
+    while current.get("status") not in _TERMINAL_JOB_STATUSES:
+        elapsed=time.monotonic()-started
+        if elapsed>=timeout_seconds:
+            return {**current,"action":"job_wait","waited_ms":int(elapsed*1000),"wait_timed_out":True,"progress_changed":False}
+        await asyncio.sleep(min(poll_interval_ms/1000.0,timeout_seconds-elapsed))
+        current=await job_status(root,job_id,tail_lines=tail_lines); token=(current.get("status"),current.get("last_output_at"))
+        if current.get("status") in _TERMINAL_JOB_STATUSES or (return_on_progress and token!=baseline):
+            return {**current,"action":"job_wait","waited_ms":int((time.monotonic()-started)*1000),"wait_timed_out":False,"progress_changed":token!=baseline}
+    return {**current,"action":"job_wait","waited_ms":int((time.monotonic()-started)*1000),"wait_timed_out":False,"progress_changed":False}
 
 
 def list_jobs(root: Path, *, limit: int = 20, before: str | None = None) -> dict[str, Any]:

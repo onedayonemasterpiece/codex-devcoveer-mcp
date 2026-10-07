@@ -510,6 +510,26 @@ async def workflow_dispatch(root: Path, binding: dict[str, Any], action: dict[st
     return result
 
 
+async def workflow_run_wait(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    _remote,repo=await _repo(root,binding,action.get("remote","origin")); run_id=int(action["run_id"])
+    expected=action["expected_head_sha"].lower(); timeout_seconds=max(1,min(int(action.get("timeout_seconds",20)),25))
+    poll_interval_ms=max(250,min(int(action.get("poll_interval_ms",750)),2000)); return_on_progress=bool(action.get("return_on_progress",True)); started=time.monotonic()
+    async def read() -> dict[str, Any]:
+        data=json.loads(await _gh(binding,["api",f"repos/{repo}/actions/runs/{run_id}"]))
+        if not isinstance(data,dict) or data.get("head_sha")!=expected: raise ProbeError("run_moved","workflow run does not match expected head SHA",status="denied")
+        return {"status":data.get("status"),"conclusion":data.get("conclusion"),"run_id":run_id,"repository":repo,"head_sha":expected,
+                "run_attempt":data.get("run_attempt"),"updated_at":data.get("updated_at"),"url":data.get("html_url") or f"https://github.com/{repo}/actions/runs/{run_id}"}
+    current=await read(); baseline=(current.get("status"),current.get("conclusion"),current.get("run_attempt"))
+    while current.get("status")!="completed":
+        elapsed=time.monotonic()-started
+        if elapsed>=timeout_seconds: return {**current,"action":"github_run_wait","waited_ms":int(elapsed*1000),"wait_timed_out":True,"progress_changed":False}
+        await asyncio.sleep(min(poll_interval_ms/1000.0,timeout_seconds-elapsed)); current=await read()
+        token=(current.get("status"),current.get("conclusion"),current.get("run_attempt"))
+        if current.get("status")=="completed" or (return_on_progress and token!=baseline):
+            return {**current,"action":"github_run_wait","waited_ms":int((time.monotonic()-started)*1000),"wait_timed_out":False,"progress_changed":token!=baseline}
+    return {**current,"action":"github_run_wait","waited_ms":int((time.monotonic()-started)*1000),"wait_timed_out":False,"progress_changed":False}
+
+
 async def run_cancel(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
     _remote, repo = await _repo(root, binding, action.get("remote", "origin"))
     run_id = int(action["run_id"])

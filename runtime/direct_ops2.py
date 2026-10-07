@@ -291,6 +291,49 @@ def write_text(root: Path, action: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def text_edit(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    """Apply bounded exact replacements in memory, then atomically replace the file once."""
+    path = _mutation_path(root, action["path"])
+    old_sha = _expected_file(path, action.get("expected_sha256"))
+    if old_sha is None:
+        raise ProbeError("not_found", "file does not exist", status="not_found")
+    try:
+        original = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ProbeError("file_encoding", "text_edit requires a UTF-8 text file", status="denied") from exc
+    except OSError as exc:
+        raise ProbeError("file_read", "text_edit could not read the target file") from exc
+    updated = original
+    counts: list[dict[str, int]] = []
+    for index, edit in enumerate(action["edits"]):
+        old = edit["old"]; new = edit["new"]; expected = int(edit["expected_count"])
+        observed = updated.count(old)
+        if observed != expected:
+            raise ProbeError("precondition_failed",
+                f"edit {index} expected {expected} exact matches but found {observed}; no file change was written",
+                status="denied")
+        updated = updated.replace(old, new)
+        counts.append({"index": index, "expected": expected, "observed": observed})
+    data = updated.encode("utf-8")
+    if len(data) > MAX_DIRECT_WRITE_BYTES:
+        raise ProbeError("file_too_large", "edited file exceeds direct write size limit", status="denied")
+    if updated == original:
+        return {"status":"ok","action":"text_edit","path":action["path"],"old_sha256":old_sha,
+                "new_sha256":old_sha,"bytes":len(data),"changed":False,"edits":counts}
+    old_mode = path.stat().st_mode & 0o777
+    fd, temp_name = tempfile.mkstemp(prefix=".devcoveer-edit-", dir=path.parent)
+    try:
+        os.fchmod(fd, old_mode)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data); handle.flush(); os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        try: os.unlink(temp_name)
+        except FileNotFoundError: pass
+    return {"status":"ok","action":"text_edit","path":action["path"],"old_sha256":old_sha,
+            "new_sha256":hashlib.sha256(data).hexdigest(),"bytes":len(data),"changed":True,"edits":counts}
+
+
 def mkdir(root: Path, action: dict[str, Any]) -> dict[str, Any]:
     rel = _validate_rel_path(action["path"])
     if rel.parts and rel.parts[0] == ".git":

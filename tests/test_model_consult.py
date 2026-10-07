@@ -177,7 +177,7 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert "dispatch_unknown" in bridge
         assert "request_key" in bridge
         assert "persist_consultation as _persist_consultation" in bridge
-        assert 'BRIDGE_VERSION = "3.37.1-codex-task-opt-in-v1"' in bridge
+        assert 'BRIDGE_VERSION = "3.38.0-safety-friction-v1"' in bridge
         assert '"backend": "codex_consult"' in bridge
         assert '"codex_user_opt_in": CODEX_USER_OPT_IN_PROPERTY' in bridge
         assert "codex_explicit_opt_in_required" in bridge

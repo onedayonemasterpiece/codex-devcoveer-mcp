@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import datetime as dt
 import hashlib
 import json
 import logging
@@ -30,9 +31,9 @@ CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar('direct
 LOG = logging.getLogger('devcoveer.process')
 MAX_RESULT_BYTES = 2 * 1024 * 1024
 READBACK_BYTES = 16000
-READ_ACTIONS = {'job_status', 'job_list', 'operation_get', 'operation_list', 'operation_result'}
+READ_ACTIONS = {'job_status', 'job_wait', 'job_list', 'github_run_wait', 'operation_get', 'operation_list', 'operation_result'}
 WORK_ACTIONS = {'work_open', 'work_checkpoint'}
-PROCESS_READS = {'work_list', 'work_resume', 'operation_get', 'operation_list', 'operation_result'}
+PROCESS_READS = {'work_list', 'work_resume', 'operation_get', 'operation_list', 'operation_result', 'safety_trace', 'recovery_snapshot'}
 
 
 def _safe(value: Any) -> Any:
@@ -293,11 +294,57 @@ def _op_public(row, *, include_result=False):
     return value
 
 
+def _receipt_time(row: dict[str, Any]) -> float:
+    raw=row.get("observed_at")
+    if not isinstance(raw,str): return 0.0
+    try: return dt.datetime.fromisoformat(raw.replace("Z","+00:00")).timestamp()
+    except (TypeError,ValueError): return 0.0
+def _safety_trace(cwd: str, body: dict[str, Any]) -> dict[str, Any]:
+    from direct_probe_core import DIRECT_RECEIPT_LOG
+    history=read_receipts(DIRECT_RECEIPT_LOG,cwd,limit=int(body.get("limit",100))); cutoff=time.time()-int(body.get("window_seconds",3600))
+    entries=[r for r in history.get("entries",[]) if _receipt_time(r)>=cutoff]; findings=[]
+    def add(code,count,note): findings.append({"code":code,"count":count,"note":note})
+    actions=[r for r in entries if str(r.get("plane") or "").endswith("_action")]
+    if len(actions)>=10: add("mutation_burst",len(actions),"Many action calls occurred in one short window; prefer batch or one semantic operation.")
+    failures=[r for r in entries if r.get("status") in {"denied","failed","error","outcome_unknown"}]
+    if len(failures)>=3: add("failure_retry_pressure",len(failures),"Several denied/failed/unknown outcomes occurred; inspect recovery state before another side effect.")
+    by={}
+    for r in entries: by.setdefault(str(r.get("operation") or ""),[]).append(r)
+    repeated=sum(1 for rows in by.values() if len(rows)>=2 and any(r.get("status")=="denied" for r in rows))
+    if repeated: add("retry_after_denial",repeated,"One or more denied operation families were attempted again in the same window.")
+    polling=sum(len(by.get(n,[])) for n in ("job_status","github_status","read_task"))
+    if polling>=4: add("polling_burst",polling,"Repeated status polling can be replaced by job_wait/github_run_wait.")
+    helpers=[r for r in entries if isinstance(r.get("subject"),str) and ("/.tmp" in r["subject"] or r["subject"].startswith(".tmp") or "/tmp_" in r["subject"])]
+    if len(helpers)>=3: add("helper_script_churn",len(helpers),"Temporary helper-script churn is better expressed as text_edit or another semantic operation.")
+    host=[r for r in actions if r.get("operation") in {"restart_service","service_action","owned_service_action","root_git_sync_exact"}]
+    if len(host)>=3: add("host_mutation_burst",len(host),"Multiple host/runtime mutations occurred close together; prefer one verified rollout path.")
+    return {"status":"ok","action":"safety_trace","advisory":True,"blocking":False,"window_seconds":int(body.get("window_seconds",3600)),"entries_considered":len(entries),"findings":findings,
+        "recommended_next":"Use recovery_snapshot before another mutation after an interruption." if failures else "Prefer direct_ops_v2 semantic operations; capabilities and escape hatches remain unchanged.",
+        "coverage":{"retained_since":history.get("retained_since"),"scan_complete":history.get("scan_complete"),"historical_before_retention":"unknown"}}
+def _recovery_snapshot(cwd: str, body: dict[str, Any]) -> dict[str, Any]:
+    limit=int(body.get("limit",10)); work_id=body.get("work_id")
+    with _db() as db:
+        args=[cwd]; clause="cwd=?"
+        if work_id: _work(db,cwd,work_id); clause+=" AND work_id=?"; args.append(work_id)
+        rows=db.execute("SELECT * FROM operations WHERE "+clause+" ORDER BY seq DESC LIMIT ?",(*args,limit)).fetchall()
+        work_rows=db.execute("SELECT * FROM works WHERE cwd=? AND status IN ('active','waiting') ORDER BY updated DESC LIMIT 5",(cwd,)).fetchall()
+    operations=[_op_public(r) for r in rows]; uncertain=[r for r in operations if r.get("state") in {"started","outcome_unknown"}]
+    from direct_jobs import list_jobs
+    jobs=list_jobs(Path(cwd),limit=min(limit,20)).get("jobs",[]); next_actions=[{"operation":"operation_get","operation_id":r["operation_id"]} for r in uncertain[:5]]
+    if work_id: next_actions.append({"operation":"work_resume","work_id":work_id})
+    elif work_rows: next_actions.append({"operation":"work_resume","work_id":work_rows[0]["work_id"]})
+    for j in jobs[:3]:
+        if j.get("status") in {"not_polled","running","starting"}: next_actions.append({"operation":"job_wait","job_id":j["job_id"]})
+    return {"status":"ok","action":"recovery_snapshot","uncertain_operations":uncertain,"recent_operations":operations,"active_works":[_work_public(r) for r in work_rows],
+        "candidate_jobs":jobs,"next_actions":next_actions,"safe_to_start_new_side_effect":not bool(uncertain),"note":"Read-only recovery guidance; no side effect is retried or reconciled automatically."}
+
 def process_read(cwd: str, operation: str, body: dict[str, Any]) -> dict[str, Any]:
     cwd = _root(cwd)
     if operation == 'receipt_history':
         from direct_probe_core import DIRECT_RECEIPT_LOG
         return read_receipts(DIRECT_RECEIPT_LOG, cwd, limit=body.get('limit', 20), before=body.get('before'))
+    if operation == 'safety_trace': return _safety_trace(cwd, body)
+    if operation == 'recovery_snapshot': return _recovery_snapshot(cwd, body)
     with _db() as db:
         if operation == 'work_list':
             rows = db.execute('SELECT * FROM works WHERE cwd=? ORDER BY updated DESC LIMIT ?',
@@ -485,3 +532,5 @@ from process_support import validation_message, bounded_snapshot, append_receipt
 
 PROCESS_READS.add('receipt_history')
 SCHEMAS['receipt_history'] = _schema({'limit': {'type':'integer','minimum':1,'maximum':100}, 'before':{'type':'string','maxLength':256}})
+SCHEMAS['safety_trace'] = _schema({'limit': {'type':'integer','minimum':10,'maximum':100}, 'window_seconds': {'type':'integer','minimum':60,'maximum':86400}})
+SCHEMAS['recovery_snapshot'] = _schema({'work_id': WORK_ID, 'limit': {'type':'integer','minimum':1,'maximum':20}})

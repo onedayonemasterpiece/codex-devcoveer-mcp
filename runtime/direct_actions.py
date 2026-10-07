@@ -34,12 +34,12 @@ from direct_probe_host_services import _host_section, _systemd_env
 from direct_ops2 import (
     _mutation_path, capture_handoff, chmod_executable, delete_file, git_commit_push, git_push_existing, git_create_branch,
     git_stage, mkdir, move_path, resolve_github_remote, runner_argv, service_action,
-    write_registered_file, write_text,
+    text_edit, write_registered_file, write_text,
 )
 from direct_ops2_host import daemon_reload, delete_registered_file, root_git_sync_exact
 from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
-from direct_jobs import cancel_job, cleanup_job, job_status, start_job, list_jobs
-from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update, git_fetch, workflow_dispatch, run_cancel
+from direct_jobs import cancel_job, cleanup_job, job_status, job_wait, start_job, list_jobs
+from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update, git_fetch, workflow_dispatch, workflow_run_wait, run_cancel
 from incident_registry import active_incident_id, close_incident, incident_project_scope, note_incident, open_incident
 from source_handoff import gc_source_handoffs
 from requirements_guard import (
@@ -121,6 +121,7 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
         },
         {"type":"object","properties":{"kind":{"const":"write_text"},"path":{"type":"string","minLength":1,"maxLength":500},"content":{"type":"string","maxLength":2097152},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"},"must_not_exist":{"type":"boolean"}},"required":["kind","path","content"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"text_edit"},"path":{"type":"string","minLength":1,"maxLength":500},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","properties":{"old":{"type":"string","minLength":1,"maxLength":262144},"new":{"type":"string","maxLength":262144},"expected_count":{"type":"integer","minimum":1,"maximum":10000}},"required":["old","new","expected_count"],"additionalProperties":False}}},"required":["kind","path","edits"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"mkdir"},"path":{"type":"string","minLength":1,"maxLength":500},"parents":{"type":"boolean"}},"required":["kind","path"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"move_path"},"source":{"type":"string","minLength":1,"maxLength":500},"target":{"type":"string","minLength":1,"maxLength":500},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","source","target"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"delete_file"},"path":{"type":"string","minLength":1,"maxLength":500},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","path"],"additionalProperties":False},
@@ -141,6 +142,7 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"github_branch_delete"},"remote":{"type":"string","minLength":1,"maxLength":64},"branch":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"expected_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"}},"required":["kind","branch","expected_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_start"},"tool":{"type":"string","enum":["pytest","bash_script","python_script","node_script","npm_script","pnpm_script","yarn_script","gradle_task","make_target","python_module"]},"path":{"type":"string","minLength":1,"maxLength":500},"script":{"type":"string","minLength":1,"maxLength":200},"cwd":{"type":"string","maxLength":500},"args":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":500}},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600}},"required":["kind","tool"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_status"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"job_wait"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":25},"poll_interval_ms":{"type":"integer","minimum":250,"maximum":2000},"return_on_progress":{"type":"boolean"},"tail_lines":{"type":"integer","minimum":0,"maximum":200}},"required":["kind","job_id"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_cancel"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"job_cleanup"},"job_id":{"type":"string","pattern":r"^job_[0-9a-f]{24}$"}},"required":["kind","job_id"],"additionalProperties":False},
     ]
@@ -175,7 +177,7 @@ _EXPECTED_WORKSPACE_DIGEST_SCHEMA = {
 }
 _HEAD_GUARDED_KINDS = {
     "sync_ff", "git_switch_ff", "apply_source_patch", "artifact_fetch",
-    "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
+    "run_tool", "run_profile", "write_text", "text_edit", "mkdir", "move_path", "delete_file",
     "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "git_push_existing", "capture_handoff", "job_start", "requirements_update",
 }
 for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
@@ -256,6 +258,7 @@ _PROJECT_ACTION_SCHEMA["oneOf"].extend([
         "request_key": {"type": "string", "minLength": 8, "maxLength": 128,
                         "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"}},
         "required": ["kind", "workflow", "ref"], "additionalProperties": False},
+    {"type": "object", "properties": {"kind": {"const": "github_run_wait"},"remote":{"type":"string","minLength":1,"maxLength":64},"run_id":{"type":"integer","minimum":1},"expected_head_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":25},"poll_interval_ms":{"type":"integer","minimum":250,"maximum":2000},"return_on_progress":{"type":"boolean"}},"required":["kind","run_id","expected_head_sha"],"additionalProperties":False},
     {"type": "object", "properties": {"kind": {"const": "github_run_cancel"},
         "remote": {"type": "string", "minLength": 1, "maxLength": 64},
         "run_id": {"type": "integer", "minimum": 1},
@@ -1125,6 +1128,7 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
         return await git_fetch(root, binding, action)
     if kind == "github_workflow_dispatch":
         return await workflow_dispatch(root, binding, action)
+    if kind == "github_run_wait": return await workflow_run_wait(root, binding, action)
     if kind == "github_run_cancel":
         return await run_cancel(root, binding, action)
     if kind == "job_list":
@@ -1133,6 +1137,7 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
         return await start_job(root, action, project_id=project_id)
     if kind == "job_status":
         return await job_status(root, action["job_id"], tail_lines=action.get("tail_lines", 40))
+    if kind == "job_wait": return await job_wait(root, action["job_id"], timeout_seconds=action.get("timeout_seconds",20), poll_interval_ms=action.get("poll_interval_ms",500), tail_lines=action.get("tail_lines",40), return_on_progress=action.get("return_on_progress",True))
     if kind == "job_cancel":
         return await cancel_job(root, action["job_id"])
     if kind == "job_cleanup":
@@ -1162,6 +1167,7 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
             result["qualityHook"] = hook
         return result
     if kind == "write_text": return write_text(root, action)
+    if kind == "text_edit": return text_edit(root, action)
     if kind == "mkdir": return mkdir(root, action)
     if kind == "move_path": return move_path(root, action)
     if kind == "delete_file": return delete_file(root, action)
@@ -1214,6 +1220,17 @@ async def _action_receipt_head(root: Path) -> str | None:
     return value if HEX40_RE.fullmatch(value) else None
 
 
+def _receipt_subject(action: dict[str, Any]) -> str | None:
+    kind=str(action.get("kind") or "")
+    if kind in {"write_text","text_edit","delete_file","chmod_executable"}: value=action.get("path")
+    elif kind=="move_path": value=f"{action.get('source')}->{action.get('target')}"
+    elif kind in {"run_tool","job_start"}: value=action.get("path") or action.get("script") or action.get("tool")
+    elif kind in {"job_status","job_wait","job_cancel","job_cleanup"}: value=action.get("job_id")
+    elif kind.startswith("github_"): value=action.get("run_id") or action.get("pr") or action.get("workflow") or action.get("head")
+    else: value=action.get("service") or action.get("profile")
+    return None if value is None else str(value).replace("\x00","")[:500]
+
+
 async def _legacy_run_project_action(project_root: str, project_id: str, action: dict[str, Any], *,
                              config_path: Path | None = None, receipt_surface: str = "typed") -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
@@ -1231,6 +1248,7 @@ async def _legacy_run_project_action(project_root: str, project_id: str, action:
         "expected_head": action.get("expected_head"),
         "expected_workspace_digest": action.get("expected_workspace_digest"),
         "incident_id": incident_id,
+        "subject": _receipt_subject(action),
     }
     try:
         result = await _run_project_action_inner(project_root, project_id, action, config_path=config_path)

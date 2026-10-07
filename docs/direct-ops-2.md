@@ -13,6 +13,7 @@ Project reads:
 
 Project writes:
 - atomic write_text with optional SHA-256 or must-not-exist precondition.
+- text_edit performs one atomic UTF-8 write after all exact match-count preconditions pass in memory, replacing helper-script edit chains without becoming a shell/eval surface.
 - mkdir, move_path, delete_file and chmod_executable, repository-relative with secret/symlink/.git denial.
 - git_create_branch limited to chatgpt/*, exact git_stage paths, non-force git_commit_push, and exact-SHA git_push_existing for clean committed candidates.
 - capture_handoff snapshots a dirty worktree including allowed untracked files into the existing isolated managed handoff without resetting the canonical checkout.
@@ -78,6 +79,7 @@ Long deterministic work is no longer a reason to start an agent.
 Implemented:
 - job_start runs the same allowlisted project run_tool surface in a private systemd user transient job, with a fixed runner, bounded timeout and private spec/result files;
 - job_status reads durable redacted results even after the transient unit exits;
+- job_wait long-polls for at most 25 seconds and returns on terminal state or meaningful progress, reducing repeated client polling;
 - job_cancel and job_cleanup are bound to the exact project/worktree that created the job;
 - project batch executes up to 20 already-typed project actions sequentially, fail-fast, with no nested batch.
 
@@ -91,7 +93,8 @@ Implemented:
 - github_pr_create: create or idempotently reuse an open PR from chatgpt/* after verifying the exact remote head SHA;
 - github_pr_update: edit title/body only for an open chatgpt/* PR whose head still equals expected_head_sha;
 - github_pr_merge: merge/squash/rebase only an open chatgpt/* PR with exact expected head and base;
-- github_branch_delete: delete only chatgpt/* remote branches after exact SHA verification.
+- github_branch_delete: delete only chatgpt/* remote branches after exact SHA verification;
+- github_run_wait: bounded long-poll for one exact workflow run/head SHA, returning on completion or state progress without dispatching or mutating the run.
 
 These operations use the actual GitHub remote of the resolved project (or a stricter configured binding). No arbitrary GitHub API path is exposed.
 
@@ -116,8 +119,16 @@ The contract now fixes both layers:
   ChatGPT-side schema for direct_ops_v2.
 
 The older strongly typed top-level tools remain available for compatibility and
-ergonomics when the client has a fresh schema. direct_ops_v2 is the cache-resistant
-operator surface and should be preferred when schema freshness is uncertain.
+ergonomics when the client has a fresh schema. direct_ops_v2 is the primary
+cache-resistant execution surface and should be preferred in long-lived ChatGPT
+windows or whenever schema freshness is uncertain. This preference does not remove
+or narrow any legacy typed tool, shell-capable run_tool, Source Handoff, OpenCode,
+native Codex, or other escape hatch.
+
+Safety-friction diagnostics are advisory rather than admission controls:
+- safety_trace summarizes retained Direct Ops receipts for mutation bursts, retry-after-denial, helper-script churn and polling bursts; it never blocks an operation.
+- recovery_snapshot reads saved work/operation/job state after a disconnect or platform interruption and proposes readback operations; it never repeats a side effect automatically.
+- server-side schema failures are reduced to concise field/constraint messages; full live schemas remain inspectable through direct_ops_v2 operation=describe.
 
 
 ## Frozen-client compatibility carrier
