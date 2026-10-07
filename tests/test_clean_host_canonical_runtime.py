@@ -91,10 +91,11 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
             "host_action",
             "run_tool",
             "job_start",
-            "job_status",
+            "job_wait",
             "python_env=auto",
             "git_fetch",
             "github_workflow_dispatch",
+            "github_run_wait",
             "github_run_cancel",
             "reasoning beyond typed operations",
             "instructions", "web_preflight", "CHECK_BASE/CHECK_OUTPUT",
@@ -129,7 +130,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert 'eligible = [m for m in _routing_candidates' in bridge
         assert 'name="get_task_evidence"' in bridge
         assert 'name="record_task_review"' in bridge
-        assert 'BRIDGE_VERSION = "3.37.1-codex-task-opt-in-v1"' in bridge
+        assert 'BRIDGE_VERSION = "3.38.0-safety-friction-v1"' in bridge
         assert "codex_explicit_opt_in_required" in bridge
         assert "_codex_user_opt_in_receipt" in bridge
         assert "codexAuthorization" in bridge

@@ -1519,7 +1519,7 @@ def transform_codex_explicit_opt_in(source: str) -> str:
     source = replace_once(
         source,
         'BRIDGE_VERSION = "3.36.0-product-delivery-v1"',
-        'BRIDGE_VERSION = "3.37.1-codex-task-opt-in-v1"',
+        'BRIDGE_VERSION = "3.38.0-safety-friction-v1"',
         "Codex explicit opt-in bridge version",
     )
 
@@ -1735,6 +1735,7 @@ from direct_ops_gateway import (
     run_direct_ops_v2 as _run_direct_ops_v2,
 )
 from direct_tool_catalog import build_tool_refresh_listen_handler
+from process_support import validation_message as _validation_message
 from workspace_selection import workspace_context
 from incident_registry import preflight_incident as _preflight_incident
 from mcp.server import NotificationOptions
@@ -2811,6 +2812,27 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     source = transform_nvidia_dual_slot(source)
     source = transform_product_delivery(source)
     source = transform_codex_explicit_opt_in(source)
+    source = replace_once(
+        source,
+        '''def _validate_schema(name: str, arguments: dict[str, Any]) -> None:
+    errors = sorted(VALIDATORS[name].iter_errors(arguments), key=lambda e: list(e.absolute_path))
+    if errors:
+        path = list(errors[0].absolute_path)
+        raise _invalid_params(str(path[0]) if path else "$input", errors[0].message)
+''',
+        '''def _validate_schema(name: str, arguments: dict[str, Any]) -> None:
+    errors = sorted(VALIDATORS[name].iter_errors(arguments), key=lambda e: list(e.absolute_path))
+    if errors:
+        first = errors[0]
+        path = list(first.absolute_path)
+        where = ".".join(str(part) for part in path)
+        message = _validation_message(first)
+        if where:
+            message = f"{where}: {message}"
+        raise _invalid_params(str(path[0]) if path else "$input", message[:500])
+''',
+        "concise top-level schema validation",
+    )
     return source
 
 def transform_backend(source: str) -> str:

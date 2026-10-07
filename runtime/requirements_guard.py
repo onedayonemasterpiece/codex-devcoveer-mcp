@@ -172,7 +172,7 @@ def guard_requirement_mutation(project_root: str | Path, action: dict[str, Any])
     if kind == "requirements_update":
         return
     protected = False
-    if kind in {"write_text", "delete_file", "chmod_executable"}:
+    if kind in {"write_text", "text_edit", "delete_file", "chmod_executable"}:
         protected = action.get("path") == MANIFEST_PATH
     elif kind == "move_path":
         protected = action.get("source") == MANIFEST_PATH or action.get("target") == MANIFEST_PATH
