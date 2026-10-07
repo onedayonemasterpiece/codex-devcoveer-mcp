@@ -1519,7 +1519,7 @@ def transform_codex_explicit_opt_in(source: str) -> str:
     source = replace_once(
         source,
         'BRIDGE_VERSION = "3.36.0-product-delivery-v1"',
-        'BRIDGE_VERSION = "3.37.0-codex-explicit-opt-in-v1"',
+        'BRIDGE_VERSION = "3.37.1-codex-task-opt-in-v1"',
         "Codex explicit opt-in bridge version",
     )
 
@@ -1658,67 +1658,16 @@ def transform_codex_explicit_opt_in(source: str) -> str:
     )
     source = source[:native_start] + block + source[native_end:]
 
-    consult_start = source.find('        if name == "consult_model":\n')
-    consult_end = source.find('        if name == "direct_ops_v2":\n', consult_start)
-    if consult_start < 0 or consult_end < 0:
-        raise SystemExit("Codex opt-in consult_model block missing")
-    consult = source[consult_start:consult_end]
-    codex_start = consult.find('            if spec.get("backend") == "codex":\n')
-    codex_end = consult.find(
-        '            try:\n                selected = await OPENCODE_BACKEND.resolve_model(',
-        codex_start,
-    )
-    if codex_start < 0 or codex_end < 0:
-        raise SystemExit("Codex opt-in Codex consultant block missing")
-    codex = consult[codex_start:codex_end]
-    codex = replace_once(
-        codex,
-        '            if spec.get("backend") == "codex":\n'
-        '                if not provided_only:\n',
-        '            if spec.get("backend") == "codex":\n'
-        '                try:\n'
-        '                    codex_authorization = _codex_user_opt_in_receipt(\n'
-        '                        arguments.get("codex_user_opt_in")\n'
-        '                    )\n'
-        '                except ValueError as exc:\n'
-        '                    return _tool_result({\n'
-        '                        "status": "denied",\n'
-        '                        "errorCategory": "codex_explicit_opt_in_required",\n'
-        '                        "content": str(exc),\n'
-        '                    }, error=True)\n'
-        '                if not provided_only:\n',
-        "Codex consultant admission gate",
-    )
-    codex = replace_once(
-        codex,
-        '                    "routingReason": f"model_consult:{purpose}",\n'
-        '                    "title": f"{project.canonical}: {spec[\'displayName\']} consultation ({purpose})",\n',
-        '                    "routingReason": f"model_consult:{purpose}",\n'
-        '                    "codexAuthorization": codex_authorization,\n'
-        '                    "title": f"{project.canonical}: {spec[\'displayName\']} consultation ({purpose})",\n',
-        "Codex consultant registry receipt",
-    )
-    codex = replace_once(
-        codex,
-        '                    "remainingPercent": remaining,\n'
-        '                    "advisory": True,\n',
-        '                    "remainingPercent": remaining,\n'
-        '                    "codexAuthorization": codex_authorization,\n'
-        '                    "advisory": True,\n',
-        "Codex consultant response receipt",
-    )
-    consult = consult[:codex_start] + codex + consult[codex_end:]
-    source = source[:consult_start] + consult + source[consult_end:]
-
     source = replace_once(
         source,
         'description=("Start one optional read-only NVIDIA consultation for a focused second opinion. "\n'
         '            "Choose Kimi K3 or DeepSeek V4.1 Flash and a purpose. The consultant cannot modify source, "\n'
         '            "requirements, runtime state or external systems; no automatic model fallback occurs. "\n',
         'description=("Start one optional read-only consultation for a focused second opinion. "\n'
-        '            "Kimi K3 and DeepSeek V4.1 Flash use NVIDIA. Native Codex consultant profiles remain "\n'
-        '            "available but require codex_user_opt_in with a verbatim current-user excerpt containing "\n'
-        '            "standalone \'codex\'; merely invoking codex-devcoveer is not authorization. The consultant "\n'
+        '            "Kimi K3 and DeepSeek V4.1 Flash use NVIDIA. Native Codex consultant profiles are "\n'
+        '            "available under the owner-authorized consultation ladder when the Codex quota gate "\n'
+        '            "is strictly above the 10% reserve; this standing consultation policy is separate from "\n'
+        '            "native task dispatch and does not authorize start_task provider=codex. The consultant "\n'
         '            "cannot modify source, requirements, runtime state or external systems; no automatic model fallback occurs. "\n',
         "Codex consultant tool description",
     )

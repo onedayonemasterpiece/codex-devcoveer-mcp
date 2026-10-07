@@ -117,9 +117,6 @@ CONSULT_MODELS: dict[str, dict[str, str]] = {
         "reasoningEffort": "medium",
     },
 }
-CODEX_CONSULT_ALIASES = tuple(sorted(
-    alias for alias, spec in CONSULT_MODELS.items() if spec.get("backend") == "codex"
-))
 CONSULT_PURPOSES = ("requirements", "edge_cases", "architecture", "code_review", "ideas")
 
 CONSULT_MODEL_INPUT_SCHEMA: dict[str, Any] = {
@@ -157,19 +154,9 @@ CONSULT_MODEL_INPUT_SCHEMA: dict[str, Any] = {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
             "description": "Stable idempotency key for durable dispatch reservation/readback.",
         },
-        "codex_user_opt_in": CODEX_USER_OPT_IN_PROPERTY,
     },
     "required": ["project", "model", "purpose", "question"],
     "additionalProperties": False,
-    "allOf": [
-        {
-            "if": {
-                "properties": {"model": {"enum": list(CODEX_CONSULT_ALIASES)}},
-                "required": ["model"],
-            },
-            "then": {"required": ["codex_user_opt_in"]},
-        }
-    ],
 }
 
 

@@ -15,7 +15,6 @@ INSTALLER = ROOT / "scripts" / "install-current-canonical-runtime.sh"
 
 sys.path.insert(0, str(RUNTIME))
 from model_consult import (  # noqa: E402
-    CODEX_CONSULT_ALIASES,
     CONSULT_MODEL_INPUT_SCHEMA,
     codex_user_opt_in_receipt,
     consultation_metadata,
@@ -46,9 +45,7 @@ def test_consult_aliases_include_existing_and_quota_gated_codex_profiles() -> No
     assert set(CONSULT_MODEL_INPUT_SCHEMA["properties"]["model"]["enum"]) == {
         "deepseek", "kimi_k3", *expected_codex
     }
-    assert set(CODEX_CONSULT_ALIASES) == set(expected_codex)
-    assert "codex_user_opt_in" in CONSULT_MODEL_INPUT_SCHEMA["properties"]
-    assert CONSULT_MODEL_INPUT_SCHEMA["allOf"][0]["then"]["required"] == ["codex_user_opt_in"]
+    assert "codex_user_opt_in" not in CONSULT_MODEL_INPUT_SCHEMA["properties"]
 
 
 def test_native_codex_opt_in_requires_standalone_codex_and_keeps_only_hash() -> None:
@@ -180,11 +177,13 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert "dispatch_unknown" in bridge
         assert "request_key" in bridge
         assert "persist_consultation as _persist_consultation" in bridge
-        assert 'BRIDGE_VERSION = "3.37.0-codex-explicit-opt-in-v1"' in bridge
+        assert 'BRIDGE_VERSION = "3.37.1-codex-task-opt-in-v1"' in bridge
         assert '"backend": "codex_consult"' in bridge
         assert '"codex_user_opt_in": CODEX_USER_OPT_IN_PROPERTY' in bridge
         assert "codex_explicit_opt_in_required" in bridge
         assert "codexAuthorization" in bridge
+        assert "owner-authorized consultation ladder" in tool_block
+        assert "codex_user_opt_in" not in tool_block
         assert 'float(remaining) <= 10.0' in bridge
         assert '_start_codex_consultation' in bridge
         assert 'registered.get("backend") == "codex_consult"' in bridge
