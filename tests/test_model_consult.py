@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime"
 BUILDER = ROOT / "scripts" / "build-clean-host-runtime.py"
@@ -13,7 +15,9 @@ INSTALLER = ROOT / "scripts" / "install-current-canonical-runtime.sh"
 
 sys.path.insert(0, str(RUNTIME))
 from model_consult import (  # noqa: E402
+    CODEX_CONSULT_ALIASES,
     CONSULT_MODEL_INPUT_SCHEMA,
+    codex_user_opt_in_receipt,
     consultation_metadata,
     consultation_prompt,
     consultation_request_fingerprint,
@@ -42,6 +46,25 @@ def test_consult_aliases_include_existing_and_quota_gated_codex_profiles() -> No
     assert set(CONSULT_MODEL_INPUT_SCHEMA["properties"]["model"]["enum"]) == {
         "deepseek", "kimi_k3", *expected_codex
     }
+    assert set(CODEX_CONSULT_ALIASES) == set(expected_codex)
+    assert "codex_user_opt_in" in CONSULT_MODEL_INPUT_SCHEMA["properties"]
+    assert CONSULT_MODEL_INPUT_SCHEMA["allOf"][0]["then"]["required"] == ["codex_user_opt_in"]
+
+
+def test_native_codex_opt_in_requires_standalone_codex_and_keeps_only_hash() -> None:
+    first = codex_user_opt_in_receipt("Use Codex for this task")
+    same = codex_user_opt_in_receipt("Use Codex for this task")
+    assert first == same
+    assert first["kind"] == "explicit_user_codex_request"
+    assert len(first["sha256"]) == 64
+    assert "Use Codex" not in str(first)
+    for invalid in (
+        "[$codex-devcoveer] inspect the project",
+        "use gpt-6.1-sol",
+        "pick the strongest model",
+    ):
+        with pytest.raises(ValueError):
+            codex_user_opt_in_receipt(invalid)
 
 
 def test_consult_prompt_is_read_only_advisory() -> None:
@@ -157,8 +180,11 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert "dispatch_unknown" in bridge
         assert "request_key" in bridge
         assert "persist_consultation as _persist_consultation" in bridge
-        assert 'BRIDGE_VERSION = "3.36.0-product-delivery-v1"' in bridge
+        assert 'BRIDGE_VERSION = "3.37.0-codex-explicit-opt-in-v1"' in bridge
         assert '"backend": "codex_consult"' in bridge
+        assert '"codex_user_opt_in": CODEX_USER_OPT_IN_PROPERTY' in bridge
+        assert "codex_explicit_opt_in_required" in bridge
+        assert "codexAuthorization" in bridge
         assert 'float(remaining) <= 10.0' in bridge
         assert '_start_codex_consultation' in bridge
         assert 'registered.get("backend") == "codex_consult"' in bridge
