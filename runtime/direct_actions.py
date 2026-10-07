@@ -32,7 +32,7 @@ from direct_probe_core import (
 )
 from direct_probe_host_services import _host_section, _systemd_env
 from direct_ops2 import (
-    _mutation_path, capture_handoff, chmod_executable, delete_file, git_commit_push, git_create_branch,
+    _mutation_path, capture_handoff, chmod_executable, delete_file, git_commit_push, git_push_existing, git_create_branch,
     git_stage, mkdir, move_path, resolve_github_remote, runner_argv, service_action,
     write_registered_file, write_text,
 )
@@ -128,6 +128,7 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"git_create_branch"},"branch":{"type":"string","minLength":9,"maxLength":200,"pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]*$"},"start_ref":{"type":"string","minLength":1,"maxLength":200}},"required":["kind","branch"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"git_stage"},"paths":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","paths"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"git_commit_push"},"remote":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"commit_message":{"type":"string","minLength":1,"maxLength":200}},"required":["kind","commit_message"],"additionalProperties":False},
+        {"type":"object","properties":{"kind":{"const":"git_push_existing"},"remote":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"expected_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"}},"required":["kind","expected_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"capture_handoff"},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","base_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"worktree_capture_handoff"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","worktree","base_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
@@ -175,7 +176,7 @@ _EXPECTED_WORKSPACE_DIGEST_SCHEMA = {
 _HEAD_GUARDED_KINDS = {
     "sync_ff", "git_switch_ff", "apply_source_patch", "artifact_fetch",
     "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
-    "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "capture_handoff", "job_start", "requirements_update",
+    "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "git_push_existing", "capture_handoff", "job_start", "requirements_update",
 }
 for _variant in _PROJECT_ACTION_SCHEMA["oneOf"]:
     _kind = _variant["properties"]["kind"]["const"]
@@ -1177,6 +1178,8 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
         if hook is not None:
             result["qualityHook"] = hook
         return result
+    if kind == "git_push_existing":
+        return await git_push_existing(root, binding, action)
     if kind == "capture_handoff":
         if handoff: raise ProbeError("handoff_denied", "capture_handoff requires a canonical project", status="denied")
         return await capture_handoff(root, binding_id, action)

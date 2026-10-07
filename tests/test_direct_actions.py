@@ -17,6 +17,7 @@ RUNTIME = ROOT / "runtime"
 sys.path.insert(0, str(RUNTIME))
 
 import direct_actions as da  # noqa: E402
+import direct_ops2 as ops  # noqa: E402
 import requirements_guard as rg  # noqa: E402
 
 
@@ -289,7 +290,7 @@ def test_liberal_fast_paths_preserve_existing_shell_capability():
     variants = {item["properties"]["kind"]["const"]: item for item in da.PROJECT_ACTION_INPUT_SCHEMA["properties"]["action"]["oneOf"]}
     for legacy in {
         "sync_ff", "run_tool", "run_profile", "write_text", "mkdir", "move_path", "delete_file",
-        "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "capture_handoff",
+        "chmod_executable", "git_create_branch", "git_stage", "git_commit_push", "git_push_existing", "capture_handoff",
         "worktree_capture_handoff", "worktree_reconcile", "owned_service_action", "github_pr_create",
         "github_pr_update", "github_pr_merge", "github_branch_delete", "job_start", "job_status",
         "job_cancel", "job_cleanup", "job_list", "git_fetch", "github_workflow_dispatch",
@@ -300,6 +301,62 @@ def test_liberal_fast_paths_preserve_existing_shell_capability():
     run_tool = variants["run_tool"]
     assert "bash_script" in run_tool["properties"]["tool"]["enum"]
     assert "python_script" in run_tool["properties"]["tool"]["enum"]
+
+
+def test_git_push_existing_pushes_clean_exact_head_without_new_commit(tmp_path: Path, monkeypatch):
+    seed = init_repo(tmp_path / "seed")
+    bare = tmp_path / "remote.git"
+    subprocess.check_call(["/usr/bin/git", "init", "-q", "--bare", str(bare)])
+    git(seed, "remote", "add", "origin", str(bare))
+    git(seed, "push", "-q", "-u", "origin", "main")
+    git(seed, "checkout", "-q", "-b", "chatgpt/existing")
+    (seed / "a.txt").write_text("two\n")
+    git(seed, "add", "a.txt")
+    git(seed, "commit", "-q", "-m", "existing candidate")
+    head = git(seed, "rev-parse", "HEAD")
+    cfg = write_cfg(tmp_path / "cfg.json", seed)
+
+    async def fake_remote(_root, _binding, _alias):
+        return "o/r", str(bare)
+
+    monkeypatch.setattr(ops, "resolve_github_remote", fake_remote)
+
+    result = run(
+        da.run_project_action(
+            str(seed),
+            "p",
+            {
+                "kind": "git_push_existing",
+                "remote": "origin",
+                "expected_sha": head,
+            },
+            config_path=cfg,
+        )
+    )
+    assert result["status"] == "ok"
+    assert result["action"] == "git_push_existing"
+    assert result["commit_sha"] == head
+    assert git(seed, "rev-parse", "HEAD") == head
+    remote_head = subprocess.check_output(
+        ["/usr/bin/git", "--git-dir", str(bare), "rev-parse", "refs/heads/chatgpt/existing"],
+        text=True,
+    ).strip()
+    assert remote_head == head
+
+    (seed / "a.txt").write_text("dirty\n")
+    with pytest.raises(da.ProbeError, match="no staged or unstaged tracked changes"):
+        run(
+            da.run_project_action(
+                str(seed),
+                "p",
+                {
+                    "kind": "git_push_existing",
+                    "remote": "origin",
+                    "expected_sha": head,
+                },
+                config_path=cfg,
+            )
+        )
 
 
 def test_apply_source_patch_treats_executable_looking_text_as_inert_source(tmp_path: Path):

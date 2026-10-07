@@ -14,7 +14,7 @@ Project reads:
 Project writes:
 - atomic write_text with optional SHA-256 or must-not-exist precondition.
 - mkdir, move_path, delete_file and chmod_executable, repository-relative with secret/symlink/.git denial.
-- git_create_branch limited to chatgpt/*, exact git_stage paths, and non-force git_commit_push.
+- git_create_branch limited to chatgpt/*, exact git_stage paths, non-force git_commit_push, and exact-SHA git_push_existing for clean committed candidates.
 - capture_handoff snapshots a dirty worktree including allowed untracked files into the existing isolated managed handoff without resetting the canonical checkout.
 - run_tool additionally supports pnpm/yarn scripts, Gradle wrapper tasks, Make targets and named Python modules.
 

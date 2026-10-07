@@ -98,7 +98,7 @@ async def project_capabilities(root: Path, binding: dict[str, Any]) -> dict[str,
             "sync_ff", "git_switch_ff", "apply_source_patch", "artifact_fetch",
             "run_tool", "run_profile", "write_text", "mkdir", "move_path",
             "delete_file", "chmod_executable", "git_create_branch", "git_stage",
-            "git_commit_push", "capture_handoff", "worktree_capture_handoff", "worktree_reconcile", "source_handoff_gc", "requirements_update", "owned_service_action", "github_pr_create", "github_pr_update", "github_pr_merge", "github_branch_delete", "job_start", "job_status", "job_cancel", "job_cleanup", "batch", "handoff_commit_push",
+            "git_commit_push", "git_push_existing", "capture_handoff", "worktree_capture_handoff", "worktree_reconcile", "source_handoff_gc", "requirements_update", "owned_service_action", "github_pr_create", "github_pr_update", "github_pr_merge", "github_branch_delete", "job_start", "job_status", "job_cancel", "job_cleanup", "batch", "handoff_commit_push",
         ],
         "direct_host_actions": [
             "restart_service", "service_action", "run_profile", "write_registered_file",
@@ -411,6 +411,63 @@ async def git_commit_push(root: Path, binding: dict[str, Any], action: dict[str,
     return {
         "status": "ok", "action": "git_commit_push", "branch": branch,
         "commit_sha": head, "repository": repo, "changed_paths": changed_paths,
+    }
+
+
+async def git_push_existing(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    branch_res = await _git(
+        root, "symbolic-ref", "--quiet", "--short", "HEAD",
+        ok_codes=(0, 1), output_limit=512,
+    )
+    branch = branch_res.stdout.decode().strip() if branch_res.exit_code == 0 else ""
+    if _BRANCH_WRITE_RE.fullmatch(branch) is None:
+        raise ProbeError(
+            "branch_denied",
+            "direct push requires current chatgpt/* branch",
+            status="denied",
+        )
+
+    staged = await _git(root, "diff", "--cached", "--quiet", ok_codes=(0, 1))
+    unstaged = await _git(root, "diff", "--quiet", ok_codes=(0, 1))
+    if staged.exit_code != 0 or unstaged.exit_code != 0:
+        raise ProbeError(
+            "dirty_worktree",
+            "push-existing requires no staged or unstaged tracked changes",
+            status="denied",
+        )
+
+    head = (await _git(root, "rev-parse", "HEAD", output_limit=256)).stdout.decode().strip()
+    expected = str(action.get("expected_sha") or "")
+    if head != expected:
+        raise ProbeError(
+            "precondition_failed",
+            "HEAD does not match expected_sha",
+            status="denied",
+        )
+
+    remote = _validate_alias(action.get("remote", "origin"))
+    repo, _url = await resolve_github_remote(root, binding, remote)
+    pushed = await _git(
+        root,
+        "push",
+        remote,
+        f"HEAD:refs/heads/{branch}",
+        ok_codes=(0, 1),
+        timeout=120,
+    )
+    if pushed.exit_code != 0:
+        err, _ = _redact_text(pushed.stderr.decode("utf-8", "replace"))
+        raise ProbeError(
+            "push_failed",
+            err[-1200:] or "git push failed",
+            exit_code=pushed.exit_code,
+        )
+    return {
+        "status": "ok",
+        "action": "git_push_existing",
+        "branch": branch,
+        "commit_sha": head,
+        "repository": repo,
     }
 
 
