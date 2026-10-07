@@ -27,7 +27,7 @@ MAX_CHECKS = 20
 BATCH_DEADLINE_SECONDS = 60.0
 CHECK_TIMEOUT_SECONDS: dict[str, float] = {
     # Cheap local facts remain short; network/status and bounded scans get room to finish.
-    "git_state": 15.0, "recent_direct_ops": 5.0, "remote_head": 25.0, "git_log": 15.0, "tree": 15.0,
+    "git_state": 15.0, "branch_list": 15.0, "recent_direct_ops": 5.0, "remote_head": 25.0, "git_log": 15.0, "tree": 15.0,
     "worktree_list": 10.0, "diff": 25.0, "read_text": 25.0, "search": 35.0,
     "file_list": 25.0, "file_stat": 12.0, "file_sha256": 35.0, "github_status": 50.0,
     "incident_search": 5.0, "incident_get": 5.0,
@@ -101,6 +101,11 @@ _LIMIT_SCHEMA = {"type": "integer", "minimum": 1, "maximum": MAX_LIST_ENTRIES}
 
 PROJECT_CHECK_SCHEMAS = [
     _check_schema("git_state"),
+    _check_schema("branch_list", {
+        "prefix": {"type": "string", "maxLength": 200},
+        "contains": {"type": "string", "maxLength": 200},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+    }),
     _check_schema("recent_direct_ops", {
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
     }),

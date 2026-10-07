@@ -13,7 +13,7 @@ from direct_probe_core import (
     _validate_alias, _validate_ref,
 )
 from direct_probe_project import (
-    _diff, _file_list, _file_sha, _file_stat, _git_blob, _git_log, _git_state, _github_status,
+    _branch_list, _diff, _file_list, _file_sha, _file_stat, _git_blob, _git_log, _git_state, _github_status,
     _read_text, _remote_head, _search, _tree, _worktree_list,
 )
 from direct_ops2 import project_capabilities, workspace_compare
@@ -98,6 +98,7 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
     if kind == "instructions": return read_instructions(root, check), "exact-instruction-file"
     if kind == "web_preflight": return await web_preflight(root, check), "project-local-web-runtime"
     if kind == "git_state": return await _git_state(root), "git-local"
+    if kind == "branch_list": return await _branch_list(root, check), "git-local-object"
     if kind == "recent_direct_ops": return _recent_direct_receipts(root, limit=int(check.get("limit", 20))), "local-direct-receipts"
     if kind == "remote_head": return await _remote_head(root, binding, check["remote"], check["branch"]), "github-remote+git-tracking"
     if kind == "git_log": return await _git_log(root, check), "git-local-object"

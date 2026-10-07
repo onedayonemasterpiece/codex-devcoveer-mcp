@@ -145,6 +145,67 @@ async def _remote_head(root: Path, binding: dict[str, Any], remote: str, branch:
     }
 
 
+async def _branch_list(root: Path, check: dict[str, Any]) -> dict[str, Any]:
+    prefix = str(check.get("prefix") or "")
+    contains = str(check.get("contains") or "")
+    limit = min(int(check.get("limit", 50)), 100)
+    symbolic = await _git(
+        root,
+        "symbolic-ref",
+        "--quiet",
+        "--short",
+        "HEAD",
+        ok_codes=(0, 1),
+        output_limit=512,
+    )
+    current = symbolic.stdout.decode("utf-8", "replace").strip() if symbolic.exit_code == 0 else None
+    result = await _git(
+        root,
+        "for-each-ref",
+        "--sort=-committerdate",
+        "--format=%(refname:short)%00%(objectname)%00%(committerdate:unix)%00%(subject)%00",
+        "refs/heads",
+        output_limit=64 * 1024,
+    )
+    raw = result.stdout.decode("utf-8", "replace").split("\0")
+    rows: list[dict[str, Any]] = []
+    for index in range(0, len(raw) - 3, 4):
+        branch, sha, committed_raw, subject_raw = raw[index : index + 4]
+        branch = branch.strip()
+        sha = sha.strip().lower()
+        if not branch or not HEX40_RE.fullmatch(sha):
+            continue
+        if prefix and not branch.startswith(prefix):
+            continue
+        if contains and contains not in branch:
+            continue
+        subject, redacted = _redact_text(subject_raw.strip())
+        try:
+            committed_unix = int(committed_raw.strip() or "0")
+        except ValueError:
+            committed_unix = 0
+        rows.append(
+            {
+                "branch": branch,
+                "sha": sha,
+                "committed_unix": committed_unix,
+                "subject": subject,
+                "current": branch == current,
+                "redacted": redacted,
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return {
+        "branches": rows,
+        "current_branch": current,
+        "prefix": prefix or None,
+        "contains": contains or None,
+        "complete": not result.truncated and len(rows) < limit,
+        "truncated": result.truncated or len(rows) >= limit,
+    }
+
+
 async def _git_log(root: Path, check: dict[str, Any]) -> dict[str, Any]:
     sha = await _resolve_commit(root, check["ref"])
     limit = min(int(check.get("limit", 10)), 100)

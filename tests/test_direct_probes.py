@@ -101,6 +101,64 @@ def test_git_state_clean_dirty_staged_untracked_and_conflicts(tmp_path: Path):
     assert "a.txt" in conflict["conflicts"] and conflict["clean"] is False
 
 
+def test_branch_list_filters_local_refs_without_checkout(tmp_path: Path):
+    repo = init_repo(tmp_path / "branches")
+    base = git(repo, "rev-parse", "HEAD")
+    git(repo, "branch", "chatgpt/ownerdev-devrun-fe82f497-theme")
+    git(repo, "branch", "chatgpt/other-task")
+    git(repo, "branch", "docs/notes")
+    git(repo, "checkout", "-q", "-b", "main-work", base)
+
+    data = run(
+        dp._branch_list(
+            repo,
+            {
+                "prefix": "chatgpt/",
+                "contains": "devrun-fe82f497",
+                "limit": 20,
+            },
+        )
+    )
+
+    assert data["current_branch"] == "main-work"
+    assert [
+        (row["branch"], row["sha"], row["current"])
+        for row in data["branches"]
+    ] == [
+        ("chatgpt/ownerdev-devrun-fe82f497-theme", base, False)
+    ]
+    assert data["prefix"] == "chatgpt/"
+    assert data["contains"] == "devrun-fe82f497"
+
+
+def test_branch_list_schema_rejects_unbounded_unknown_fields():
+    validator = Draft202012Validator(dp.PROJECT_PROBE_INPUT_SCHEMA)
+    valid = {
+        "project": "p",
+        "checks": [
+            {
+                "id": "branches",
+                "kind": "branch_list",
+                "prefix": "chatgpt/",
+                "contains": "devrun-fe82",
+                "limit": 20,
+            }
+        ],
+    }
+    assert not list(validator.iter_errors(valid))
+    invalid = {
+        "project": "p",
+        "checks": [
+            {
+                "id": "branches",
+                "kind": "branch_list",
+                "command": "git branch",
+            }
+        ],
+    }
+    assert list(validator.iter_errors(invalid))
+
+
 def test_git_state_detached_and_unborn(tmp_path: Path):
     unborn = init_repo(tmp_path / "unborn", commit=False)
     state = run(dp._git_state(unborn))
