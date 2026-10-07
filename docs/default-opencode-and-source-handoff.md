@@ -10,7 +10,9 @@ Native Codex is limited-capacity and **explicit opt-in only**. Use it only when 
 
 The plugin/product identifier `codex-devcoveer` is deliberately excluded from the standalone-word match. Merely connecting or naming the plugin therefore cannot authorize native Codex. A Codex-looking model name by itself also does not opt in. There is no silent fallback from OpenCode to native Codex.
 
-An already-running native Codex task created under this policy carries its authorization receipt, so ordinary continuation of that same task remains possible without repeatedly asking the user to restate `Codex`. Legacy/unreceipted native tasks require a fresh explicit opt-in before they can be continued. Starting a separate native Codex consultation is a new inference and requires its own explicit opt-in.
+An already-running native Codex task created under this policy carries its authorization receipt, so ordinary continuation of that same task remains possible without repeatedly asking the user to restate `Codex`. Legacy/unreceipted native tasks require a fresh explicit opt-in before they can be continued.
+
+`consult_model` is a separate advisory surface. Native Codex profiles in the owner-authorized consultation ladder may be selected without a per-message `Codex` mention when the Codex quota gate is strictly above the 10% reserve. That standing consultation authorization does **not** authorize a native `start_task`: working tasks still require the explicit task opt-in above.
 
 `reasoning_effort` is native-Codex-specific and therefore also requires explicit `provider="codex"`.
 
