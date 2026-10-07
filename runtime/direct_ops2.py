@@ -458,33 +458,53 @@ async def git_commit_push(root: Path, binding: dict[str, Any], action: dict[str,
 
 
 async def git_push_existing(root: Path, binding: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
-    branch_res = await _git(
+    requested_branch = str(action.get("branch") or "").strip()
+    current_res = await _git(
         root, "symbolic-ref", "--quiet", "--short", "HEAD",
         ok_codes=(0, 1), output_limit=512,
     )
-    branch = branch_res.stdout.decode().strip() if branch_res.exit_code == 0 else ""
+    current_branch = current_res.stdout.decode().strip() if current_res.exit_code == 0 else ""
+    branch = requested_branch or current_branch
     if _BRANCH_WRITE_RE.fullmatch(branch) is None:
         raise ProbeError(
             "branch_denied",
-            "direct push requires current chatgpt/* branch",
+            "direct push requires a chatgpt/* branch",
             status="denied",
         )
 
-    staged = await _git(root, "diff", "--cached", "--quiet", ok_codes=(0, 1))
-    unstaged = await _git(root, "diff", "--quiet", ok_codes=(0, 1))
-    if staged.exit_code != 0 or unstaged.exit_code != 0:
-        raise ProbeError(
-            "dirty_worktree",
-            "push-existing requires no staged or unstaged tracked changes",
-            status="denied",
-        )
-
-    head = (await _git(root, "rev-parse", "HEAD", output_limit=256)).stdout.decode().strip()
     expected = str(action.get("expected_sha") or "")
+    if requested_branch:
+        ref = f"refs/heads/{branch}"
+        verify = await _git(
+            root, "show-ref", "--verify", "--quiet", ref,
+            ok_codes=(0, 1), output_limit=512,
+        )
+        if verify.exit_code != 0:
+            raise ProbeError(
+                "branch_missing",
+                "requested local branch does not exist",
+                status="denied",
+            )
+        head = (
+            await _git(root, "rev-parse", ref, output_limit=256)
+        ).stdout.decode().strip()
+    else:
+        staged = await _git(root, "diff", "--cached", "--quiet", ok_codes=(0, 1))
+        unstaged = await _git(root, "diff", "--quiet", ok_codes=(0, 1))
+        if staged.exit_code != 0 or unstaged.exit_code != 0:
+            raise ProbeError(
+                "dirty_worktree",
+                "push-existing requires no staged or unstaged tracked changes",
+                status="denied",
+            )
+        head = (
+            await _git(root, "rev-parse", "HEAD", output_limit=256)
+        ).stdout.decode().strip()
+
     if head != expected:
         raise ProbeError(
             "precondition_failed",
-            "HEAD does not match expected_sha",
+            "branch ref does not match expected_sha",
             status="denied",
         )
 
@@ -494,7 +514,7 @@ async def git_push_existing(root: Path, binding: dict[str, Any], action: dict[st
         root,
         "push",
         remote,
-        f"HEAD:refs/heads/{branch}",
+        f"{head}:refs/heads/{branch}",
         ok_codes=(0, 1),
         timeout=120,
     )
