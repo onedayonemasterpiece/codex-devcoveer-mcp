@@ -2812,6 +2812,12 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     source = transform_nvidia_dual_slot(source)
     source = transform_product_delivery(source)
     source = transform_codex_explicit_opt_in(source)
+    native_spec = importlib.util.spec_from_file_location(
+        "native_thread_links_patch", ROOT / "scripts" / "install-native-thread-links.py"
+    )
+    native_patch = importlib.util.module_from_spec(native_spec)
+    native_spec.loader.exec_module(native_patch)
+    source = native_patch.transform(source, replace_once)
     source = replace_once(
         source,
         '''def _validate_schema(name: str, arguments: dict[str, Any]) -> None:
@@ -2989,6 +2995,7 @@ def main() -> int:
     for name in DIRECT_FILES:
         shutil.copy2(ROOT / "runtime" / name, out / name)
     shutil.copy2(ROOT / "runtime" / "model_consult.py", out / "model_consult.py")
+    shutil.copy2(ROOT / "runtime" / "native_thread_links.py", out / "native_thread_links.py")
     shutil.copy2(ROOT / "runtime" / "direct_probe_config.json",
                  out / "direct_probe_config.json")
     shutil.copy2(ROOT / "docs" / "quality" / "reuse-catalog.yaml",
