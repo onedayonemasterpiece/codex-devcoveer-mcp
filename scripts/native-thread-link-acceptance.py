@@ -22,9 +22,26 @@ def main() -> None:
     assert summary["messageCount"] >= 200
     print(f"summary=PASS messages={summary['messageCount']} elapsed={time.monotonic() - started:.2f}s", flush=True)
 
-    full = read_native_thread(REF, cursor=0, limit=20, include_tools=True)
+    full = read_native_thread(REF, cursor=0, limit=100, include_tools=True)
     assert full["nextCursor"] is not None and full["toolEventCount"] > 1000
+    assert [entry["index"] for entry in full["history"]] == list(range(full["nextCursor"]))
     print(f"first_full_page=PASS events={len(full['history'])} tools={full['toolEventCount']} next={full['nextCursor']} elapsed={time.monotonic() - started:.2f}s", flush=True)
+
+    # Test continuity across a byte-budget page boundary and near the end
+    # of the full mixed conversation+tools history.
+    cursor = full["nextCursor"]
+    second = read_native_thread(REF, cursor=cursor, limit=100, include_tools=True)
+    assert second["history"]
+    assert [entry["index"] for entry in second["history"]] == list(
+        range(cursor, cursor + len(second["history"]))
+    )
+    tail_start = max(0, full["visibleChunkCount"] - 12)
+    tail = read_native_thread(REF, cursor=tail_start, limit=100, include_tools=True)
+    assert tail["nextCursor"] is None and tail["complete"]
+    assert [entry["index"] for entry in tail["history"]] == list(
+        range(tail_start, full["visibleChunkCount"])
+    )
+    print(f"mixed_pagination=PASS first={cursor} second={len(second['history'])} tail={len(tail['history'])} visible={full['visibleChunkCount']} elapsed={time.monotonic() - started:.2f}s", flush=True)
 
     cursor = 0
     all_messages = 0

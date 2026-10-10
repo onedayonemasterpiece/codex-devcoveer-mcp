@@ -162,6 +162,7 @@ def read_native_thread(
     verified_metadata = False
     meta: dict[str, Any] = {}
     used_bytes = 0
+    page_exhausted = False
 
     with path.open("r", encoding="utf-8") as source:
         for line in source:
@@ -200,7 +201,8 @@ def read_native_thread(
             number_of_chunks = max(1, (len(raw_text) + _CHUNK_CHARS - 1) // _CHUNK_CHARS)
             needs_content = (
                 (detail == "summary" and kind == "message")
-                or (detail == "full" and chunks + number_of_chunks > cursor
+                or (detail == "full" and not page_exhausted
+                    and chunks + number_of_chunks > cursor
                     and chunks < cursor + limit and len(collected) < limit)
             )
             safe_value = ""
@@ -230,11 +232,16 @@ def read_native_thread(
                     last_visible.append(piece)
                     if len(last_visible) > 6:
                         last_visible.pop(0)
-                elif index >= cursor and len(collected) < limit:
+                elif index >= cursor and not page_exhausted and len(collected) < limit:
                     encoded = len(json.dumps(piece, ensure_ascii=False).encode("utf-8"))
                     if used_bytes + encoded <= _MAX_BYTES or not collected:
                         collected.append(piece)
                         used_bytes += encoded
+                    else:
+                        # Never skip the oversized next item and then return
+                        # later smaller items: nextCursor must represent one
+                        # contiguous prefix of the underlying event history.
+                        page_exhausted = True
 
     if not verified_metadata:
         raise NativeThreadError("invalid_source", "Native session metadata does not match the requested UUID.")
