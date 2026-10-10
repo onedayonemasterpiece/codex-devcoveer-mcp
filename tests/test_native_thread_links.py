@@ -88,6 +88,44 @@ def test_complete_large_message_reconstructed_with_cursor(tmp_path: Path) -> Non
     assert len(parts) > 3
 
 
+
+def test_byte_budget_pages_are_contiguous_and_lossless(tmp_path: Path) -> None:
+    roots = _session(tmp_path)
+    source = next(roots[0].glob("*/*/*/*.jsonl"))
+    # Intentionally exceed the 100-KB response budget; a small event after a
+    # large rejected one must never be returned out of cursor order.
+    with source.open("a", encoding="utf-8") as stream:
+        for i in range(27):
+            stream.write(json.dumps({
+                "type": "response_item", "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": str(i),
+                    "output": f"event-{i:02d}:" + ("Q" * 7000),
+                },
+            }) + "\n")
+    cursor = 0
+    received = []
+    for _ in range(20):
+        page = read_native_thread(UUID, roots=roots, cursor=cursor, limit=100)
+        assert page["history"]
+        indices = [item["index"] for item in page["history"]]
+        assert indices == list(range(cursor, cursor + len(indices)))
+        assert len(json.dumps(page["history"]).encode()) < 110000
+        received.extend(page["history"])
+        cursor = page["nextCursor"]
+        if cursor is None:
+            assert page["complete"] is True
+            assert len(received) == page["visibleChunkCount"]
+            break
+    else:
+        pytest.fail("The byte-budget pagination did not converge.")
+    assert [entry["index"] for entry in received] == list(range(len(received)))
+    tool_results = [entry["text"] for entry in received
+                    if entry["kind"] == "tool_result" and "event-" in entry["text"]]
+    assert len(tool_results) == 27
+    assert all(text == f'{{"output":"event-{i:02d}:' + ("Q" * 7000)
+               + f'","callId":"{i}"}}' for i, text in enumerate(tool_results))
+
 def test_summary_does_not_return_tool_content(tmp_path: Path) -> None:
     roots = _session(tmp_path)
     response = read_native_thread(UUID, roots=roots, detail="summary")
