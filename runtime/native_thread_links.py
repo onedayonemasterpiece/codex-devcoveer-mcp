@@ -6,7 +6,9 @@ redacted, chunked *visible* events, not raw JSONL line numbers.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -45,6 +47,27 @@ _ROOTS = (
 )
 _CHUNK_CHARS = 10000
 _MAX_BYTES = 100000
+_VISIBLE_CHANNELS = {None, "final", "commentary"}
+_SNAPSHOT_KEYS = {"bytes", "sha256", "threadId", "includeTools", "version"}
+
+
+def _visible_channel(row: dict[str, Any], payload: dict[str, Any]) -> bool:
+    # Missing/null channels are legacy public events. Unknown channels fail closed.
+    return all(value is None or isinstance(value, str) and value in _VISIBLE_CHANNELS
+               for value in (row.get("channel"), payload.get("channel")))
+
+
+def _prefix_digest(source: Any, boundary: int) -> str | None:
+    source.seek(0)
+    remaining = boundary
+    digest = hashlib.sha256()
+    while remaining:
+        block = source.read(min(1024 * 1024, remaining))
+        if not block:
+            return None
+        digest.update(block)
+        remaining -= len(block)
+    return digest.hexdigest()
 
 
 class NativeThreadError(ValueError):
@@ -97,7 +120,7 @@ def _entry(row: dict[str, Any], include_tools: bool) -> tuple[str, str, str | No
     if row.get("type") != "response_item":
         return None
     payload = row.get("payload")
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not _visible_channel(row, payload):
         return None
     kind = payload.get("type")
     if kind == "message" and payload.get("role") in ("user", "assistant"):
@@ -139,6 +162,7 @@ def read_native_thread(
     detail: str = "full",
     include_tools: bool | None = None,
     roots: tuple[Path, ...] = _ROOTS,
+    snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     thread_id = normalize_thread_reference(reference)
     if thread_id is None:
@@ -151,8 +175,19 @@ def read_native_thread(
         raise NativeThreadError("invalid_detail", "Detail must be summary or full.")
     if include_tools is None:
         include_tools = detail == "full"
+    if not isinstance(include_tools, bool):
+        raise NativeThreadError("invalid_include_tools", "include_tools must be a boolean.")
+    if snapshot is not None:
+        if (not isinstance(snapshot, dict) or set(snapshot) != _SNAPSHOT_KEYS
+                or type(snapshot.get("version")) is not int or snapshot["version"] != 1
+                or type(snapshot.get("bytes")) is not int or snapshot["bytes"] < 0
+                or not isinstance(snapshot.get("sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", snapshot["sha256"]) is None
+                or snapshot.get("threadId") != thread_id
+                or type(snapshot.get("includeTools")) is not bool
+                or snapshot["includeTools"] != include_tools):
+            raise NativeThreadError("invalid_snapshot", "Snapshot must match the exact version, thread, and tool filter schema.")
     path = _discover(thread_id, roots)
-    before = path.stat()
     collected: list[dict[str, Any]] = []
     last_visible: list[dict[str, Any]] = []
     raw_lines = 0
@@ -163,17 +198,33 @@ def read_native_thread(
     meta: dict[str, Any] = {}
     used_bytes = 0
     page_exhausted = False
+    parse_errors = 0
+    private_calls: set[str] = set()
 
-    with path.open("r", encoding="utf-8") as source:
-        for line in source:
+    with path.open("rb") as source:
+        boundary = snapshot["bytes"] if snapshot is not None else os.fstat(source.fileno()).st_size
+        initial_hash = _prefix_digest(source, boundary)
+        if initial_hash is None or snapshot is not None and initial_hash != snapshot["sha256"]:
+            raise NativeThreadError("snapshot_mismatch", "The pinned native history prefix changed or was truncated; restart at cursor=0 without a snapshot.")
+        source.seek(0)
+        remaining = boundary
+        read_digest = hashlib.sha256()
+        while remaining:
+            line = source.readline(remaining)
+            if not line:
+                break
+            remaining -= len(line)
+            read_digest.update(line)
             raw_lines += 1
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError:
-                # A live writer may have an incomplete final line. Do not call
-                # the snapshot complete until the next read stabilizes.
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # Pinned incomplete/malformed records cannot become complete
+                # by appending: clients must start a fresh snapshot to retry.
+                parse_errors += 1
                 continue
             if not isinstance(row, dict):
+                parse_errors += 1
                 continue
             if row.get("type") == "session_meta":
                 payload = row.get("payload")
@@ -185,6 +236,15 @@ def read_native_thread(
                         "source": str(payload.get("source", ""))[:100],
                     }
                 continue
+            payload = row.get("payload")
+            if row.get("type") == "response_item" and isinstance(payload, dict):
+                call_id = payload.get("call_id")
+                if (payload.get("type") in ("custom_tool_call", "function_call")
+                        and not _visible_channel(row, payload) and isinstance(call_id, str)):
+                    private_calls.add(call_id)
+                if (payload.get("type") in ("custom_tool_call_output", "function_call_output")
+                        and isinstance(call_id, str) and call_id in private_calls):
+                    continue
             entry = _entry(row, include_tools)
             if entry is None:
                 continue
@@ -243,17 +303,23 @@ def read_native_thread(
                         # contiguous prefix of the underlying event history.
                         page_exhausted = True
 
+        final_hash = _prefix_digest(source, boundary)
+        stable = remaining == 0 and read_digest.hexdigest() == initial_hash == final_hash
+        if not stable:
+            raise NativeThreadError("snapshot_mismatch", "The native history prefix changed while being read; retry from a fresh snapshot.")
+        snapshot_value = {"bytes": boundary, "sha256": initial_hash,
+                          "threadId": thread_id, "includeTools": include_tools, "version": 1}
+
     if not verified_metadata:
         raise NativeThreadError("invalid_source", "Native session metadata does not match the requested UUID.")
-    after = path.stat()
-    stable = before.st_size == after.st_size and before.st_mtime_ns == after.st_mtime_ns
     if detail == "summary":
         return {
             "status": "ok", "backend": "codex-native", "threadId": thread_id,
             "threadUrl": f"codex://threads/{thread_id}", "detail": "summary",
             "task": meta, "messageCount": visible_messages,
             "toolEventCount": 0, "visibleChunkCount": chunks,
-            "latestMessages": last_visible, "complete": stable,
+            "latestMessages": last_visible, "complete": stable and parse_errors == 0,
+            "snapshot": snapshot_value, "snapshotStable": stable, "parseErrors": parse_errors,
             "historyAvailable": True,
             "hint": "Use detail=full and cursor=0, then follow nextCursor until null.",
         }
@@ -269,8 +335,9 @@ def read_native_thread(
         "messageCount": visible_messages, "toolEventCount": visible_tools,
         "visibleChunkCount": chunks, "rawRecordCount": raw_lines,
         "pageComplete": len(collected) > 0 or cursor == chunks,
-        "complete": stable and not has_more,
+        "complete": stable and not has_more and parse_errors == 0,
+        "snapshot": snapshot_value, "parseErrors": parse_errors,
         "snapshotStable": stable,
-        "omitted": ["hidden_reasoning", "system_and_developer_messages", "world_state", "private_runtime_metadata"],
+        "omitted": ["hidden_reasoning", "private_channels", "system_and_developer_messages", "world_state", "private_runtime_metadata"],
         "redaction": "secret-bearing strings and keys are redacted",
     }

@@ -140,6 +140,21 @@ async def _one_project(root: Path, binding: dict[str, Any], check: dict[str, Any
 
 async def _one_host(binding: dict[str, Any], check: dict[str, Any]) -> tuple[dict[str, Any], str]:
     kind = check["kind"]
+    if kind == "native_thread_read":
+        # Same authenticated owner and fixed session roots as read_native_thread.
+        # The gateway project selects the operator context, not the thread cwd.
+        from native_thread_links import NativeThreadError, read_native_thread
+        try:
+            data = await asyncio.to_thread(
+                read_native_thread, check["thread"],
+                detail=check.get("detail", "full"),
+                cursor=check.get("cursor", 0), limit=check.get("limit", 40),
+                include_tools=check.get("include_tools", False),
+                snapshot=check.get("snapshot"),
+            )
+        except NativeThreadError as exc:
+            raise ProbeError(exc.status, str(exc)) from exc
+        return data, "verified-native-visible-history"
     if kind == "inventory": return _inventory(binding), "trusted-server-config"
     if kind == "system_info": return _system_info(), "proc+os-release"
     if kind == "service_list":
