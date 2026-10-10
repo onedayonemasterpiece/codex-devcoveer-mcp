@@ -238,7 +238,23 @@ PROJECT_CHECK_SCHEMAS = [
     }, ["incident_id"]),
 ]
 
+NATIVE_THREAD_SNAPSHOT_SCHEMA = _obj({
+    "version": {"const": 1},
+    "bytes": {"type": "integer", "minimum": 0},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "threadId": {"type": "string", "minLength": 36, "maxLength": 36},
+    "includeTools": {"type": "boolean"},
+}, ["version", "bytes", "sha256", "threadId", "includeTools"])
+
 HOST_CHECK_SCHEMAS = [
+    _check_schema("native_thread_read", {
+        "thread": {"type": "string", "minLength": 1, "maxLength": 200},
+        "detail": {"type": "string", "enum": ["summary", "full"], "default": "full"},
+        "cursor": {"type": "integer", "minimum": 0, "default": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 40},
+        "include_tools": {"type": "boolean", "default": False},
+        "snapshot": NATIVE_THREAD_SNAPSHOT_SCHEMA,
+    }, ["thread"]),
     _check_schema("inventory"),
     _check_schema("system_info"),
     _check_schema("service_list", {

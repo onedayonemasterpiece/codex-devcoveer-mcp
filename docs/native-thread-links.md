@@ -55,3 +55,35 @@ The live acceptance script uses the owner-provided regression UUID; it emits
 only counts and timing, never the transcript. After updating `origin/main`,
 run the registered `canonical_install` profile with deferred restart, restart
 only the owned MCP tunnel, then verify `read_task` through the public connector.
+
+
+## Stable gateway and consistent audit snapshots
+
+Long-lived clients with an older top-level tool schema can use
+`direct_ops_v2(project="codex-devcoveer-mcp", plane="host_probe",
+operation="native_thread_read", payload={"thread":"codex://threads/<UUID>"})`.
+Discover the current payload with `operation="describe"` and
+`payload={"operation":"native_thread_read"}`. This reuses the same passive
+reader and owner authentication. The gateway project is the operator context;
+it does not assert that the native thread belongs to that project. No paths,
+resume, model invocation, or session writes are accepted.
+
+The gateway defaults to conversation-only history (`include_tools=false`).
+Use `include_tools=true` explicitly when audit tool evidence is needed.
+Only public `final`/`commentary` channels and legacy absent-channel events
+are included; private-channel tool results are suppressed with their calls.
+
+Every page returns a `snapshot` token identifying a fixed source-byte prefix,
+its SHA-256, thread and tool-filter mode. Send the token unchanged with each
+`nextCursor`. Appends do not alter this snapshot; replaced, changed or shortened
+prefixes fail with `snapshot_mismatch`. A new snapshot starts at cursor zero.
+A token is a consistency check, not an authentication credential.
+
+`complete=true` means the last page of that pinned, stable, parseable snapshot.
+Malformed/truncated JSON records are counted and prevent a completeness claim;
+restart at zero without a token after the writer finishes the record. There is
+no guarantee that an active session has stopped appending after the snapshot.
+
+Reconstruct ordered `index`/`part`/`parts` events client-side. A Markdown export
+can be assembled from these safe pages and delivered as an attachment without
+publishing private history or relying on a remote local-file path.

@@ -29,6 +29,8 @@ def transform(source: str, replace_once) -> str:
         '''
 # Cursors are indexes of redacted, visible native events.  Each item is
 # chunked into 10K-character parts: no invisible truncation of a large output.
+from direct_probe_core import NATIVE_THREAD_SNAPSHOT_SCHEMA
+READ_TASK_INPUT_SCHEMA["properties"]["snapshot"] = NATIVE_THREAD_SNAPSHOT_SCHEMA
 READ_TASK_INPUT_SCHEMA["properties"]["cursor"] = {
     "type": "integer", "minimum": 0, "default": 0,
     "description": "Native codex:// thread pagination cursor (detail=full).",
@@ -49,6 +51,7 @@ READ_NATIVE_THREAD_INPUT_SCHEMA: dict[str, Any] = {
         "detail": {"type": "string", "enum": ["summary", "full"], "default": "full"},
         "cursor": {"type": "integer", "minimum": 0, "default": 0},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 40},
+        "snapshot": NATIVE_THREAD_SNAPSHOT_SCHEMA,
         "include_tools": {"type": "boolean",
             "description": "Include tool calls and outputs; reasoning and private metadata never leave the server."},
     },
@@ -98,6 +101,7 @@ TOOLS = [
                         limit=arguments.get("limit", 40),
                         detail=detail,
                         include_tools=arguments.get("include_tools"),
+                        snapshot=arguments.get("snapshot"),
                     )
                 )
             except _NativeThreadError as exc:
