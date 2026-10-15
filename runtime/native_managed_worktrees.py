@@ -339,8 +339,8 @@ def policy_prompt(access: str | None, task_ref: str) -> str:
     return (
         "\nPARALLEL WORKTREE LIFECYCLE (owner-approved):\n"
         f"- Current native thread: {task_ref}. Parallel implementation may use one managed isolated Git worktree.\n"
-        "- Prefer direct_ops_v2 project_action operation=managed_worktree, payload with "
-        "mode=create, task_ref=<thread ID>, project=<canonical project>. "
+        "- Call direct_ops_v2 with project=<canonical project>, plane=project_action, "
+        "operation=managed_worktree and payload={mode:create, task_ref:<thread ID>}. "
         "This returns exact worktree path, feature branch and target branch.\n"
         "- Make changes and run tests inside that worktree, without editing the canonical "
         "checkout or other agents' worktrees. Commit only the tested intended changes.\n"
