@@ -80,8 +80,7 @@ def test_create_merge_and_cleanup_same_owned_checkout(repo):
     assert done["merged"] and done["cleaned"]
     assert (repo / "added.txt").read_text() == "new functionality\n"
     assert not worktree.exists()
-    assert git(repo, "show-ref", "--verify", "--quiet",
-               f"refs/heads/{created['branch']}", check=False) == ""
+    assert git(repo, "branch", "--list", created["branch"]) == ""
     assert perform(repo, "finish", expected_head=head)["already_finished"]
 
 
