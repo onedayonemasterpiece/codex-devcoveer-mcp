@@ -32,6 +32,20 @@ Remaining roadmap:
 Capabilities should evolve independently by contract. They must not be coupled to another project's SHA.
 
 
+## Direct artifact maintenance (no Codex or OpenCode task)
+
+The checked-in `scripts/maintain-artifacts.py` runs directly through
+`project_action.run_tool` (project `codex-devcoveer-mcp`, tool `python_script`).
+`project_action.run_profile` with `artifact_preview_street_story` lists Street Story
+run names without invoking an agent. For a particular completed run, first inspect it
+using args `["--project","street-story","--run","EXACT_DATED_RUN"]`.
+Only a safe, unreferenced, inactive run older than 72 hours can be removed by
+adding `"--delete","--expected-kib","N"` with the exact previewed size.
+Paths are restricted to named top-level dated runs under trusted
+`/home/dev/artifacts/<project>`. Git worktrees, running processes, symlinks,
+protected files, referenced test evidence, Docker volumes and service data are excluded.
+This is **not** a general host shell or a request to run OpenCode.
+
 ## Local-device boundary
 
 DevCoveer is a server/runtime/deployment host, not an Android-device host.
