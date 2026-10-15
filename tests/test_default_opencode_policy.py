@@ -37,8 +37,8 @@ def test_transform_enforces_explicit_codex_and_adaptive_opencode():
     assert 'provider=None if adaptive_model is not None else "opencode"' in transformed
     assert 'explicit provider="codex"' in transformed
     assert "Never silently fall back from OpenCode to native Codex" in transformed
-    assert "codex_user_opt_in" in transformed
-    assert "verbatim" in transformed
+    assert "codex_user_opt_in" not in transformed
+    assert "no verbatim user-quote relay" in transformed
     assert "codex-devcoveer alone is never authorization" in transformed
     assert "deterministic Git/host/runtime/model/task-state" in transformed
     assert "project_probe" in transformed and "host_probe" in transformed
