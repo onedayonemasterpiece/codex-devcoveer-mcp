@@ -50,7 +50,9 @@ def test_host_operator_never_accepts_arbitrary_project_or_missing_size(tmp_path,
 def test_host_operator_invokes_only_bundled_script_and_exact_argv(tmp_path, monkeypatch):
     script = tmp_path / "maintain-artifacts.py"
     script.write_text("print('fixture')\n")
-    monkeypatch.setattr(actions, "__file__", str(tmp_path / "direct_actions.py"))
+    module_path = tmp_path / "direct_actions.py"
+    module_path.write_text("# temporary test location\\n")
+    monkeypatch.setattr(actions, "__file__", str(module_path))
     calls = []
 
     async def fake_run(argv, **kwargs):
