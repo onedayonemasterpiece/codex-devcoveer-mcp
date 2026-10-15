@@ -108,7 +108,7 @@ def _in_use(path: Path) -> bool:
             except FileNotFoundError:
                 continue
             except OSError as exc:
-                raise UnsafeArtifact("process directory scan incomplete") from exc
+                raise UnsafeArtifact(f"process directory scan incomplete: {link.name} errno={exc.errno}") from exc
         try:
             with os.scandir(proc / "fd") as fds:
                 for fd in fds:
