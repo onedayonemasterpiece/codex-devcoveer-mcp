@@ -1544,6 +1544,36 @@ def transform_codex_explicit_opt_in(source: str) -> str:
     return source
 
 
+def transform_native_task_mcp_approvals(source: str) -> str:
+    """Apply a per-thread DevCoveer MCP trust override only to write tasks."""
+    source = replace_once(
+        source,
+        'from native_external_continuation import continue_external_native_thread as _continue_external_native_thread\n',
+        'from native_external_continuation import continue_external_native_thread as _continue_external_native_thread\n'
+        'from native_mcp_approval import native_devcoveer_app_config as _native_devcoveer_app_config\n',
+        "native task app-approval import",
+    )
+    source = replace_once(
+        source,
+        '        if metadata.get("model"):\n'
+        '            params["model"] = metadata["model"]\n'
+        '        fixed_config: dict[str, Any] = {}\n',
+        '        if metadata.get("model"):\n'
+        '            params["model"] = metadata["model"]\n'
+        '        fixed_config: dict[str, Any] = _native_devcoveer_app_config(metadata.get("access"))\n',
+        "native resume app-approval policy",
+    )
+    source = replace_once(
+        source,
+        '            fixed_config: dict[str, Any] = {}\n'
+        '            if permissions == WRITE_PERMISSION_PROFILE:\n',
+        '            fixed_config: dict[str, Any] = _native_devcoveer_app_config(access)\n'
+        '            if permissions == WRITE_PERMISSION_PROFILE:\n',
+        "native start app-approval policy",
+    )
+    return source
+
+
 def transform_bridge(source: str) -> str:
     source = replace_once(source, 'BRIDGE_VERSION = "3.6.1"',
                           'BRIDGE_VERSION = "3.34.4-isolation-cache-key"', "version")
@@ -2688,6 +2718,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     native_patch = importlib.util.module_from_spec(native_spec)
     native_spec.loader.exec_module(native_patch)
     source = native_patch.transform(source, replace_once)
+    source = transform_native_task_mcp_approvals(source)
     source = replace_once(
         source,
         '''def _validate_schema(name: str, arguments: dict[str, Any]) -> None:
@@ -2868,6 +2899,7 @@ def main() -> int:
     shutil.copy2(ROOT / "runtime" / "native_thread_links.py", out / "native_thread_links.py")
     shutil.copy2(ROOT / "runtime" / "native_external_continuation.py",
                  out / "native_external_continuation.py")
+    shutil.copy2(ROOT / "runtime" / "native_mcp_approval.py", out / "native_mcp_approval.py")
     shutil.copy2(ROOT / "runtime" / "direct_probe_config.json",
                  out / "direct_probe_config.json")
     shutil.copy2(ROOT / "scripts" / "maintain-artifacts.py",
