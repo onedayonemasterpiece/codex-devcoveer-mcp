@@ -282,7 +282,7 @@ def _op_public(row, *, include_result=False):
     if row['result']:
         result = json.loads(row['result'])
         value['result_summary'] = {key: result[key] for key in (
-            'status', 'exit_code', 'job_id', 'run_id', 'url', 'path', 'sha256', 'commit_sha', 'new_sha', 'action'
+            'status', 'exit_code', 'job_id', 'run_id', 'url', 'path', 'sha256', 'commit_sha', 'new_sha', 'action', 'task_ref', 'worktree', 'branch', 'target_branch', 'mode', 'blocker'
         ) if isinstance(result, dict) and key in result}
         if include_result:
             if len(row['result'].encode('utf-8')) <= READBACK_BYTES:
@@ -405,8 +405,9 @@ async def recorded_call(project_root: str, project_id: str, plane: str, action: 
         result = await call()
         return {**result, 'recovery_warning': 'operation receipt storage unavailable'}
     if reused:
-        if row['state'] == 'completed' and row['result']:
-            return {**json.loads(row['result']), 'operation_id': row['operation_id'], 'replayed': True}
+        if row['state'] in {'completed', 'failed'} and row['result']:
+            return {**json.loads(row['result']), 'operation_id': row['operation_id'],
+                    'replayed': True, 'executed_again': False}
         return {'status': 'outcome_unknown' if row['state'] != 'failed' else 'failed',
                 'operation_id': row['operation_id'], 'replayed': True, 'executed_again': False,
                 'error_category': row['error_type'],
@@ -420,11 +421,23 @@ async def recorded_call(project_root: str, project_id: str, plane: str, action: 
         LOG.info('operation_finished operation_id=%s status=%s', row['operation_id'], result.get('status'))
         return {**result, 'operation_id': row['operation_id'], 'replayed': False}
     except BaseException as exc:
-        state = 'failed' if isinstance(exc, ProbeError) and exc.status == 'denied' else 'outcome_unknown'
+        # A deterministic missing-target or denied validation is known, not
+        # an uncertain mutation. In particular managed_worktree(status)
+        # without a task receipt must never be reported as outcome_unknown.
+        known = isinstance(exc, ProbeError) and exc.status in {'denied', 'not_found'}
+        state = 'failed' if known else 'outcome_unknown'
         category = exc.category if isinstance(exc, ProbeError) else type(exc).__name__
+        outcome = {'status': exc.status if known else state,
+                   'error_category': category}
+        if operation == 'managed_worktree':
+            outcome.update({
+                'task_ref': action.get('task_ref'),
+                'mode': action.get('mode'),
+                'worktree': action.get('worktree'),
+            })
         try:
             await asyncio.shield(asyncio.to_thread(_finish, row['operation_id'],
-                {'status': state, 'error_category': category}, state, category))
+                outcome, state, category))
         except (OSError, sqlite3.Error, asyncio.CancelledError):
             pass
         if isinstance(exc, ProbeError):
