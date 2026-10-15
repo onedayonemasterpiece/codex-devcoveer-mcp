@@ -123,9 +123,11 @@ def _head(root: Path) -> str:
     return head
 
 
-def _dirty(root: Path) -> bool:
-    return bool(_git(root, "status", "--porcelain=v1", "-z",
-                     "--untracked-files=all", timeout=35).stdout)
+def _dirty(root: Path, *, include_ignored: bool = False) -> bool:
+    args = ["status", "--porcelain=v1", "-z", "--untracked-files=all"]
+    if include_ignored:
+        args.append("--ignored=matching")
+    return bool(_git(root, *args, timeout=35).stdout)
 
 
 def _active(root: Path) -> list[str]:
@@ -223,6 +225,52 @@ def _check_record(record: dict[str, Any], root: Path, worktree: Path, branch: st
         raise ProbeError("record_denied", "managed worktree record ownership mismatch", status="denied")
 
 
+def _retire_integrated(
+    root: Path, worktree: Path, marker: Path, branch: str,
+    record: dict[str, Any], expected_head: str,
+) -> dict[str, Any]:
+    """Safely finish an already merged lifecycle, even after a process crash."""
+    if record.get("state") != "integrated" or record.get("feature_head") != expected_head:
+        return _blocked(record, "integration_receipt_mismatch")
+    target_commit = _git(root, "rev-parse", f"refs/heads/{record['target_branch']}",
+                         check=False).stdout.strip()
+    if SHA_RE.fullmatch(target_commit) is None or _git(
+        root, "merge-base", "--is-ancestor", expected_head, target_commit,
+        check=False
+    ).returncode != 0:
+        return _blocked(record, "integration_no_longer_proven")
+    if worktree.is_symlink():
+        return _blocked(record, "worktree_symlink_denied")
+    if worktree.exists():
+        if not worktree.is_dir() or not _registered(root, worktree):
+            return _blocked(record, "worktree_missing_or_unregistered")
+        if _branch(worktree) != branch or _head(worktree) != expected_head:
+            return _blocked(record, "worktree_changed_after_integration")
+        if _dirty(worktree, include_ignored=True):
+            return _blocked(record, "uncommitted_or_untracked_work")
+        if _in_use(worktree):
+            return _blocked(record, "worktree_in_use", integrated=True,
+                            integrated_head=target_commit)
+        removed = _git(root, "worktree", "remove", "--", str(worktree),
+                       check=False, timeout=90)
+        if removed.returncode != 0:
+            return _blocked(record, "git_refused_worktree_removal",
+                            integrated=True, integrated_head=target_commit)
+    elif _registered(root, worktree):
+        return _blocked(record, "missing_worktree_still_registered")
+    ref_exists = _git(root, "show-ref", "--verify", "--quiet",
+                      f"refs/heads/{branch}", check=False).returncode == 0
+    if ref_exists:
+        retired = _git(root, "branch", "-d", "--", branch, check=False)
+        if retired.returncode != 0:
+            return _blocked(record, "branch_retirement_failed",
+                            integrated=True, integrated_head=target_commit)
+    record["state"] = "finished"
+    record["integrated_head"] = target_commit
+    _save(marker, record)
+    return _public(record, merged=True, cleaned=True, integrated_head=target_commit)
+
+
 def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[str, Any]:
     """Create, inspect or integrate-and-retire a task-owned worktree."""
     mode = action["mode"]
@@ -237,7 +285,12 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
             _check_record(record, root, worktree, branch, ref)
         if mode == "create":
             if record is not None:
-                if record["state"] == "active" and worktree.is_dir() and _registered(root, worktree):
+                if record["state"] in {"active", "creating"} and worktree.is_dir() and _registered(root, worktree):
+                    if _branch(worktree) != branch:
+                        return _blocked(record, "branch_changed")
+                    if record["state"] == "creating":
+                        record["state"] = "active"
+                        _save(marker, record)
                     return _public(record, reused=True)
                 return _blocked(record, "existing_lifecycle_requires_reconciliation")
             if worktree.exists() or worktree.is_symlink():
@@ -273,13 +326,21 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
                 return _blocked(record, "creation_incomplete")
             record["state"] = "active"
             _save(marker, record)
+        if record["state"] == "integrated":
+            expected = action.get("expected_head")
+            if mode == "status":
+                return _public(record, cleanup_pending=True,
+                               worktree_exists=worktree.is_dir())
+            if mode != "finish" or not isinstance(expected, str) or not SHA_RE.fullmatch(expected):
+                raise ProbeError("invalid_input", "integrated cleanup requires expected_head", status="denied")
+            return _retire_integrated(root, worktree, marker, branch, record, expected)
         if worktree.is_symlink() or not worktree.is_dir() or not _registered(root, worktree):
             return _blocked(record, "worktree_missing_or_unregistered")
         if _branch(worktree) != branch:
             return _blocked(record, "branch_changed")
         current = _head(worktree)
         if mode == "status":
-            return _public(record, head=current, dirty=_dirty(worktree),
+            return _public(record, head=current, dirty=_dirty(worktree, include_ignored=True),
                            target_head=_head(root), target_dirty=_dirty(root))
         if mode != "finish":
             raise ProbeError("invalid_input", "supported modes are create/status/finish")
@@ -288,7 +349,7 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
             raise ProbeError("invalid_input", "finish requires exact expected_head", status="denied")
         if current != expected:
             return _blocked(record, "expected_head_mismatch", head=current)
-        if _dirty(worktree):
+        if _dirty(worktree, include_ignored=True):
             return _blocked(record, "uncommitted_or_untracked_work")
         if _git(root, "merge-base", "--is-ancestor", record["base_sha"], current, check=False).returncode != 0:
             return _blocked(record, "branch_history_rewritten")
@@ -314,23 +375,10 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
             if not integrated:
                 return _blocked(record, "merge_outcome_unknown")
         record["state"] = "integrated"
+        record["feature_head"] = current
         record["integrated_head"] = _head(root)
         _save(marker, record)
-        if _in_use(worktree):
-            return _blocked(record, "worktree_in_use", integrated=True,
-                            integrated_head=record["integrated_head"])
-        removed = _git(root, "worktree", "remove", "--", str(worktree), check=False, timeout=90)
-        if removed.returncode != 0:
-            return _blocked(record, "git_refused_worktree_removal", integrated=True,
-                            integrated_head=record["integrated_head"])
-        pruned = _git(root, "branch", "-d", "--", branch, check=False)
-        if pruned.returncode != 0:
-            return _blocked(record, "branch_retirement_failed", integrated=True,
-                            integrated_head=record["integrated_head"])
-        record["state"] = "finished"
-        _save(marker, record)
-        return _public(record, merged=True, cleaned=True,
-                       integrated_head=record["integrated_head"])
+        return _retire_integrated(root, worktree, marker, branch, record, current)
 
 
 def policy_prompt(access: str | None, task_ref: str) -> str:
