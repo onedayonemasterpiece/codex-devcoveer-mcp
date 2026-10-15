@@ -179,9 +179,10 @@ def test_builder_materializes_consult_model_surface() -> None:
         assert "persist_consultation as _persist_consultation" in bridge
         assert 'BRIDGE_VERSION = "3.39.0-native-thread-links"' in bridge
         assert '"backend": "codex_consult"' in bridge
-        assert '"codex_user_opt_in": CODEX_USER_OPT_IN_PROPERTY' in bridge
-        assert "codex_explicit_opt_in_required" in bridge
-        assert "codexAuthorization" in bridge
+        assert '"codex_user_opt_in": CODEX_USER_OPT_IN_PROPERTY' not in bridge
+        assert "codex_explicit_opt_in_required" not in bridge
+        assert '"reason": "explicit_codex_provider"' in bridge
+        # Dot/native clients do not need to fabricate a user-message quotation.
         assert "owner-authorized consultation ladder" in tool_block
         assert "codex_user_opt_in" not in tool_block
         assert 'float(remaining) <= 10.0' in bridge
