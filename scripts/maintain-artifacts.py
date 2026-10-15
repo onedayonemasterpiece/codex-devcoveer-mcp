@@ -152,8 +152,12 @@ def inspect(root: Path, repo_root: Path, project: str, name: str,
         reasons.append("recent_run")
     if _is_referenced(repo_root, project, name):
         reasons.append("referenced_by_source_or_tests")
-    if _in_use(candidate):
-        reasons.append("open_by_process")
+    try:
+        if _in_use(candidate):
+            reasons.append("open_by_process")
+    except UnsafeArtifact as exc:
+        # Inspection can still report the run; deletion remains fail-closed.
+        reasons.append(f"process_check_incomplete: {exc}")
     entries = _check_tree(candidate)
     return {"project": project, "run": name, "size_kib": _size_kib(candidate),
             "entries": entries, "age_hours": round(age / 3600, 1),
