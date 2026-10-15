@@ -136,8 +136,10 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
         {"type":"object","properties":{
             "kind":{"const":"managed_worktree"},
-            "mode":{"type":"string","enum":["create","status","finish"]},
+            "mode":{"type":"string","enum":["create","adopt","status","finish"]},
             "task_ref":{"type":"string","minLength":36,"maxLength":36},
+            "worktree":{"type":"string","minLength":1,"maxLength":1000},
+            "expected_branch":{"type":"string","pattern":r"^chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$"},
             "expected_head":{"type":"string","pattern":r"^[0-9a-f]{40}$"}
         },"required":["kind","mode","task_ref"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"source_handoff_gc"},"older_than_seconds":{"type":"integer","minimum":0,"maximum":2592000,"default":0},"limit":{"type":"integer","minimum":1,"maximum":64,"default":16}},"required":["kind"],"additionalProperties":False},
