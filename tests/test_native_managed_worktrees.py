@@ -400,3 +400,52 @@ def test_schema_advertises_adopt_without_broad_shell_surface():
     assert not list(validator.iter_errors(valid))
     assert list(validator.iter_errors({"project": "street-story", "action": {
         **valid["action"], "command": "rm -rf /"}}))
+
+
+def test_typed_gateway_adopts_and_finishes_feature_sha_distinct_from_original(repo, preexisting_copy):
+    """Regression: canonical HEAD and the feature checkout's expected_head differ."""
+    import json
+    worktree, branch, baseline = preexisting_copy
+    feature_sha = commit_change(worktree, "isolation.txt", "kept separate\\n")
+    assert feature_sha != git(repo, "rev-parse", "HEAD")
+    cfg = repo.parent / "direct-config.json"
+    cfg.write_text(json.dumps({
+        "version": 1,
+        "projects": {repo.name: {
+            "github_repo": "test/repo", "remotes": {"origin": "test/repo"},
+            "services": {}, "logs": {}, "roots": {"source": str(repo)},
+            "health": {}, "runtimes": {}, "runtime_files": {},
+            "config_presence": {}, "project_actions": {},
+        }}
+    }))
+    adopt = asyncio.run(actions._run_project_action_inner(
+        str(repo), repo.name,
+        {"kind": "managed_worktree", "mode": "adopt",
+         "task_ref": REF_1, "worktree": str(worktree),
+         "expected_branch": branch, "expected_head": feature_sha},
+        config_path=cfg,
+    ))
+    assert adopt["status"] == "ok" and adopt["adopted"]
+    assert adopt["head"] == feature_sha
+    assert not (repo / "isolation.txt").exists()
+    finished = asyncio.run(actions._run_project_action_inner(
+        str(repo), repo.name,
+        {"kind": "managed_worktree", "mode": "finish",
+         "task_ref": REF_1, "expected_head": feature_sha},
+        config_path=cfg,
+    ))
+    assert finished["status"] == "ok" and finished["cleaned"]
+    assert (repo / "isolation.txt").is_file()
+    assert not worktree.exists()
+
+
+def test_other_typed_actions_still_guard_canonical_head(repo):
+    other_head = "a" * 40
+    with pytest.raises(actions.ProbeError, match="does not match expected checkpoint"):
+        asyncio.run(actions._guard_expected_head(
+            repo, {"kind": "write_text", "expected_head": other_head}
+        ))
+    assert asyncio.run(actions._guard_expected_head(
+        repo, {"kind": "managed_worktree", "mode": "finish",
+               "expected_head": other_head}
+    )) is None
