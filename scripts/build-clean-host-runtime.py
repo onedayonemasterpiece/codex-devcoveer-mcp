@@ -1516,148 +1516,18 @@ def _delivery_error(exc: ProbeError) -> types.CallToolResult:
 
 
 def transform_codex_explicit_opt_in(source: str) -> str:
+    """Keep native Codex explicitly provider-selected, without unverifiable quote relay.
+
+    Routing already requires provider='codex'; the connector cannot authenticate a
+    purported verbatim user quote. Requiring such a field broke Dot/native clients.
+    Do not change the default OpenCode routing or the consultation quota policy.
+    """
     source = replace_once(
         source,
         'BRIDGE_VERSION = "3.36.0-product-delivery-v1"',
         'BRIDGE_VERSION = "3.38.0-safety-friction-v1"',
-        "Codex explicit opt-in bridge version",
+        "Codex explicit-provider bridge version",
     )
-
-    def add_opt_in_property(schema_marker: str, next_marker: str) -> None:
-        nonlocal source
-        start = source.find(schema_marker)
-        end = source.find(next_marker, start)
-        if start < 0 or end < 0:
-            raise SystemExit(f"Codex opt-in schema block missing: {schema_marker}")
-        block = source[start:end]
-        anchor = '        "work_id": {\n'
-        if block.count(anchor) != 1:
-            raise SystemExit(f"Codex opt-in schema anchor mismatch: {schema_marker}")
-        block = block.replace(
-            anchor,
-            '        "codex_user_opt_in": CODEX_USER_OPT_IN_PROPERTY,\n' + anchor,
-            1,
-        )
-        source = source[:start] + block + source[end:]
-
-    add_opt_in_property("START_TASK_INPUT_SCHEMA: dict[str, Any] = {", "LIST_TASKS_INPUT_SCHEMA:")
-    add_opt_in_property("CONTINUE_TASK_INPUT_SCHEMA: dict[str, Any] = {", "LIST_MODELS_INPUT_SCHEMA:")
-
-    start_marker = '        if name == "start_task":\n'
-    start = source.find(start_marker)
-    end = source.find('        if name == "list_tasks":\n', start)
-    if start < 0 or end < 0:
-        raise SystemExit("Codex opt-in start_task block missing")
-    block = source[start:end]
-    gate_anchor = (
-        '            task_prompt = _delivery_policy_prompt(bound_work) + task_prompt\n'
-        '            if route["backend"] == "opencode":\n'
-    )
-    gate_new = (
-        '            task_prompt = _delivery_policy_prompt(bound_work) + task_prompt\n'
-        '            codex_authorization = None\n'
-        '            if route["backend"] == "codex":\n'
-        '                try:\n'
-        '                    codex_authorization = _codex_user_opt_in_receipt(\n'
-        '                        arguments.get("codex_user_opt_in")\n'
-        '                    )\n'
-        '                except ValueError as exc:\n'
-        '                    return _tool_result({\n'
-        '                        "status": "denied",\n'
-        '                        "errorCategory": "codex_explicit_opt_in_required",\n'
-        '                        "content": str(exc),\n'
-        '                    }, error=True)\n'
-        '            if route["backend"] == "opencode":\n'
-    )
-    if block.count(gate_anchor) != 1:
-        raise SystemExit("Codex opt-in start gate anchor mismatch")
-    block = block.replace(gate_anchor, gate_new, 1)
-
-    native_registry = (
-        '                model=effective_model, access=access, status="running",\n'
-        '                routingReason=route["reason"], title=task_name,\n'
-    )
-    if block.count(native_registry) != 1:
-        raise SystemExit("Codex opt-in native registry anchor mismatch")
-    block = block.replace(
-        native_registry,
-        '                model=effective_model, access=access, status="running",\n'
-        '                codexAuthorization=codex_authorization,\n'
-        '                routingReason=route["reason"], title=task_name,\n',
-        1,
-    )
-    native_payload = (
-        '                "backend": "codex", "routedTo": "codex", '
-        '"routingReason": route["reason"],\n'
-    )
-    if block.count(native_payload) != 1:
-        raise SystemExit("Codex opt-in native start payload anchor mismatch")
-    block = block.replace(
-        native_payload,
-        '                "codexAuthorization": codex_authorization,\n' + native_payload,
-        1,
-    )
-    source = source[:start] + block + source[end:]
-
-    native_marker = '        if registered is not None and registered.get("backend") == "codex":\n'
-    native_start = source.find(native_marker)
-    native_end = source.find("    async def call_tool(", native_start)
-    if native_start < 0 or native_end < 0:
-        raise SystemExit("Codex opt-in native continuation block missing")
-    block = source[native_start:native_end]
-    binding_anchor = (
-        '        try:\n'
-        '            existing_work_id = registered_codex.get("workId") if registered_codex is not None else None\n'
-    )
-    if block.count(binding_anchor) != 1:
-        raise SystemExit("Codex opt-in native continuation binding anchor mismatch")
-    auth = (
-        '        codex_authorization = (\n'
-        '            registered_codex.get("codexAuthorization")\n'
-        '            if registered_codex is not None else None\n'
-        '        )\n'
-        '        if codex_authorization is None or arguments.get("codex_user_opt_in") is not None:\n'
-        '            try:\n'
-        '                codex_authorization = _codex_user_opt_in_receipt(\n'
-        '                    arguments.get("codex_user_opt_in")\n'
-        '                )\n'
-        '            except ValueError as exc:\n'
-        '                return _tool_result({\n'
-        '                    "status": "denied",\n'
-        '                    "threadId": thread_id,\n'
-        '                    "errorCategory": "codex_explicit_opt_in_required",\n'
-        '                    "content": str(exc),\n'
-        '                }, error=True)\n'
-        '        if registered_codex is not None and registered_codex.get("codexAuthorization") != codex_authorization:\n'
-        '            registered_codex = TASK_REGISTRY.update(\n'
-        '                registered_codex["taskId"], codexAuthorization=codex_authorization\n'
-        '            )\n'
-    )
-    block = block.replace(binding_anchor, auth + binding_anchor, 1)
-
-    steer_anchor = '                "action": "steered_active_turn",\n'
-    if block.count(steer_anchor) != 1:
-        raise SystemExit("Codex opt-in steer payload anchor mismatch")
-    block = block.replace(
-        steer_anchor,
-        steer_anchor + '                "codexAuthorization": codex_authorization,\n',
-        1,
-    )
-    final_anchor = (
-        '            "selectionVerified": True,\n'
-        '            "deliveryContext": delivery_context,\n'
-    )
-    if block.count(final_anchor) != 1:
-        raise SystemExit("Codex opt-in continuation payload anchor mismatch")
-    block = block.replace(
-        final_anchor,
-        '            "selectionVerified": True,\n'
-        '            "codexAuthorization": codex_authorization,\n'
-        '            "deliveryContext": delivery_context,\n',
-        1,
-    )
-    source = source[:native_start] + block + source[native_end:]
-
     source = replace_once(
         source,
         'description=("Start one optional read-only NVIDIA consultation for a focused second opinion. "\n'

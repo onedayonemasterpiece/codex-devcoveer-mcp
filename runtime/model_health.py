@@ -183,7 +183,11 @@ class ModelHealthStore:
             if event_key and any(e.get("eventKey") == event_key for e in events):
                 return False
             events.append(event)
-            self._write_locked(events)
+            try:
+                self._write_locked(events)
+            except OSError:
+                # Optional health telemetry must not disable task readback on ENOSPC.
+                return False
         return True
 
     def _events_for(self, selection: str, *, now_ms: int) -> list[dict[str, Any]]:

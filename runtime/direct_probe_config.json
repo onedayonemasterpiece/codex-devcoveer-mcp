@@ -84,6 +84,12 @@
       },
       "config_presence": {},
       "project_actions": {
+        "artifact_preview_street_story": {
+          "argv": ["/usr/bin/python3", "scripts/maintain-artifacts.py", "--project", "street-story", "--list"],
+          "cwd": ".",
+          "timeout_seconds": 90,
+          "output_bytes": 32768
+        },
         "tests": {
           "argv": [
             "/usr/bin/python3",

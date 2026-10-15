@@ -6,11 +6,11 @@ This document is the durable execution contract for ChatGPT clients using Codex 
 
 A plain `@Codex DevCoveer` request means **OpenCode**. `start_task` with no provider is routed through the existing OpenCode model resolver and its resource/health policy (Zen first, then NVIDIA, then metered reserve as configured).
 
-Native Codex is limited-capacity and **explicit opt-in only**. Use it only when the user explicitly asks for Codex, for example `@Codex DevCoveer Codex`. A native task start requires two independent signals: `provider="codex"` and `codex_user_opt_in`, which must be a verbatim excerpt from the current user message containing standalone `codex`. The bridge stores only a SHA-256 authorization receipt, not the raw excerpt.
+Native Codex is limited-capacity and **explicit opt-in only**. The caller selects `provider="codex"` only following an explicit owner request for a native Codex work task. No verbatim user-message field is needed: a forwarded quote was unauthenticated and unreliable for Dot, so it did not independently verify consent. The plugin name, model name and quota state never authorize a native work task; default routing remains OpenCode.
 
-The plugin/product identifier `codex-devcoveer` is deliberately excluded from the standalone-word match. Merely connecting or naming the plugin therefore cannot authorize native Codex. A Codex-looking model name by itself also does not opt in. There is no silent fallback from OpenCode to native Codex.
+Merely connecting or naming `codex-devcoveer` does not authorize native Codex. The caller must have explicit owner task-level consent before passing `provider="codex"`; the bridge never silently falls back to native Codex.
 
-An already-running native Codex task created under this policy carries its authorization receipt, so ordinary continuation of that same task remains possible without repeatedly asking the user to restate `Codex`. Legacy/unreceipted native tasks require a fresh explicit opt-in before they can be continued.
+Continuation of an existing native Codex task uses its saved task/thread identity and explicit owner instruction to continue. Legacy task history does not require a forwarded verbatim quote; mere thread inspection is read-only and cannot authorize a new task.
 
 `consult_model` is a separate advisory surface. Native Codex profiles in the owner-authorized consultation ladder may be selected without a per-message `Codex` mention when the Codex quota gate is strictly above the 10% reserve. That standing consultation authorization does **not** authorize a native `start_task`: working tasks still require the explicit task opt-in above.
 
