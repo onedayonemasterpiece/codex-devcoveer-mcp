@@ -1068,7 +1068,11 @@ async def _run_direct_ops_compat(root: Path, project_id: str, action: dict[str, 
 
 
 async def _guard_expected_head(root: Path, action: dict[str, Any]) -> str | None:
-    expected = action.get("expected_head")
+    # managed_worktree's expected_head is the *isolated feature checkout's*
+    # SHA (for adopt/finish), never the canonical checkout's HEAD. Its own
+    # exact Git-registration/branch/SHA checks enforce that precondition.
+    # Preserve the canonical workspace digest guard when explicitly supplied.
+    expected = None if action.get("kind") == "managed_worktree" else action.get("expected_head")
     observed = None
     if expected is not None:
         result = await _git(root, "rev-parse", "HEAD", timeout=15)
