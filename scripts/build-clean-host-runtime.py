@@ -2868,6 +2868,8 @@ def main() -> int:
     shutil.copy2(ROOT / "runtime" / "native_thread_links.py", out / "native_thread_links.py")
     shutil.copy2(ROOT / "runtime" / "direct_probe_config.json",
                  out / "direct_probe_config.json")
+    shutil.copy2(ROOT / "scripts" / "maintain-artifacts.py",
+                 out / "maintain-artifacts.py")
     shutil.copy2(ROOT / "docs" / "quality" / "reuse-catalog.yaml",
                  out / "reuse-catalog.yaml")
     shutil.copy2(ROOT / "runtime" / "source_handoff.py",

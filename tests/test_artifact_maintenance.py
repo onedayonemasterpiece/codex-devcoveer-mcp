@@ -31,6 +31,7 @@ def fixture(tmp_path: Path):
     run.mkdir()
     (run / "result.png").write_bytes(b"x" * 7000)
     old = time.time() - maintenance.MIN_AGE_SECONDS - 3600
+    os.utime(run / "result.png", (old, old))
     os.utime(run, (old, old))
     return root, repo, run, name
 
@@ -111,3 +112,37 @@ def test_inaccessible_proc_keeps_preview_but_blocks_delete(tmp_path, monkeypatch
     with pytest.raises(maintenance.UnsafeArtifact, match="deletion blocked"):
         maintenance.remove(root, repo, "street-story", name, plan["size_kib"])
     assert run.is_dir()
+
+
+def test_trusted_host_process_matching_is_narrow(tmp_path):
+    uid = os.getuid()
+    proc = tmp_path / "host_process"
+    proc.mkdir()
+    (proc / "comm").write_text("systemd\n")
+    (proc / "cgroup").write_text(
+        f"0::/user.slice/user-{uid}.slice/user@{uid}.service/init.scope\n"
+    )
+    assert maintenance._trusted_host_transport(proc, uid)
+    (proc / "comm").write_text("(sd-pam)\n")
+    assert maintenance._trusted_host_transport(proc, uid)
+    (proc / "comm").write_text("sshd-session\n")
+    (proc / "cgroup").write_text(
+        f"0::/user.slice/user-{uid}.slice/session-10.scope\n"
+    )
+    assert maintenance._trusted_host_transport(proc, uid)
+    (proc / "comm").write_text("pytest\n")
+    assert not maintenance._trusted_host_transport(proc, uid)
+    (proc / "comm").write_text("sshd-session\n")
+    assert not maintenance._trusted_host_transport(proc, uid + 1)
+
+
+def test_recent_nested_artifact_blocks_even_if_run_directory_is_old(tmp_path, monkeypatch):
+    root, repo, run, name = fixture(tmp_path)
+    monkeypatch.setattr(maintenance, "_is_referenced", lambda *a: False)
+    monkeypatch.setattr(maintenance, "_in_use", lambda *a: False)
+    os.utime(run / "result.png", None)
+    result = maintenance.inspect(root, repo, "street-story", name)
+    assert not result["safe_to_delete"]
+    assert "recent_nested_output" in result["blockers"]
+    with pytest.raises(maintenance.UnsafeArtifact, match="deletion blocked"):
+        maintenance.remove(root, repo, "street-story", name, result["size_kib"])
