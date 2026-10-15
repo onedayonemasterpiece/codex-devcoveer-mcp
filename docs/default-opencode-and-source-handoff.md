@@ -18,6 +18,27 @@ Continuation of an existing native Codex task uses its saved task/thread identit
 
 The account quota/reserve gate is only a capacity check and never substitutes for user authorization.
 
+## External Codex Native VS Code thread continuation
+
+An exact `codex://threads/<UUID>` or native UUID already created in VS Code
+can be continued through `continue_task` without creating a new task. This
+is separate from `start_task` and is **never automatic**: a user must request
+continuation of that specific thread. The bridge cross-checks a verified local
+rollout with the app-server's `thread/read` for the same UUID, original cwd and
+source. It preserves the original native model/reasoning and uses
+`thread/resume` plus `turn/start` on that UUID, not `thread/start`.
+
+An external session is admitted only from the trusted operator home or an
+existing registered project cwd. Unknown locations, mismatched projects,
+active turns, unverified source, incompatible providers and failed effective
+sandbox verification are rejected without a new turn. Default access is
+read-only. Explicit `access="write"` uses the existing restricted
+`devcoveer-write` profile and its secret-denial rules; it does not grant
+arbitrary home/host writes. Never inherit unverified external sandbox rights.
+When a `turn/start` response is lost, return outcome_unknown rather than
+replaying an operation that might already have started. Poll with
+`read_native_thread` for exact external native IDs.
+
 ## ChatGPT source and documentation authorship
 
 In the default ChatGPT-led mode, repository code **and repository documentation** are authored by ChatGPT. Do not use `start_task` to offload implementation, README edits, Markdown rewrites, or other repository source authoring to a weaker OpenCode model unless the owner explicitly changes the development mode or asks for agent authorship.
