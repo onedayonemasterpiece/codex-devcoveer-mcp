@@ -475,6 +475,21 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
         if _dirty(root):
             return _blocked(record, "target_checkout_dirty")
         target_before = _head(root)
+        if record.get("adopted"):
+            # An adopted branch can already include commits from other agents
+            # before this task was bound. Never silently merge those commits
+            # as this task's work. The original target must first contain the
+            # exact adoption baseline, and feature history must preserve it.
+            adopted_head = record.get("adopted_head")
+            if not isinstance(adopted_head, str) or SHA_RE.fullmatch(adopted_head) is None:
+                return _blocked(record, "adopted_baseline_receipt_invalid")
+            if _git(root, "merge-base", "--is-ancestor", adopted_head, current,
+                    check=False).returncode != 0:
+                return _blocked(record, "adopted_history_rewritten")
+            if _git(root, "merge-base", "--is-ancestor", adopted_head, target_before,
+                    check=False).returncode != 0:
+                return _blocked(record, "adopted_baseline_not_in_target",
+                                adopted_head=adopted_head, target_head=target_before)
         integrated = _git(root, "merge-base", "--is-ancestor", current, target_before, check=False).returncode == 0
         if not integrated:
             # Fast-forward when possible; otherwise a normal conflict-free Git
