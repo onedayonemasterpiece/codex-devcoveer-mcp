@@ -93,6 +93,9 @@ def _db():
                   AND state='outcome_unknown' AND error_type='not_found'
             """)
             db.execute('PRAGMA user_version=1')
+            # Caller may explicitly BEGIN IMMEDIATE while claiming an operation.
+            # Finish the one-time migration transaction before yielding DB.
+            db.commit()
         yield db
         db.commit()
     except BaseException:
