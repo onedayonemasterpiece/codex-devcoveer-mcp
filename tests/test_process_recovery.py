@@ -409,3 +409,79 @@ def test_gateway_returns_compact_delivery_context(tmp_path, monkeypatch):
     described = gateway.describe_plane('project_action', 'work_checkpoint')
     assert described['deliveryPolicy']['version'] == 'product-delivery-policy-v1'
     assert described['deliveryPolicy']['blockingAdvisories'] is False
+
+
+def test_known_missing_managed_worktree_is_not_an_unknown_outcome(tmp_path):
+    """The owner must see the absent binding and exact task, not recovery limbo."""
+    task_ref = "01a13fc1-459f-7d32-98fb-f27a807fe2d1"
+    calls = []
+    action = {"kind": "managed_worktree", "mode": "status", "task_ref": task_ref}
+
+    async def missing():
+        calls.append(1)
+        raise core.ProbeError(
+            "not_found", "no managed worktree belongs to this task",
+            status="not_found",
+        )
+
+    async def scenario():
+        token = recovery.CONTEXT.set({"request_key": "missing-owned-worktree-v1"})
+        try:
+            with pytest.raises(core.ProbeError, match="no managed worktree"):
+                await recovery.recorded_call(
+                    str(tmp_path), "street-story", "project_action", action, missing)
+            with recovery._db() as db:
+                row = db.execute("SELECT operation_id FROM operations").fetchone()
+                operation_id = row["operation_id"]
+            observed = recovery.process_read(
+                str(tmp_path), "operation_get", {"operation_id": operation_id})
+            record = observed["operation"]
+            assert record["state"] == "failed"
+            assert record["error_type"] == "not_found"
+            assert record["result"]["status"] == "not_found"
+            assert record["result"]["task_ref"] == task_ref
+            assert record["result"]["mode"] == "status"
+            replay = await recovery.recorded_call(
+                str(tmp_path), "street-story", "project_action", action, missing)
+            assert replay["status"] == "not_found"
+            assert replay["task_ref"] == task_ref
+            assert replay["replayed"] is True
+            assert replay["executed_again"] is False
+        finally:
+            recovery.CONTEXT.reset(token)
+
+    run(scenario())
+    assert calls == [1]
+
+
+def test_legacy_managed_not_found_receipts_are_reconciled_once(tmp_path):
+    """Only provably missing managed worktree bindings lose false uncertainty."""
+    import time
+    with recovery._db() as db:
+        records = [
+            ("op_" + "a" * 24, "managed_worktree", "not_found"),
+            ("op_" + "b" * 24, "managed_worktree", "TimeoutError"),
+            ("op_" + "c" * 24, "service_action", "not_found"),
+        ]
+        for opid, family, error in records:
+            db.execute(
+                "INSERT INTO operations("
+                "operation_id,cwd,project,plane,operation,request_key,spec_sha,"
+                "started,finished,state,result,error_type"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (opid, str(tmp_path), "p", "project_action", family, opid,
+                 "f" * 64, time.time(), time.time(), "outcome_unknown",
+                 '{"status":"outcome_unknown"}', error),
+            )
+        db.execute("PRAGMA user_version=0")
+    first = recovery.process_read(
+        str(tmp_path), "operation_get", {"operation_id": "op_" + "a" * 24})
+    assert first["operation"]["state"] == "failed"
+    assert first["operation"]["result"]["status"] == "not_found"
+    assert first["operation"]["result"]["note"] == "legacy_absent_managed_binding"
+    other = recovery.process_read(
+        str(tmp_path), "operation_get", {"operation_id": "op_" + "b" * 24})
+    unrelated = recovery.process_read(
+        str(tmp_path), "operation_get", {"operation_id": "op_" + "c" * 24})
+    assert other["operation"]["state"] == "outcome_unknown"
+    assert unrelated["operation"]["state"] == "outcome_unknown"

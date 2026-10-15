@@ -276,3 +276,127 @@ def test_secondary_agent_checkout_cannot_spawn_nested_owned_worktree(repo):
         })
     assert other.is_dir()
     assert not manager.WORKTREE_ROOT.exists() or not list(manager.WORKTREE_ROOT.glob("*"))
+
+
+@pytest.fixture
+def preexisting_copy(repo, monkeypatch):
+    """Simulate a Dot task that created its isolated checkout before binding."""
+    parent = repo.parent / "projects"
+    parent.mkdir()
+    monkeypatch.setattr(manager, "ADOPT_ROOTS", (parent,))
+    worktree = parent / "project-orphan-recovery-20261015"
+    branch = "chatgpt/research-orphan-recovery-20261015"
+    git(repo, "worktree", "add", "-b", branch, str(worktree), "HEAD")
+    head = git(worktree, "rev-parse", "HEAD")
+    return worktree, branch, head
+
+
+def test_adopt_existing_clean_worktree_without_second_copy(repo, preexisting_copy):
+    worktree, branch, head = preexisting_copy
+    before = git(repo, "rev-parse", "HEAD")
+    adopted = perform(repo, "adopt", worktree=str(worktree),
+                      expected_branch=branch, expected_head=head)
+    assert adopted["status"] == "ok" and adopted["adopted"] is True
+    assert adopted["worktree"] == str(worktree)
+    assert adopted["branch"] == branch
+    assert adopted["head"] == head
+    assert git(repo, "rev-parse", "HEAD") == before
+    assert perform(repo, "status")["head"] == head
+    assert perform(repo, "adopt", worktree=str(worktree),
+                   expected_branch=branch, expected_head=head)["reused"]
+    assert not any(manager.WORKTREE_ROOT.iterdir())
+    assert git(worktree, "status", "--porcelain") == ""
+
+
+def test_adopt_existing_dirty_worktree_preserves_data_until_commit(repo, preexisting_copy):
+    worktree, branch, head = preexisting_copy
+    (worktree / "unsaved-draft.txt").write_text("preserve changes")
+    adopted = perform(repo, "adopt", worktree=str(worktree),
+                      expected_branch=branch, expected_head=head)
+    assert adopted["adopted"]
+    fail = perform(repo, "finish", expected_head=head)
+    assert fail["blocker"] == "uncommitted_or_untracked_work"
+    assert worktree.joinpath("unsaved-draft.txt").read_text() == "preserve changes"
+    committed_head = git(worktree, "rev-parse", "HEAD")
+    assert committed_head == head
+
+
+def test_adopted_worktree_integrates_and_retires_original_without_force(repo, preexisting_copy):
+    worktree, branch, head = preexisting_copy
+    perform(repo, "adopt", worktree=str(worktree),
+            expected_branch=branch, expected_head=head)
+    updated = commit_change(worktree, "recovered.txt", "recovered product source\\n")
+    before = git(repo, "rev-parse", "HEAD")
+    assert before == head
+    result = perform(repo, "finish", expected_head=updated)
+    assert result["status"] == "ok" and result["cleaned"]
+    assert (repo / "recovered.txt").read_text() == "recovered product source\\n"
+    assert not worktree.exists()
+    assert git(repo, "branch", "--list", branch) == ""
+    assert perform(repo, "finish", expected_head=updated)["already_finished"]
+
+
+def test_adopt_does_not_merge_into_dirty_original(repo, preexisting_copy):
+    worktree, branch, head = preexisting_copy
+    (repo / "a.txt").write_text("other agent is editing\\n")
+    result = perform(repo, "adopt", worktree=str(worktree),
+                     expected_branch=branch, expected_head=head)
+    assert result["adopted"] and result["target_dirty"]
+    commit = commit_change(worktree, "feature.txt", "feature\\n")
+    blocked = perform(repo, "finish", expected_head=commit)
+    assert blocked["blocker"] == "target_checkout_dirty"
+    assert (repo / "a.txt").read_text() == "other agent is editing\\n"
+    assert worktree.exists() and not (repo / "feature.txt").exists()
+
+
+def test_adopt_rejects_wrong_branch_head_or_unregistered_path(repo, preexisting_copy):
+    worktree, branch, head = preexisting_copy
+    for args in (
+        {"worktree": str(worktree), "expected_branch": branch, "expected_head": "a"*40},
+        {"worktree": str(worktree), "expected_branch": "chatgpt/other", "expected_head": head},
+        {"worktree": str(repo), "expected_branch": branch, "expected_head": head},
+        {"worktree": str(repo.parent / "another"), "expected_branch": branch, "expected_head": head},
+        {"worktree": "/tmp/nope", "expected_branch": branch, "expected_head": head},
+    ):
+        with pytest.raises(actions.ProbeError):
+            perform(repo, "adopt", **args)
+    assert not any(manager.RECORD_ROOT.glob("*.json"))
+    assert worktree.is_dir()
+
+
+def test_adopt_is_bound_to_one_exact_native_task(repo, preexisting_copy):
+    worktree, branch, head = preexisting_copy
+    perform(repo, "adopt", REF_1, worktree=str(worktree),
+            expected_branch=branch, expected_head=head)
+    with pytest.raises(actions.ProbeError, match="another task"):
+        perform(repo, "adopt", REF_2, worktree=str(worktree),
+                expected_branch=branch, expected_head=head)
+    assert worktree.exists()
+    assert perform(repo, "status", REF_1)["worktree"] == str(worktree)
+
+
+def test_adopted_worktree_waits_for_running_process_before_merge(repo, preexisting_copy, monkeypatch):
+    worktree, branch, head = preexisting_copy
+    perform(repo, "adopt", worktree=str(worktree),
+            expected_branch=branch, expected_head=head)
+    commit = commit_change(worktree, "feature.txt", "ready\\n")
+    monkeypatch.setattr(manager, "_in_use", lambda _path: True)
+    blocked = perform(repo, "finish", expected_head=commit)
+    assert blocked["blocker"] == "worktree_in_use"
+    assert not (repo / "feature.txt").exists()
+    assert worktree.exists()
+    monkeypatch.setattr(manager, "_in_use", lambda _path: False)
+    assert perform(repo, "finish", expected_head=commit)["cleaned"]
+
+
+def test_schema_advertises_adopt_without_broad_shell_surface():
+    validator = Draft202012Validator(actions.PROJECT_ACTION_INPUT_SCHEMA)
+    valid = {"project": "street-story", "action": {
+        "kind": "managed_worktree", "mode": "adopt", "task_ref": REF_1,
+        "worktree": "/home/dev/projects/street-story-research-orphan-recovery-20261015",
+        "expected_branch": "chatgpt/research-orphan-recovery-20261015",
+        "expected_head": "a"*40,
+    }}
+    assert not list(validator.iter_errors(valid))
+    assert list(validator.iter_errors({"project": "street-story", "action": {
+        **valid["action"], "command": "rm -rf /"}}))

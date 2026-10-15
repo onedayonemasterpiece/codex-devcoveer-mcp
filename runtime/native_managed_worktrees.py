@@ -28,6 +28,13 @@ THREAD_RE = re.compile(
 PROJECT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,80}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 MAX_ACTIVE_PER_PROJECT = 12
+# Only adopt explicitly addressed, already registered repository worktrees.
+# The caller cannot give us an arbitrary path to clone, move or delete.
+ADOPT_ROOTS = (
+    Path("/home/dev/projects"),
+    Path("/home/dev/worktrees"),
+    Path("/home/dev/.codex/worktrees"),
+)
 ENV = {"HOME": "/home/dev", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
        "GIT_AUTHOR_NAME": "DevCoveer", "GIT_AUTHOR_EMAIL": "devcoveer@localhost",
        "GIT_COMMITTER_NAME": "DevCoveer", "GIT_COMMITTER_EMAIL": "devcoveer@localhost"}
@@ -217,6 +224,22 @@ def _blocked(record: dict[str, Any], reason: str, **details: Any) -> dict[str, A
 
 
 def _check_record(record: dict[str, Any], root: Path, worktree: Path, branch: str, ref: str) -> None:
+    adopted = record.get("adopted", False)
+    if adopted is not True and adopted is not False:
+        raise ProbeError("record_denied", "invalid managed adoption receipt", status="denied")
+    if adopted:
+        adopted_path = record.get("worktree")
+        adopted_branch = record.get("branch")
+        if (not isinstance(adopted_path, str) or not adopted_path.startswith("/")
+                or not isinstance(adopted_branch, str)
+                or re.fullmatch(r"chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", adopted_branch) is None):
+            raise ProbeError("record_denied", "invalid adopted worktree identity", status="denied")
+        worktree = Path(adopted_path)
+        branch = adopted_branch
+        if (worktree.is_symlink() or not any(
+                worktree.is_relative_to(parent) and worktree != parent
+                for parent in ADOPT_ROOTS)):
+            raise ProbeError("record_denied", "adopted worktree escapes allowed roots", status="denied")
     if (record.get("repository") != str(root)
             or record.get("worktree") != str(worktree)
             or record.get("branch") != branch
@@ -226,6 +249,51 @@ def _check_record(record: dict[str, Any], root: Path, worktree: Path, branch: st
             or not isinstance(record.get("target_branch"), str)
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", record["target_branch"])):
         raise ProbeError("record_denied", "managed worktree record ownership mismatch", status="denied")
+
+
+def _registered_external(root: Path, raw_path: str, expected_branch: str,
+                         expected_head: str) -> Path:
+    """Prove exact existing worktree identity without modifying any checkout."""
+    if (not isinstance(raw_path, str) or not raw_path.startswith("/")
+            or not isinstance(expected_branch, str)
+            or re.fullmatch(r"chatgpt/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", expected_branch) is None
+            or not isinstance(expected_head, str)
+            or SHA_RE.fullmatch(expected_head) is None):
+        raise ProbeError("invalid_input", "adopt requires absolute registered worktree, exact chatgpt branch and SHA",
+                         status="denied")
+    candidate = Path(raw_path)
+    if candidate.is_symlink() or not candidate.is_dir():
+        raise ProbeError("not_found", "candidate worktree is missing or symlinked",
+                         status="not_found")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ProbeError("not_found", "candidate worktree cannot be resolved",
+                         status="not_found") from exc
+    if candidate != resolved or candidate == root:
+        raise ProbeError("worktree_denied", "candidate worktree must be exact and non-canonical",
+                         status="denied")
+    if not any(resolved.is_relative_to(parent) and resolved != parent for parent in ADOPT_ROOTS):
+        raise ProbeError("worktree_denied", "candidate worktree is outside dedicated checkout roots",
+                         status="denied")
+    if (_git(resolved, "rev-parse", "--show-toplevel").stdout.strip() != str(resolved)
+            or not _registered(root, resolved)):
+        raise ProbeError("worktree_denied", "candidate is not registered under this repository",
+                         status="denied")
+    if _branch(resolved) != expected_branch or _head(resolved) != expected_head:
+        raise ProbeError("workspace_drift", "candidate branch or HEAD does not match preview",
+                         status="denied")
+    return resolved
+
+
+def _existing_owner(path: Path, branch: str) -> str | None:
+    for marker in RECORD_ROOT.glob("*.json"):
+        recorded = _load(marker)
+        if (recorded is not None and recorded.get("state") != "finished"
+                and (recorded.get("worktree") == str(path)
+                     or recorded.get("branch") == branch)):
+            return recorded.get("task_ref") or "other"
+    return None
 
 
 def _retire_integrated(
@@ -286,6 +354,50 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
         record = _load(marker)
         if record is not None:
             _check_record(record, root, worktree, branch, ref)
+            if record.get("adopted"):
+                worktree = Path(record["worktree"])
+                branch = record["branch"]
+        if mode == "adopt":
+            # Existing exact Git worktree only; no branch or directory creation.
+            candidate = _registered_external(
+                root, action.get("worktree"), action.get("expected_branch"),
+                action.get("expected_head"))
+            wanted_branch = action["expected_branch"]
+            if record is not None:
+                if (record["worktree"] == str(candidate)
+                        and record["branch"] == wanted_branch
+                        and record["state"] in {"active", "creating", "integrated", "finished"}):
+                    return _public(record, reused=True, adopted=bool(record.get("adopted")))
+                return _blocked(record, "task_already_bound_to_another_worktree")
+            if len(_active(root)) >= MAX_ACTIVE_PER_PROJECT:
+                raise ProbeError("capacity", "too many active managed worktrees",
+                                 status="denied")
+            other = _existing_owner(candidate, wanted_branch)
+            if other is not None:
+                raise ProbeError("already_owned", "worktree or branch belongs to another task",
+                                 status="denied")
+            target_branch = _branch(root)
+            if target_branch is None or target_branch == wanted_branch:
+                raise ProbeError("target_branch_denied", "target branch is missing or overlaps the feature",
+                                 status="denied")
+            base_result = _git(root, "merge-base", "HEAD", action["expected_head"],
+                               check=False)
+            base_sha = base_result.stdout.strip().lower()
+            if base_result.returncode != 0 or SHA_RE.fullmatch(base_sha) is None:
+                raise ProbeError("unrelated_history", "worktree cannot be integrated into target",
+                                 status="denied")
+            record = {
+                "schema": 1, "repository": str(root), "task_ref": ref,
+                "worktree": str(candidate), "branch": wanted_branch,
+                "target_branch": target_branch, "base_sha": base_sha,
+                "state": "active", "adopted": True,
+                "adopted_head": action["expected_head"],
+                "created_at": int(time.time()),
+            }
+            _save(marker, record)
+            return _public(record, adopted=True, reused=False,
+                           head=action["expected_head"],
+                           target_dirty=_dirty(root), needs_integration=True)
         if mode == "create":
             if record is not None:
                 if record["state"] in {"active", "creating"} and worktree.is_dir() and _registered(root, worktree):
@@ -346,7 +458,7 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
             return _public(record, head=current, dirty=_dirty(worktree, include_ignored=True),
                            target_head=_head(root), target_dirty=_dirty(root))
         if mode != "finish":
-            raise ProbeError("invalid_input", "supported modes are create/status/finish")
+            raise ProbeError("invalid_input", "supported modes are create/adopt/status/finish")
         expected = action.get("expected_head")
         if not isinstance(expected, str) or not SHA_RE.fullmatch(expected):
             raise ProbeError("invalid_input", "finish requires exact expected_head", status="denied")
@@ -354,6 +466,8 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
             return _blocked(record, "expected_head_mismatch", head=current)
         if _dirty(worktree, include_ignored=True):
             return _blocked(record, "uncommitted_or_untracked_work")
+        if record.get("adopted") and _in_use(worktree):
+            return _blocked(record, "worktree_in_use")
         if _git(root, "merge-base", "--is-ancestor", record["base_sha"], current, check=False).returncode != 0:
             return _blocked(record, "branch_history_rewritten")
         if _branch(root) != record["target_branch"]:
@@ -391,7 +505,11 @@ def policy_prompt(access: str | None, task_ref: str) -> str:
         "\nPARALLEL WORKTREE LIFECYCLE (owner-approved):\n"
         f"- Current native thread: {task_ref}. Parallel implementation may use one managed isolated Git worktree.\n"
         "- Call direct_ops_v2 with project=<canonical project>, plane=project_action, "
-        "operation=managed_worktree and payload={mode:create, task_ref:<thread ID>}. "
+        "operation=managed_worktree. If a separate Git worktree already exists for "
+        "this task, use mode=adopt with task_ref=<thread ID>, worktree=<exact "
+        "existing absolute path>, expected_branch=<exact branch>, expected_head=<SHA>. "
+        "Never create a second copy while adopting one. Otherwise use mode=create "
+        "with task_ref=<thread ID>. "
         "This returns exact worktree path, feature branch and target branch.\n"
         "- Make changes and run tests inside that worktree, without editing the canonical "
         "checkout or other agents' worktrees. Commit only the tested intended changes.\n"
