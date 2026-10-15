@@ -34,17 +34,26 @@ Capabilities should evolve independently by contract. They must not be coupled t
 
 ## Direct artifact maintenance (no Codex or OpenCode task)
 
-The checked-in `scripts/maintain-artifacts.py` runs directly through
-`project_action.run_tool` (project `codex-devcoveer-mcp`, tool `python_script`).
-`project_action.run_profile` with `artifact_preview_street_story` lists Street Story
-run names without invoking an agent. For a particular completed run, first inspect it
-using args `["--project","street-story","--run","EXACT_DATED_RUN"]`.
-Only a safe, unreferenced, inactive run older than 72 hours can be removed by
-adding `"--delete","--expected-kib","N"` with the exact previewed size.
-Paths are restricted to named top-level dated runs under trusted
-`/home/dev/artifacts/<project>`. Git worktrees, running processes, symlinks,
-protected files, referenced test evidence, Docker volumes and service data are excluded.
-This is **not** a general host shell or a request to run OpenCode.
+Use `direct_ops_v2` with `project="codex-devcoveer-mcp"`,
+`plane="host_action"`, `operation="artifact_maintenance"`.
+This is a registered operator action, not arbitrary shell access:
+
+- `payload={"artifact_project":"street-story","mode":"list"}` lists exact dated development runs.
+- `mode="inspect", run="EXACT_DATED_RUN"` reports size, age, referenced-evidence and process-use blockers.
+- `mode="delete", run="EXACT_DATED_RUN", expected_kib=N` removes *only* a run that still passes all checks, with exact-size precondition.
+
+The script is installed in the canonical MCP runtime and the direct action has no
+dependency on which repository branch is checked out. The legacy registered
+`artifact_preview_street_story` profile is read-only. The source script can also
+be tested via `project_action.run_tool` in an isolated checkout.
+
+Safeguards: fixed project and dated-run allowlists, minimum age 72 hours, no
+repository-documented evidence dependencies, symlink/filesystem/protected-path
+denial, no active process holding a path and exact expected size. Incomplete
+`/proc` permission checks return an explicit blocker rather than silently
+deleting possibly active files. This avoids broad deletion of Git worktrees,
+Docker volumes, production data or credentials. Do not bypass a blocked
+deletion merely because more free space is needed.
 
 ## Local-device boundary
 
