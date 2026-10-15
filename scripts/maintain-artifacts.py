@@ -94,11 +94,11 @@ def _trusted_host_transport(proc: Path, uid: int) -> bool:
         cgroup = (proc / "cgroup").read_text(encoding="utf-8").strip()
     except OSError:
         return False
-    prefix = rf"0::/user\\.slice/user-{uid}\\.slice/"
+    prefix = rf"0::/user\.slice/user-{uid}\.slice/"
     if name in {"systemd", "(sd-pam)"}:
-        return re.fullmatch(prefix + rf"user@{uid}\\.service/init\\.scope", cgroup) is not None
+        return re.fullmatch(prefix + rf"user@{uid}\.service/init\.scope", cgroup) is not None
     if name == "sshd-session":
-        return re.fullmatch(prefix + r"session-[0-9]+\\.scope", cgroup) is not None
+        return re.fullmatch(prefix + r"session-[0-9]+\.scope", cgroup) is not None
     return False
 
 
