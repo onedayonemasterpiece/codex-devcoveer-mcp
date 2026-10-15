@@ -327,6 +327,13 @@ HOST_ACTION_INPUT_SCHEMA: dict[str, Any] = {
                 {"type":"object","properties":{"kind":{"const":"delete_registered_file"},"file":{"type":"string","minLength":1,"maxLength":64,"pattern":r"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"expected_sha256":{"type":"string","pattern":r"^[0-9a-f]{64}$"}},"required":["kind","file"],"additionalProperties":False},
                 {"type":"object","properties":{"kind":{"const":"daemon_reload"}},"required":["kind"],"additionalProperties":False},
                 {"type":"object","properties":{"kind":{"const":"root_git_sync_exact"},"root":{"type":"string","minLength":1,"maxLength":64},"remote":{"type":"string","minLength":1,"maxLength":64},"branch":{"type":"string","minLength":1,"maxLength":200},"expected_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"expected_head":{"type":"string","pattern":r"^[0-9a-f]{40}$"}},"required":["kind","root","branch","expected_sha"],"additionalProperties":False},
+                {"type":"object","properties":{
+                    "kind":{"const":"artifact_maintenance"},
+                    "artifact_project":{"type":"string","enum":["street-story","events-bot","events-bot-new","regional-knowledge-base","wonderful-lections","vibepublish","codex-devcoveer-mcp"]},
+                    "mode":{"type":"string","enum":["list","inspect","delete"]},
+                    "run":{"type":"string","minLength":1,"maxLength":150},
+                    "expected_kib":{"type":"integer","minimum":1}
+                },"required":["kind","artifact_project","mode"],"additionalProperties":False},
             ]
         },
     },
@@ -1296,6 +1303,52 @@ async def _restart_service(binding: dict[str, Any], service_alias: str) -> dict[
             "unit": unit, "scheduled_after_seconds": 1, "transient_unit": transient}
 
 
+async def _host_artifact_maintenance(binding_id: str, action: dict[str, Any]) -> dict[str, Any]:
+    """Run the installed exact-run artifact guardian without an agent or arbitrary shell."""
+    if binding_id != "codex-devcoveer-mcp":
+        raise ProbeError("target_denied", "artifact maintenance requires the registered DevCoveer operator", status="denied")
+    mode = action["mode"]
+    run = action.get("run")
+    expected = action.get("expected_kib")
+    if mode == "list":
+        if run is not None or expected is not None:
+            raise ProbeError("invalid_input", "list mode accepts no run/expected_kib")
+    elif mode == "inspect":
+        if not run or expected is not None:
+            raise ProbeError("invalid_input", "inspect mode requires run, not expected_kib")
+    elif mode == "delete":
+        if not run or not isinstance(expected, int) or isinstance(expected, bool) or expected <= 0:
+            raise ProbeError("invalid_input", "delete requires an exact run and positive expected_kib")
+    else:
+        raise ProbeError("invalid_input", "unknown artifact maintenance mode")
+    script = Path(__file__).resolve(strict=True).with_name("maintain-artifacts.py")
+    if not script.is_file() or script.is_symlink():
+        raise ProbeError("not_found", "installed artifact maintenance script missing", status="not_found")
+    argv = ["/usr/bin/python3", str(script), "--project", action["artifact_project"]]
+    if mode == "list":
+        argv.append("--list")
+    else:
+        argv.extend(["--run", run])
+    if mode == "delete":
+        argv.extend(["--delete", "--expected-kib", str(expected)])
+    result = await _run_process(argv, cwd=script.parent, timeout=90, output_limit=48 * 1024)
+    stdout, was_redacted = _decode(result, "stdout")
+    try:
+        parsed = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise ProbeError("artifact_output", "maintenance script returned invalid output") from exc
+    if not isinstance(parsed, dict):
+        raise ProbeError("artifact_output", "maintenance script output is not an object")
+    if result.exit_code != 0 and parsed.get("status") != "blocked":
+        raise ProbeError("artifact_execution", "maintenance command failed")
+    return {
+        "status": "ok" if result.exit_code == 0 else "blocked",
+        "action": "artifact_maintenance",
+        "mode": mode, "artifact_project": action["artifact_project"],
+        "details": parsed, "exit_code": result.exit_code, "redacted": was_redacted,
+    }
+
+
 async def _run_host_action_inner(project_root: str, project_id: str, action: dict[str, Any], *,
                                  config_path: Path | None = None) -> dict[str, Any]:
     root = Path(project_root).resolve(strict=True)
@@ -1314,6 +1367,7 @@ async def _run_host_action_inner(project_root: str, project_id: str, action: dic
     if kind == "delete_registered_file": return delete_registered_file(binding, action)
     if kind == "daemon_reload": return await daemon_reload(binding)
     if kind == "root_git_sync_exact": return await root_git_sync_exact(binding, action)
+    if kind == "artifact_maintenance": return await _host_artifact_maintenance(binding_id, action)
     raise ProbeError("invalid_input", f"unknown host action kind {kind!r}")
 
 
