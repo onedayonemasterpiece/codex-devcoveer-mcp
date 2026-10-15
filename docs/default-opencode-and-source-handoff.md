@@ -39,6 +39,28 @@ When a `turn/start` response is lost, return outcome_unknown rather than
 replaying an operation that might already have started. Poll with
 `read_native_thread` for exact external native IDs.
 
+## Native Codex write tasks: connected MCP approval
+
+A native Codex task launched through `start_task(provider="codex", access="write")`
+(or upgraded to `access="write"` by `continue_task`) runs unattended with
+`approvalPolicy="never"`. By default, Codex therefore rejects MCP tools not
+marked read-only *before calling the MCP server*: `direct_ops_v2(operation=describe)`
+is affected because its surface can also perform mutations.
+
+Only for an explicitly authorized native **write** task, DevCoveer supplies a
+per-thread Codex config override setting `default_tools_approval_mode="approve"`
+for the exact owner DevCoveer app `asdk_app_6a8b3564e3fc81918b210222d5dbb212`.
+It does not set `apps._default`, change the user's `~/.codex/config.toml`,
+modify other apps' approval policies, change the sandbox, or pretend
+`direct_ops_v2` is read-only. The restricted `devcoveer-write` profile
+and the server's own exact-target/allowlist validation remain active.
+
+Read-only native tasks receive no such override. They should use
+`project_probe`, `host_probe`, `read_native_thread`, and other genuinely
+read-only capabilities. An external VS Code thread explicitly continued with
+`access="write"` uses the same restricted per-thread policy. On a lost
+`turn/start` reply, always read the original thread before resubmitting.
+
 ## ChatGPT source and documentation authorship
 
 In the default ChatGPT-led mode, repository code **and repository documentation** are authored by ChatGPT. Do not use `start_task` to offload implementation, README edits, Markdown rewrites, or other repository source authoring to a weaker OpenCode model unless the owner explicitly changes the development mode or asks for agent authorship.
