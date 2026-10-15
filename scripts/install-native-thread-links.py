@@ -21,7 +21,9 @@ def transform(source: str, replace_once) -> str:
         '    is_thread_link as _is_native_thread_link,\n'
         '    normalize_thread_reference as _normalize_native_thread_reference,\n'
         '    read_native_thread as _read_native_thread,\n'
-        ')\n\nBRIDGE_VERSION = "3.39.0-native-thread-links"',
+        ')\n'
+        'from native_external_continuation import continue_external_native_thread as _continue_external_native_thread\n'
+        '\nBRIDGE_VERSION = "3.39.0-native-thread-links"',
         "native deep-link import",
     )
     source = replace_once(
@@ -134,7 +136,38 @@ TOOLS = [
             arguments = dict(arguments)
             arguments["task"] = _normalize_native_thread_reference(arguments["task"])
         registered = _registry_task(arguments["task"], project)
+        if name == "continue_task" and registered is None:
+            native_id = _normalize_native_thread_reference(arguments["task"])
+            if native_id is not None and _load_thread_metadata(native_id) is None:
+                native_result = await _continue_external_native_thread(
+                    thread_id=native_id,
+                    arguments=arguments,
+                    history=history,
+                    requested_project_cwd=project.path if project is not None else None,
+                    authorized_project_cwds={entry.path for entry in _project_catalog()},
+                    read_native=_read_native_thread,
+                    resolve_model=_resolve_model_selection,
+                    sandbox_matches=_effective_sandbox_matches,
+                    model_matches=_effective_model_settings,
+                    sandbox_policy=_turn_sandbox_policy,
+                    continuation_access=_continuation_access,
+                    sandbox_by_access=ACCESS_TO_SANDBOX,
+                    write_profile=WRITE_PERMISSION_PROFILE,
+                )
+                return _tool_result(native_result, error=native_result.get("status") != "running")
 ''',
-        "normalize native reference for existing guarded write/interrupt operations",
+        "normalize native reference and safely continue verified external Codex threads",
+    )
+    source = replace_once(
+        source,
+        '    types.Tool(name="continue_task", title="Continue Codex task",\n'
+        '        description=("Continue one uniquely resolved native Codex task asynchronously',
+        '    types.Tool(name="continue_task", title="Continue Codex task",\n'
+        '        description=("Continue one uniquely resolved native Codex task asynchronously.'
+        ' Exact existing VS Code codex://threads/<UUID> links are also supported '
+        'without creating a new task, after verifying local rollout and live '
+        'app-server identity; use access=write only for authorized changes. '
+        'Read such threads afterward with read_native_thread. ',
+        "native continuation tool description",
     )
     return source
