@@ -209,3 +209,58 @@ def test_canonical_builder_emits_policy_and_runtime(tmp_path: Path):
     assert "do not create a clone, checkout copy" not in bridge
     assert "task-managed worktree" in bridge
     assert (target / "direct_actions.py").read_text().count("managed_worktree") >= 2
+
+
+def test_ignored_untracked_database_blocks_removal(repo):
+    (repo / ".gitignore").write_text("*.sqlite3\n")
+    git(repo, "add", ".gitignore")
+    git(repo, "commit", "-m", "Preserve ignored databases")
+    created = perform(repo, "create")
+    worktree = Path(created["worktree"])
+    head = commit_change(worktree, "feature.txt", "ready\n")
+    (worktree / "important.sqlite3").write_bytes(b"not reproducible")
+    result = perform(repo, "finish", expected_head=head)
+    assert result["blocker"] == "uncommitted_or_untracked_work"
+    assert worktree.joinpath("important.sqlite3").read_bytes() == b"not reproducible"
+    assert not (repo / "feature.txt").exists()
+
+
+def test_integrated_cleanup_is_resumable_after_original_checkout_changes(repo, monkeypatch):
+    created = perform(repo, "create")
+    worktree = Path(created["worktree"])
+    head = commit_change(worktree, "landed.txt", "merged\n")
+    monkeypatch.setattr(manager, "_in_use", lambda _path: True)
+    first = perform(repo, "finish", expected_head=head)
+    assert first["status"] == "blocked" and first["integrated"]
+    (repo / "ongoing.txt").write_text("unrelated post-merge worker edit\n")
+    monkeypatch.setattr(manager, "_in_use", lambda _path: False)
+    finished = perform(repo, "finish", expected_head=head)
+    assert finished["cleaned"]
+    assert not worktree.exists()
+    assert (repo / "ongoing.txt").read_text() == "unrelated post-merge worker edit\n"
+
+
+def test_interrupted_after_worktree_removal_finishes_branch_retirement(repo, monkeypatch):
+    created = perform(repo, "create")
+    worktree = Path(created["worktree"])
+    head = commit_change(worktree, "landed.txt", "merged\n")
+    monkeypatch.setattr(manager, "_in_use", lambda _path: True)
+    assert perform(repo, "finish", expected_head=head)["blocker"] == "worktree_in_use"
+    git(repo, "worktree", "remove", str(worktree))
+    assert not worktree.exists()
+    monkeypatch.setattr(manager, "_in_use", lambda _path: False)
+    finished = perform(repo, "finish", expected_head=head)
+    assert finished["cleaned"] and finished["merged"]
+    assert git(repo, "branch", "--list", created["branch"]) == ""
+
+
+def test_creating_receipt_retries_same_existing_worktree(repo):
+    created = perform(repo, "create")
+    marker = next(manager.RECORD_ROOT.glob("*.json"))
+    import json
+    data = json.loads(marker.read_text())
+    data["state"] = "creating"
+    marker.write_text(json.dumps(data))
+    reused = perform(repo, "create")
+    assert reused["reused"] is True and reused["state"] == "active"
+    assert len(list(manager.WORKTREE_ROOT.iterdir())) == 1
