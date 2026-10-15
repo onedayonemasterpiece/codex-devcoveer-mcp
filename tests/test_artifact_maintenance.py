@@ -118,21 +118,21 @@ def test_trusted_host_process_matching_is_narrow(tmp_path):
     uid = os.getuid()
     proc = tmp_path / "host_process"
     proc.mkdir()
-    (proc / "comm").write_text("systemd\\n")
+    (proc / "comm").write_text("systemd\n")
     (proc / "cgroup").write_text(
-        f"0::/user.slice/user-{uid}.slice/user@{uid}.service/init.scope\\n"
+        f"0::/user.slice/user-{uid}.slice/user@{uid}.service/init.scope\n"
     )
     assert maintenance._trusted_host_transport(proc, uid)
-    (proc / "comm").write_text("(sd-pam)\\n")
+    (proc / "comm").write_text("(sd-pam)\n")
     assert maintenance._trusted_host_transport(proc, uid)
-    (proc / "comm").write_text("sshd-session\\n")
+    (proc / "comm").write_text("sshd-session\n")
     (proc / "cgroup").write_text(
-        f"0::/user.slice/user-{uid}.slice/session-10.scope\\n"
+        f"0::/user.slice/user-{uid}.slice/session-10.scope\n"
     )
     assert maintenance._trusted_host_transport(proc, uid)
-    (proc / "comm").write_text("pytest\\n")
+    (proc / "comm").write_text("pytest\n")
     assert not maintenance._trusted_host_transport(proc, uid)
-    (proc / "comm").write_text("sshd-session\\n")
+    (proc / "comm").write_text("sshd-session\n")
     assert not maintenance._trusted_host_transport(proc, uid + 1)
 
 
