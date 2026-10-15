@@ -264,3 +264,15 @@ def test_creating_receipt_retries_same_existing_worktree(repo):
     reused = perform(repo, "create")
     assert reused["reused"] is True and reused["state"] == "active"
     assert len(list(manager.WORKTREE_ROOT.iterdir())) == 1
+
+
+def test_secondary_agent_checkout_cannot_spawn_nested_owned_worktree(repo):
+    other = repo.parent / "existing-agent"
+    git(repo, "worktree", "add", "-b", "existing-agent-branch", str(other), "HEAD")
+    assert other.is_dir()
+    with pytest.raises(actions.ProbeError, match="secondary worktree"):
+        manager.managed_worktree(other, other.name, {
+            "kind": "managed_worktree", "mode": "create", "task_ref": REF_1,
+        })
+    assert other.is_dir()
+    assert not manager.WORKTREE_ROOT.exists() or not list(manager.WORKTREE_ROOT.glob("*"))
