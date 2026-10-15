@@ -449,3 +449,29 @@ def test_other_typed_actions_still_guard_canonical_head(repo):
         repo, {"kind": "managed_worktree", "mode": "finish",
                "expected_head": other_head}
     )) is None
+
+
+def test_adopted_preexisting_commits_are_not_silently_merged(repo, preexisting_copy):
+    worktree, branch, initial = preexisting_copy
+    baseline = commit_change(worktree, "prior-agent.txt", "pre-existing work\\n")
+    adopted = perform(repo, "adopt", worktree=str(worktree),
+                      expected_branch=branch, expected_head=baseline)
+    assert adopted["adopted"] and adopted["base_sha"] == initial
+    feature = commit_change(worktree, "this-task.txt", "current task\\n")
+
+    blocked = perform(repo, "finish", expected_head=feature)
+    assert blocked["status"] == "blocked"
+    assert blocked["blocker"] == "adopted_baseline_not_in_target"
+    assert blocked["adopted_head"] == baseline
+    assert worktree.is_dir()
+    assert not (repo / "prior-agent.txt").exists()
+    assert not (repo / "this-task.txt").exists()
+
+    # Once another authorized integration has incorporated the pre-existing
+    # baseline, the task's later commits can be merged and its worktree retired.
+    git(repo, "merge", "--ff-only", baseline)
+    done = perform(repo, "finish", expected_head=feature)
+    assert done["cleaned"] and done["merged"]
+    assert (repo / "prior-agent.txt").is_file()
+    assert (repo / "this-task.txt").is_file()
+    assert not worktree.exists()
