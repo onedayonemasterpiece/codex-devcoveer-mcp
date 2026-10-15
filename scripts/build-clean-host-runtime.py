@@ -1544,6 +1544,44 @@ def transform_codex_explicit_opt_in(source: str) -> str:
     return source
 
 
+def transform_managed_worktree_policy(source: str) -> str:
+    """Replace obsolete clone ban with one safe task-owned isolation lifecycle."""
+    source = replace_once(
+        source,
+        'from native_mcp_approval import native_devcoveer_app_config as _native_devcoveer_app_config\n',
+        'from native_mcp_approval import native_devcoveer_app_config as _native_devcoveer_app_config\n'
+        'from native_managed_worktrees import policy_prompt as _managed_worktree_policy_prompt\n',
+        "managed parallel worktree import",
+    )
+    source = replace_once(
+        source,
+        '        "- Work directly in this repository; do not create a clone, checkout copy, "\n'
+        '        "worktree, or separate workspace.\\n"\n',
+        '        "- Stay in the selected checkout unless genuinely parallel changes need isolation. "\n'
+        '        "Use only a task-managed worktree and integrate/retire it at completion.\\n"\n',
+        "replace overbroad native worktree prohibition",
+    )
+    source = replace_once(
+        source,
+        '                    "text": _requirements_prompt(project.path) + _reuse_prompt(project.path) + _first_prompt(project.canonical, task_prompt, access),\n',
+        '                    "text": _requirements_prompt(project.path) + _reuse_prompt(project.path) + _managed_worktree_policy_prompt(access, thread_id) + _first_prompt(project.canonical, task_prompt, access),\n',
+        "native start worktree lifecycle instructions",
+    )
+    source = replace_once(
+        source,
+        '                    "input": [{"type": "text", "text": _delivery_policy_prompt(bound_work) + arguments["prompt"]}],\n',
+        '                    "input": [{"type": "text", "text": _delivery_policy_prompt(bound_work) + _managed_worktree_policy_prompt(metadata.get("access"), thread_id) + arguments["prompt"]}],\n',
+        "native turn/steer lifecycle instructions",
+    )
+    source = replace_once(
+        source,
+        '            "input": [{"type": "text", "text": _delivery_policy_prompt(bound_work) + arguments["prompt"]}],\n',
+        '            "input": [{"type": "text", "text": _delivery_policy_prompt(bound_work) + _managed_worktree_policy_prompt(resume_metadata.get("access"), thread_id) + arguments["prompt"]}],\n',
+        "native continuation lifecycle instructions",
+    )
+    return source
+
+
 def transform_native_task_mcp_approvals(source: str) -> str:
     """Apply a per-thread DevCoveer MCP trust override only to write tasks."""
     source = replace_once(
@@ -2719,6 +2757,7 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     native_spec.loader.exec_module(native_patch)
     source = native_patch.transform(source, replace_once)
     source = transform_native_task_mcp_approvals(source)
+    source = transform_managed_worktree_policy(source)
     source = replace_once(
         source,
         '''def _validate_schema(name: str, arguments: dict[str, Any]) -> None:
@@ -2900,6 +2939,7 @@ def main() -> int:
     shutil.copy2(ROOT / "runtime" / "native_external_continuation.py",
                  out / "native_external_continuation.py")
     shutil.copy2(ROOT / "runtime" / "native_mcp_approval.py", out / "native_mcp_approval.py")
+    shutil.copy2(ROOT / "runtime" / "native_managed_worktrees.py", out / "native_managed_worktrees.py")
     shutil.copy2(ROOT / "runtime" / "direct_probe_config.json",
                  out / "direct_probe_config.json")
     shutil.copy2(ROOT / "scripts" / "maintain-artifacts.py",

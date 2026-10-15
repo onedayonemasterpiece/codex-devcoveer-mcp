@@ -158,7 +158,7 @@ def test_clean_host_builder_materializes_current_tools_and_policy() -> None:
         assert "explicit user requirement-change intent" in start_task_description
         assert "semantic typed operation" in start_task_description
         assert "Batch independent read-only checks" in start_task_description
-        assert '_requirements_prompt(project.path) + _reuse_prompt(project.path) + _first_prompt' in bridge
+        assert '_requirements_prompt(project.path) + _reuse_prompt(project.path) + _managed_worktree_policy_prompt(access, thread_id) + _first_prompt' in bridge
         assert 'name="street_story_materialize_release"' in bridge
         assert 'name="street_story_deploy_user_service"' in bridge
         assert 'name="street_story_publish_edge_route"' in bridge

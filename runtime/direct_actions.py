@@ -38,6 +38,7 @@ from direct_ops2 import (
 )
 from direct_ops2_host import daemon_reload, delete_registered_file, root_git_sync_exact
 from direct_ops2_worktrees import capture_worktree_handoff, owned_service_action, reconcile_worktree
+from native_managed_worktrees import managed_worktree
 from direct_jobs import cancel_job, cleanup_job, job_status, job_wait, start_job, list_jobs
 from direct_github_actions import delete_remote_branch, pr_create, pr_merge, pr_update, git_fetch, workflow_dispatch, workflow_run_wait, run_cancel
 from incident_registry import active_incident_id, close_incident, incident_project_scope, note_incident, open_incident
@@ -133,6 +134,12 @@ _PROJECT_ACTION_SCHEMA: dict[str, Any] = {
         {"type":"object","properties":{"kind":{"const":"capture_handoff"},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","base_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"worktree_capture_handoff"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"base_sha":{"type":"string","pattern":r"^[0-9a-f]{40}$"},"include_untracked":{"type":"boolean"},"paths":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"string","minLength":1,"maxLength":500}}},"required":["kind","worktree","base_sha"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"worktree_reconcile"},"worktree":{"type":"string","minLength":1,"maxLength":1000},"handoff_id":{"type":"string","pattern":r"^src_[0-9a-f]{24}$"}},"required":["kind","worktree","handoff_id"],"additionalProperties":False},
+        {"type":"object","properties":{
+            "kind":{"const":"managed_worktree"},
+            "mode":{"type":"string","enum":["create","status","finish"]},
+            "task_ref":{"type":"string","minLength":36,"maxLength":36},
+            "expected_head":{"type":"string","pattern":r"^[0-9a-f]{40}$"}
+        },"required":["kind","mode","task_ref"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"source_handoff_gc"},"older_than_seconds":{"type":"integer","minimum":0,"maximum":2592000,"default":0},"limit":{"type":"integer","minimum":1,"maximum":64,"default":16}},"required":["kind"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"requirements_update"},"content":{"type":"string","minLength":2,"maxLength":65536},"expected_digest":{"type":"string","pattern":r"^[0-9a-f]{64}$"},"reason":{"type":"string","minLength":1,"maxLength":2000},"authorization_ref":{"type":"string","minLength":1,"maxLength":500}},"required":["kind","content","reason","authorization_ref"],"additionalProperties":False},
         {"type":"object","properties":{"kind":{"const":"owned_service_action"},"unit":{"type":"string","minLength":1,"maxLength":200,"pattern":r"^[A-Za-z0-9_.@:-]+\.service$"},"operation":{"type":"string","enum":["status","start","stop","restart","reload","enable","disable"]}},"required":["kind","unit","operation"],"additionalProperties":False},
@@ -1202,6 +1209,10 @@ async def _run_project_action_inner(project_root: str, project_id: str, action: 
     if kind == "worktree_reconcile":
         if handoff: raise ProbeError("handoff_denied", "worktree reconcile requires a canonical project", status="denied")
         return await reconcile_worktree(root, binding_id, action)
+    if kind == "managed_worktree":
+        if handoff:
+            raise ProbeError("handoff_denied", "managed worktrees require a canonical project checkout", status="denied")
+        return await asyncio.to_thread(managed_worktree, root, binding_id, action)
     if kind == "source_handoff_gc":
         if handoff:
             raise ProbeError("handoff_denied", "source handoff GC must run from a repository checkout, not from a managed handoff", status="denied")

@@ -9,6 +9,8 @@ from __future__ import annotations
 import anyio
 from typing import Any, Awaitable, Callable
 
+from native_managed_worktrees import policy_prompt as _managed_worktree_policy_prompt
+
 
 def _response(thread_id: str, status: str, message: str, **extra: Any) -> dict[str, Any]:
     return {
@@ -148,7 +150,7 @@ async def continue_external_native_thread(
 
     turn_params: dict[str, Any] = {
         "threadId": thread_id,
-        "input": [{"type": "text", "text": prompt_prefix + arguments["prompt"]}],
+        "input": [{"type": "text", "text": prompt_prefix + _managed_worktree_policy_prompt(requested_access, thread_id) + arguments["prompt"]}],
         "cwd": cwd,
         "approvalPolicy": "never",
     }
