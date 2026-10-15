@@ -52,6 +52,9 @@ def _validate(root: Path, project: str, ref: str) -> tuple[Path, Path, str]:
     top = _git(root, "rev-parse", "--show-toplevel").stdout.strip()
     if top != str(root):
         raise ProbeError("root_denied", "operation needs the exact canonical Git root", status="denied")
+    first = _git(root, "worktree", "list", "--porcelain").stdout.splitlines()
+    if not first or not first[0].startswith("worktree ") or Path(first[0][9:]).resolve() != root:
+        raise ProbeError("root_denied", "cannot create an isolated task from another agent's secondary worktree", status="denied")
     token = ref.lower().replace("-", "").removeprefix("dvt_")
     slug = project[:48].lower()
     key = f"{slug}-{token}"
