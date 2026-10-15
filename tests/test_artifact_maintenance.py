@@ -96,3 +96,18 @@ def test_model_health_write_failure_does_not_break_readback(tmp_path, monkeypatc
         provider="opencode", selection="opencode/test",
         outcome="success", category="ok",
     ) is False
+
+
+def test_inaccessible_proc_keeps_preview_but_blocks_delete(tmp_path, monkeypatch):
+    root, repo, run, name = fixture(tmp_path)
+    monkeypatch.setattr(maintenance, "_is_referenced", lambda *a: False)
+    def denied(_candidate):
+        raise maintenance.UnsafeArtifact("proc access denied")
+    monkeypatch.setattr(maintenance, "_in_use", denied)
+    plan = maintenance.inspect(root, repo, "street-story", name)
+    assert plan["size_kib"] > 0
+    assert not plan["safe_to_delete"]
+    assert any("process_check_incomplete" in b for b in plan["blockers"])
+    with pytest.raises(maintenance.UnsafeArtifact, match="deletion blocked"):
+        maintenance.remove(root, repo, "street-story", name, plan["size_kib"])
+    assert run.is_dir()
