@@ -452,3 +452,36 @@ def test_known_missing_managed_worktree_is_not_an_unknown_outcome(tmp_path):
 
     run(scenario())
     assert calls == [1]
+
+
+def test_legacy_managed_not_found_receipts_are_reconciled_once(tmp_path):
+    """Only provably missing managed worktree bindings lose false uncertainty."""
+    import time
+    with recovery._db() as db:
+        records = [
+            ("op_" + "a" * 24, "managed_worktree", "not_found"),
+            ("op_" + "b" * 24, "managed_worktree", "TimeoutError"),
+            ("op_" + "c" * 24, "service_action", "not_found"),
+        ]
+        for opid, family, error in records:
+            db.execute(
+                "INSERT INTO operations("
+                "operation_id,cwd,project,plane,operation,request_key,spec_sha,"
+                "started,finished,state,result,error_type"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (opid, str(tmp_path), "p", "project_action", family, opid,
+                 "f" * 64, time.time(), time.time(), "outcome_unknown",
+                 '{"status":"outcome_unknown"}', error),
+            )
+        db.execute("PRAGMA user_version=0")
+    first = recovery.process_read(
+        str(tmp_path), "operation_get", {"operation_id": "op_" + "a" * 24})
+    assert first["operation"]["state"] == "failed"
+    assert first["operation"]["result"]["status"] == "not_found"
+    assert first["operation"]["result"]["note"] == "legacy_absent_managed_binding"
+    other = recovery.process_read(
+        str(tmp_path), "operation_get", {"operation_id": "op_" + "b" * 24})
+    unrelated = recovery.process_read(
+        str(tmp_path), "operation_get", {"operation_id": "op_" + "c" * 24})
+    assert other["operation"]["state"] == "outcome_unknown"
+    assert unrelated["operation"]["state"] == "outcome_unknown"
