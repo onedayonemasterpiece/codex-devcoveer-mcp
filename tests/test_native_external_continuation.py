@@ -139,7 +139,9 @@ def test_write_upgrade_uses_restricted_named_permissions_no_arbitrary_sandbox():
 
 def test_project_cwd_mismatch_denied_before_resume():
     history = History(cwd="/untrusted/other")
-    payload, calls = execute(history)
+    def verified(thread_id, *, detail, include_tools):
+        return {"task": {"source": "vscode", "cwd": "/untrusted/other"}}
+    payload, calls = execute(history, verified=verified)
     assert payload["status"] == "project_mismatch"
     assert calls == []
 
