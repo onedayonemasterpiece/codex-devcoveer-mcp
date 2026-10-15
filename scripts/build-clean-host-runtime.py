@@ -2866,6 +2866,8 @@ def main() -> int:
         shutil.copy2(ROOT / "runtime" / name, out / name)
     shutil.copy2(ROOT / "runtime" / "model_consult.py", out / "model_consult.py")
     shutil.copy2(ROOT / "runtime" / "native_thread_links.py", out / "native_thread_links.py")
+    shutil.copy2(ROOT / "runtime" / "native_external_continuation.py",
+                 out / "native_external_continuation.py")
     shutil.copy2(ROOT / "runtime" / "direct_probe_config.json",
                  out / "direct_probe_config.json")
     shutil.copy2(ROOT / "scripts" / "maintain-artifacts.py",
