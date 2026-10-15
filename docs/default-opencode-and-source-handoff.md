@@ -61,6 +61,18 @@ read-only capabilities. An external VS Code thread explicitly continued with
 `access="write"` uses the same restricted per-thread policy. On a lost
 `turn/start` reply, always read the original thread before resubmitting.
 
+## Parallel isolated development worktrees
+
+Native Codex write tasks may use a task-owned Git worktree when genuinely
+needed for concurrency. Use the typed `managed_worktree` action through
+`direct_ops_v2` and the exact native thread ID. See
+[managed-native-worktrees.md](managed-native-worktrees.md) for create,
+integration and cleanup. This is an exception to working in the already
+selected checkout, not permission to create arbitrary clones. Clean,
+tested changes merge into the original clean target, followed by
+non-forced worktree removal; conflicts and dirty or active states
+preserve the worktree with a concrete blocker.
+
 ## ChatGPT source and documentation authorship
 
 In the default ChatGPT-led mode, repository code **and repository documentation** are authored by ChatGPT. Do not use `start_task` to offload implementation, README edits, Markdown rewrites, or other repository source authoring to a weaker OpenCode model unless the owner explicitly changes the development mode or asks for agent authorship.
