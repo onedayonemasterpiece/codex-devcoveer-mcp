@@ -80,6 +80,19 @@ def _db():
         columns = {row['name'] for row in db.execute('PRAGMA table_info(works)').fetchall()}
         if 'delivery_state' not in columns:
             db.execute("ALTER TABLE works ADD COLUMN delivery_state TEXT NOT NULL DEFAULT '{}'")
+        # One-time repair: older recorded_call wrongly marked a deterministic
+        # managed_worktree missing-receipt refusal as outcome_unknown. There
+        # cannot have been a Git mutation on this exact not_found path.
+        # Never rewrite true unknown outcomes or other operation families.
+        if db.execute('PRAGMA user_version').fetchone()[0] < 1:
+            db.execute("""
+                UPDATE operations
+                SET state='failed',
+                    result='{"status":"not_found","error_category":"not_found","note":"legacy_absent_managed_binding"}'
+                WHERE operation='managed_worktree'
+                  AND state='outcome_unknown' AND error_type='not_found'
+            """)
+            db.execute('PRAGMA user_version=1')
         yield db
         db.commit()
     except BaseException:
