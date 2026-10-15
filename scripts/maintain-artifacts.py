@@ -82,6 +82,26 @@ def _is_referenced(repo_root: Path, project: str, name: str) -> bool:
     return result.returncode == 0
 
 
+def _trusted_host_transport(proc: Path, uid: int) -> bool:
+    """The user's privileged session infrastructure is not an artifact worker.
+
+    Linux ptrace restrictions hide /proc/PID/cwd and fd for systemd --user,
+    sd-pam, and sshd-session even when they share our UID. Their child shells
+    and actual workers remain fully subject to open-path checks.
+    """
+    try:
+        name = (proc / "comm").read_text(encoding="utf-8").strip()
+        cgroup = (proc / "cgroup").read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    prefix = rf"0::/user\\.slice/user-{uid}\\.slice/"
+    if name in {"systemd", "(sd-pam)"}:
+        return re.fullmatch(prefix + rf"user@{uid}\\.service/init\\.scope", cgroup) is not None
+    if name == "sshd-session":
+        return re.fullmatch(prefix + r"session-[0-9]+\\.scope", cgroup) is not None
+    return False
+
+
 def _in_use(path: Path) -> bool:
     prefix = str(path) + "/"
     uid = os.getuid()
@@ -100,6 +120,8 @@ def _in_use(path: Path) -> bool:
             continue
         except OSError as exc:
             raise UnsafeArtifact("process ownership scan incomplete") from exc
+        if _trusted_host_transport(proc, uid):
+            continue
         for link in (proc / "cwd", proc / "root"):
             try:
                 location = os.readlink(link)
@@ -127,26 +149,44 @@ def _in_use(path: Path) -> bool:
     return False
 
 
-def _check_tree(candidate: Path) -> int:
+def _check_tree(candidate: Path, *, latest_out: list[float] | None = None) -> int:
     entries = 0
-    filesystem = candidate.stat().st_dev
-    for base, directories, files in os.walk(candidate, followlinks=False):
+    root_info = candidate.stat()
+    filesystem = root_info.st_dev
+    newest = root_info.st_mtime
+
+    def on_walk_error(error: OSError) -> None:
+        raise UnsafeArtifact("cannot inspect all artifact subdirectories") from error
+
+    for base, directories, files in os.walk(
+        candidate, followlinks=False, onerror=on_walk_error
+    ):
         entries += len(directories) + len(files)
         if entries > MAX_ENTRIES:
             raise UnsafeArtifact("run too large to inspect safely")
         for name in directories + files:
             child = Path(base) / name
-            if child.is_symlink() or child.stat().st_dev != filesystem:
-                raise UnsafeArtifact("run contains symlink or other filesystem")
-            if name in (".git", ".env", "credentials", "secrets", ".ssh"):
+            if child.is_symlink():
+                raise UnsafeArtifact("run contains symlink")
+            info = child.stat()
+            if info.st_dev != filesystem:
+                raise UnsafeArtifact("run crosses filesystem")
+            newest = max(newest, info.st_mtime)
+            name_lower = name.lower()
+            if (name_lower in {".git", ".ssh", ".env", "credentials", "secrets"}
+                    or name_lower.startswith(".env.")
+                    or name_lower.endswith(".env")):
                 raise UnsafeArtifact("run contains protected data")
+    if latest_out is not None:
+        latest_out.append(newest)
     return entries
 
 
 def inspect(root: Path, repo_root: Path, project: str, name: str,
             *, now: float | None = None) -> dict:
     candidate = _run_dir(root, project, name)
-    age = (time() if now is None else now) - candidate.stat().st_mtime
+    timestamp = time() if now is None else now
+    age = timestamp - candidate.stat().st_mtime
     reasons = []
     if age < MIN_AGE_SECONDS:
         reasons.append("recent_run")
@@ -158,9 +198,14 @@ def inspect(root: Path, repo_root: Path, project: str, name: str,
     except UnsafeArtifact as exc:
         # Inspection can still report the run; deletion remains fail-closed.
         reasons.append(f"process_check_incomplete: {exc}")
-    entries = _check_tree(candidate)
+    latest_update: list[float] = []
+    entries = _check_tree(candidate, latest_out=latest_update)
+    latest_age = timestamp - latest_update[0]
+    if latest_age < MIN_AGE_SECONDS:
+        reasons.append("recent_nested_output")
     return {"project": project, "run": name, "size_kib": _size_kib(candidate),
             "entries": entries, "age_hours": round(age / 3600, 1),
+            "newest_entry_age_hours": round(latest_age / 3600, 1),
             "safe_to_delete": not reasons, "blockers": reasons}
 
 
