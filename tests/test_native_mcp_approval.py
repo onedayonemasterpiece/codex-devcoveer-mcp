@@ -65,6 +65,14 @@ def test_resume_params_keep_original_policy_and_scope_app_trust(tmp_path: Path, 
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.syspath_prepend(str(out))
+    # These constructors bind production paths as defaults at import time.
+    # Keep their real implementations, but isolate their no-argument stores.
+    import opencode_backend
+    import model_health
+    monkeypatch.setattr(opencode_backend.TaskRegistry.__init__, "__defaults__",
+                        (tmp_path / "tasks",))
+    monkeypatch.setattr(model_health.ModelHealthStore.__init__, "__defaults__",
+                        (tmp_path / "model-health",))
     original_resolve = Path.resolve
 
     def resolve_test_project_root(path, *args, **kwargs):
