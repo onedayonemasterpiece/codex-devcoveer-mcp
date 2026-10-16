@@ -48,7 +48,13 @@ async def repo_worktrees(root: Path) -> list[dict[str, Any]]:
                 continue
             key, _, value = line.partition(" ")
             if key == "worktree":
-                row["path"] = str(Path(value).resolve(strict=True))
+                try:
+                    row["path"] = str(Path(value).resolve(strict=True))
+                except FileNotFoundError:
+                    # Git can retain prunable registrations after a worktree is
+                    # removed. They must not block an unrelated existing target.
+                    # The requested target is still resolved strictly below.
+                    continue
             elif key == "HEAD":
                 row["head"] = value
             elif key == "branch":
@@ -344,3 +350,4 @@ async def owned_service_action(root: Path, action: dict[str, Any]) -> dict[str, 
         "unit": unit, "working_directory": info["working_directory"],
         "ownership_verified": True,
     }
+
