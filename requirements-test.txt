@@ -3,4 +3,5 @@
 anyio
 jsonschema
 pytest
+PyYAML
 -r requirements-public-mcp.txt
