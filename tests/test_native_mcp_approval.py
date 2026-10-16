@@ -55,8 +55,32 @@ def test_canonical_build_wires_both_native_start_and_resume(tmp_path: Path):
     assert 'destructive_hint=True' in bridge
 
 
-def test_resume_params_keep_original_policy_and_scope_app_trust(tmp_path: Path):
+def test_resume_params_keep_original_policy_and_scope_app_trust(tmp_path: Path, monkeypatch):
     out = _build(tmp_path)
+    # Import the complete generated bridge with isolated host paths. Do not
+    # require or create production directories on the CI runner.
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.syspath_prepend(str(out))
+    # These constructors bind production paths as defaults at import time.
+    # Keep their real implementations, but isolate their no-argument stores.
+    import opencode_backend
+    import model_health
+    monkeypatch.setattr(opencode_backend.TaskRegistry.__init__, "__defaults__",
+                        (tmp_path / "tasks",))
+    monkeypatch.setattr(model_health.ModelHealthStore.__init__, "__defaults__",
+                        (tmp_path / "model-health",))
+    original_resolve = Path.resolve
+
+    def resolve_test_project_root(path, *args, **kwargs):
+        if path == Path("/home/dev/projects"):
+            return original_resolve(projects, *args, **kwargs)
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve_test_project_root)
     spec = importlib.util.spec_from_file_location(
         "native_mcp_policy_canary_bridge", out / "codex-chatgpt-bridge.py"
     )
