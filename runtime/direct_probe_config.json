@@ -1,6 +1,17 @@
 {
   "version": 1,
   "projects": {
+    "regional-knowledge-base": {
+      "config_presence": {
+        "archive_grant_path": {
+          "path": "/home/dev/.local/state/regional-knowledge-base/service.env",
+          "keys": ["RKB_VIBEPUBLISH_GRANT_FILE"],
+          "path_metadata_keys": {
+            "RKB_VIBEPUBLISH_GRANT_FILE": "/home/dev/.local/state/regional-knowledge-base"
+          }
+        }
+      }
+    },
     "codex-devcoveer-mcp": {
       "github_repo": "onedayonemasterpiece/codex-devcoveer-mcp",
       "remotes": {
