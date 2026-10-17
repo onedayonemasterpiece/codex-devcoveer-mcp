@@ -345,6 +345,21 @@ def _safe_config_metadata(key: str, value: str | None) -> dict[str, Any]:
     return row
 
 
+def _safe_path_metadata(key: str, value: str | None, root: str) -> dict[str, Any]:
+    """Expose only an opt-in lexical path, never open/stat its target."""
+    row = {"key": key, "present_nonempty": bool(value), "kind": "opaque"}
+    if not value:
+        row["kind"] = "missing"
+        return row
+    pattern = r"/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*"
+    if (not re.fullmatch(pattern, value) or len(value) > 4096
+            or any(part in {".", ".."} for part in value.split("/"))
+            or not value.startswith(root.rstrip("/") + "/")):
+        return row
+    row.update({"kind": "filesystem_path", "path": value})
+    return row
+
+
 async def _config_metadata(binding: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
     alias = _validate_alias(check["source"])
     cfg = _host_section(binding, "config_presence").get(alias)
@@ -355,10 +370,21 @@ async def _config_metadata(binding: dict[str, Any], check: dict[str, Any]) -> di
         raise ProbeError("config", "config metadata path must be absolute")
     allowed = {str(item) for item in cfg.get("keys", [])}
     requested = list(check["keys"])
+    path_keys = cfg.get("path_metadata_keys", {})
+    if (not isinstance(path_keys, dict) or not set(path_keys) <= allowed
+            or any(not isinstance(root, str)
+                   or not re.fullmatch(r"/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", root)
+                   or any(part in {".", ".."} for part in root.split("/"))
+                   for root in path_keys.values())):
+        raise ProbeError("config", "path metadata binding is invalid")
     values = await asyncio.to_thread(_config_values_file, path, allowed, requested)
+    rows = [(_safe_path_metadata(key, values.get(key), path_keys[key])
+             if key in path_keys else _safe_config_metadata(key, values.get(key)))
+            for key in requested]
     return {
         "source": alias,
-        "keys": [_safe_config_metadata(key, values.get(key)) for key in requested],
+        "keys": rows,
+        "path_metadata_returned": any(row["kind"] == "filesystem_path" for row in rows),
         "values_returned": False,
         "hashes_returned": False,
     }
