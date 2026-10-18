@@ -250,12 +250,38 @@ class TestErrorCases:
             stage(repo, base, patch, root)
         assert list(root.iterdir()) == []
 
-    def test_empty_patch_fails(self, tmp_path: Path) -> None:
+    def test_explicit_empty_patch_creates_clean_exact_base_without_touching_canonical(self, tmp_path: Path) -> None:
         repo, base = make_repo(tmp_path)
         root = tmp_path / "handoffs"
+        (repo / "change.txt").write_text("in-progress unrelated work\\n", encoding="utf-8")
 
-        with pytest.raises(SourceHandoffError, match="empty"):
+        created = stage(repo, base, b"", root)
+        workspace = resolve_source_handoff(created["handoffId"], root=root)
+        assert created["baseOnly"] is True
+        assert created["changedFiles"] == []
+        assert git(workspace, "rev-parse", "HEAD").decode().strip() == base
+        assert git(workspace, "status", "--porcelain", "--untracked-files=all") == b""
+        assert (workspace / "change.txt").read_text() == "old\\n"
+        assert (repo / "change.txt").read_text() == "in-progress unrelated work\\n"
+        assert stage(repo, base, b"", root)["reused"] is True
+
+        (workspace / "new-draft.txt").write_text("untracked\\n", encoding="utf-8")
+        with pytest.raises(SourceHandoffError, match="no longer exact and clean"):
             stage(repo, base, b"", root)
+        assert (workspace / "new-draft.txt").exists()  # Preserve concurrent work.
+
+    def test_empty_patch_requires_exact_empty_sha(self, tmp_path: Path) -> None:
+        repo, base = make_repo(tmp_path)
+        root = tmp_path / "handoffs"
+        with pytest.raises(SourceHandoffError, match="sha256 mismatch"):
+            stage_source_handoff(repo, "example-project", base, b"", "0" * 64, root=root)
+        assert not root.exists() or list(root.iterdir()) == []
+
+    def test_empty_patch_invalid_base_refused(self, tmp_path: Path) -> None:
+        repo, _ = make_repo(tmp_path)
+        root = tmp_path / "handoffs"
+        with pytest.raises(SourceHandoffError, match="base commit"):
+            stage(repo, "f" * 40, b"", root)
 
 
 class TestIdempotentHandoff:
@@ -274,6 +300,11 @@ class TestIdempotentHandoff:
         assert second["handoffId"] == first["handoffId"]
         assert second["reused"] is True
         assert (workspace / "opencode-note.txt").read_text() == "keep this\n"
+
+
+def test_generated_bridge_allows_explicit_sha_pinned_empty_patch() -> None:
+    builder = (Path(__file__).resolve().parents[1] / "scripts/build-clean-host-runtime.py").read_text()
+    assert '"type": "string", "minLength": 0, "maxLength": 16777216' in builder
 
 
 class TestMethodTablePreservation:
