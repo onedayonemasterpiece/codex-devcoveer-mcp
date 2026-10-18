@@ -31,3 +31,9 @@ def test_skill_declares_same_host_without_bypassing_auth():
     assert "idempotency" in skill
     assert "SHA-256" in skill
     assert "No user bearer forwarding" in skill
+
+def test_canonical_runtime_installs_interservice_skill():
+    root = Path(__file__).resolve().parents[1]
+    canonical = (root / "scripts/install-current-canonical-runtime.sh").read_text()
+    assert canonical.count('"$BRIDGE_PY" "$SRC/scripts/install-interservice-skill.py"') == 2
+    assert '"$BRIDGE_PY" "$SRC/scripts/install-interservice-skill.py" --apply' in canonical
