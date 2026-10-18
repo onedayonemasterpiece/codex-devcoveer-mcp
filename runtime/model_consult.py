@@ -46,6 +46,13 @@ def codex_user_opt_in_receipt(value: Any) -> dict[str, str]:
 
 
 CONSULT_MODELS: dict[str, dict[str, str]] = {
+    "claude_opus_5_5": {
+        "backend": "claude_code",
+        "provider": "anthropic",
+        "nativeModelId": "claude-opus-5-5",
+        "selection": "claude-opus-5-5",
+        "displayName": "Claude Opus 5.5",
+    },
     "kimi_k3": {
         "backend": "opencode",
         "provider": "nvidia",
@@ -300,6 +307,9 @@ def persist_consultation(
         "",
     ]
     data = ("\n".join(lines)).encode("utf-8")
+    if isinstance(task.get("actualModel"), str):
+        lines.insert(4, f"- Model reported by provider: {_safe_field(task['actualModel'])}")
+        data = ("\n".join(lines)).encode("utf-8")
     digest = hashlib.sha256(data).hexdigest()
 
     root.mkdir(parents=True, exist_ok=True, mode=0o700)

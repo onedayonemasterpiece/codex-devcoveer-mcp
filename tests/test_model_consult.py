@@ -43,7 +43,7 @@ def test_consult_aliases_include_existing_and_quota_gated_codex_profiles() -> No
         assert spec["nativeModelId"] == model
         assert spec["reasoningEffort"] == effort
     assert set(CONSULT_MODEL_INPUT_SCHEMA["properties"]["model"]["enum"]) == {
-        "deepseek", "kimi_k3", *expected_codex
+        "deepseek", "kimi_k3", "claude_opus_5_5", *expected_codex
     }
     assert "codex_user_opt_in" not in CONSULT_MODEL_INPUT_SCHEMA["properties"]
 

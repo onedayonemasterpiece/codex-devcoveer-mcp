@@ -5,8 +5,8 @@ DevCoveer exposes `consult_model` for an optional independent second opinion.
 The consultant is deliberately narrower than `council_run`:
 
 - one model per consultation;
-- NVIDIA only;
-- aliases: `kimi_k3` and `deepseek`;
+- NVIDIA aliases `kimi_k3` and `deepseek`, quota-gated native Codex profiles,
+  and the installed Claude Code alias `claude_opus_5_5`;
 - read-only OpenCode outcome; NVIDIA consultations use the build agent with every mutation-capable tool explicitly disabled;
 - no automatic fallback to another model;
 - advisory output only: it cannot change requirements, source or runtime state;
@@ -129,3 +129,78 @@ no agent/tool surface to deny. The direct transport reads only one of the two
 trusted provider credentials after acquiring its slot, sends the bounded prompt
 to NVIDIA, and releases/clears that slot after the call. The evidence bundle
 remains the only caller-authorized semantic input.
+
+
+## Claude Code as an independent critic
+
+`consult_model` accepts `model=claude_opus_5_5` for the exact Anthropic model
+`claude-opus-5-5`. Claude is optional; adding the profile does not change
+OpenCode task dispatch, the free council, or native Codex quota rules.
+
+Use `context_mode=provided_only`, a non-empty caller-authorized
+`evidence_bundle`, and a stable `request_key`. The normal project-readable mode
+is intentionally unavailable for this profile. State the product constraints,
+supply the relevant evidence, and ask for material objections, missed failure
+cases, and the smallest improvement that addresses them. The calling model
+remains responsible for judging the advice and for every subsequent write.
+
+The installed CLI runs once in a dedicated empty directory. The prompt and
+evidence travel through stdin; they are not command-line arguments or a saved
+project file. `--safe-mode` suppresses ordinary user/project customizations, plugins, skills,
+memory and CLAUDE.md while preserving the existing subscription authentication.
+Administrator-managed policy remains trusted and may still configure hooks,
+status-line or file-suggestion commands. This profile does not override or sandbox
+those managed commands; provided-only use therefore assumes the host
+administrator has approved that policy for the supplied data.
+`--restricted` and an empty `--setting-sources` keep user/project settings out;
+`--tools ""`, deny-all tools and a strict empty MCP configuration remove the
+model's tool surface. The child receives a small fixed environment, not the
+bridge's provider keys, proxy overrides or project variables.
+
+Do not substitute `--bare`: current Claude Code documentation says that it
+does not use the subscription OAuth login. Do not weaken isolation flags when
+an installed CLI rejects them. An unsupported flag, absent binary, unavailable
+model, authentication failure, timeout or empty output fails this consultation;
+no alternative model or provider is tried. This is a CLI capability boundary,
+not a claim of an additional operating-system sandbox around the Claude binary.
+
+The result must identify exactly `claude-opus-5-5` in the provider's
+`modelUsage`. Missing identity or a different/additional model is reported as
+`model_identity_unverified` and is not accepted as advice. The task receipt and
+Markdown artifact distinguish the requested selection from the reported model.
+
+The request key is durably reserved before launch. An identical repeat returns
+the same task; changed evidence with the same key is a conflict. A crashed worker
+is reported by `read_task` as `worker_lost`, without starting another inference.
+A reservation lost before a worker status file exists becomes `dispatch_lost`
+after a 30-second dispatch grace; cancellation can interrupt it immediately.
+The worker verifies the expected prompt length and SHA-256 before invoking Claude;
+EOF or changed input fails as `incomplete_input`, without inference.
+`cancel_task` marks a terminal interruption and signals only a worker identified
+by both its process command and task ID. Late completion cannot replace a
+terminal outcome. `continue_task` refuses to mutate a consultation; use a new
+key for another question. Successful and failed consultations use the existing
+redacted Markdown artifact path. Provider raw stdout/stderr is bounded and
+removed after normal termination, failure, timeout or handled cancellation.
+
+### Release and acceptance
+
+The canonical builder includes `claude_consult.py`; deploy through the existing
+`canonical_install` project profile from a clean reviewed source revision.
+Clients that cached the old `consult_model.model` enum must refresh/reconnect
+the existing MCP app. Do not put the Claude ID behind a Codex or NVIDIA alias
+to get around a cached schema.
+
+The unit suite checks context isolation configuration, missing/wrong reported
+models, visible output, idempotent dispatch, restart recovery, cancellation and
+canonical build integration. Live acceptance still requires the installed CLI
+and an authorized account: run one provided-only critique, verify its actual
+model and artifact, then replay the same request key and check that the task ID
+is unchanged. A source build or fake-provider test alone does not establish
+that the account can access Opus 5.5.
+
+Official references checked on 2026-10-18:
+
+- [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
+- [Programmatic calls and authentication in bare mode](https://code.claude.com/docs/en/headless)
+- [Opus 5.5 model identifier](https://platform.claude.com/docs/en/models/opus-5-5/overview)
