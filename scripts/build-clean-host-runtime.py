@@ -1728,8 +1728,8 @@ STAGE_SOURCE_HANDOFF_INPUT_SCHEMA: dict[str, Any] = {
             "description": "Exact 40-hex Git commit used to produce the patch.",
         },
         "patch": {
-            "type": "string", "minLength": 1, "maxLength": 16777216,
-            "description": "Output equivalent to git diff --cached --binary <base_sha>.",
+            "type": "string", "minLength": 0, "maxLength": 16777216,
+            "description": "Git patch; explicit empty string with the SHA-256 of empty bytes materializes a verified clean exact-base worktree.",
         },
         "patch_sha256": {
             "type": "string", "pattern": r"^[0-9a-f]{64}$",
