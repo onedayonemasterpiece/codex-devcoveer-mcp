@@ -2801,8 +2801,8 @@ def transform_backend(source: str) -> str:
     source = replace_once(
         source,
         '        if record["backend"] not in {"codex", "opencode", "council"}:\n',
-        '        if record["backend"] not in {"codex", "opencode", "council", "codex_consult"}:\n',
-        "task registry Codex consultation backend",
+        '        if record["backend"] not in {"codex", "opencode", "council", "codex_consult", "claude_consult"}:\n',
+        "task registry isolated consultation backends",
     )
     source = replace_once(
         source,

@@ -288,3 +288,88 @@ def test_interrupted_stdin_is_rejected_before_cli_launch(run_root, monkeypatch):
     monkeypatch.setattr(consult.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("incomplete evidence sent to model"))
     assert consult._worker(TASK, len(full), hashlib.sha256(full.encode()).hexdigest()) == 2
     assert consult._read(TASK)["errorCategory"] == "incomplete_input"
+
+
+@pytest.fixture(scope="module")
+def generated_registry_class(tmp_path_factory):
+    """Execute the actual generated registry, without importing its HTTP client."""
+    import ast
+    import subprocess
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path_factory.mktemp("claude-real-registry") / "runtime"
+    built = subprocess.run([sys.executable, str(root / "scripts/build-clean-host-runtime.py"), str(output)],
+                           capture_output=True, text=True, check=True)
+    assert "clean_host_build=PASS" in built.stdout
+    source_path = output / "opencode_backend.py"
+    tree = ast.parse(source_path.read_text())
+    # Preserve the generated class and its real standard-library dependencies.
+    # No registry method, validation or persistence operation is substituted.
+    imports = {"__future__", "contextlib", "pathlib", "typing"}
+    constants = {"TASK_DIR", "TASK_SCHEMA", "TASK_ID_RE"}
+    selected = []
+    for node in tree.body:
+        if isinstance(node, ast.Import) and all(item.name != "anyio" for item in node.names):
+            selected.append(node)
+        elif isinstance(node, ast.ImportFrom) and node.module in imports:
+            selected.append(node)
+        elif isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in constants
+                                                 for target in node.targets):
+            selected.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name == "_now_ms":
+            selected.append(node)
+        elif isinstance(node, ast.ClassDef) and node.name == "TaskRegistry":
+            selected.append(node)
+    namespace = {}
+    exec(compile(ast.Module(body=selected, type_ignores=[]), str(source_path), "exec"), namespace)
+    return namespace["TaskRegistry"]
+
+
+def test_generated_registry_reserves_replays_updates_and_reads_claude_task(generated_registry_class, tmp_path):
+    registry = generated_registry_class(tmp_path / "tasks")
+    fields = dict(request_kind="consult_model", request_key="claude-registry-001",
+                  request_fingerprint="a" * 64, backend="claude_consult", provider="anthropic",
+                  project="rkb", cwd="/not/read/project", access="read", status="dispatching",
+                  model=consult.MODEL, selection=consult.MODEL)
+    record, replayed = registry.reserve_request(**fields)
+    assert replayed is False
+    task_id = record["taskId"]
+    assert registry.get(task_id)["backend"] == "claude_consult"
+    again, replayed = registry.reserve_request(**fields)
+    assert replayed is True and again["taskId"] == task_id
+    with pytest.raises(ValueError, match="different request"):
+        registry.reserve_request(**{**fields, "request_fingerprint": "b" * 64})
+    registry.update(task_id, status="completed", actualModel=consult.MODEL, finishedAt=consult._now())
+    reopened = generated_registry_class(tmp_path / "tasks")
+    assert reopened.get(task_id)["status"] == "completed"
+    assert reopened.get(task_id)["provider"] == "anthropic"
+    assert reopened.list(project="rkb")[0]["actualModel"] == consult.MODEL
+    with pytest.raises(ValueError, match="invalid backend"):
+        registry.reserve_request(**{**fields, "request_key": "claude-registry-002", "backend": "unknown"})
+
+
+def test_claude_dispatch_and_terminal_read_use_real_generated_registry(
+        generated_registry_class, run_root, tmp_path, monkeypatch):
+    registry = generated_registry_class(tmp_path / "tasks")
+    calls = []
+
+    def start(**kwargs):
+        calls.append(kwargs)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(consult, "start_consultation", start)
+    monkeypatch.setattr(consult, "public_status", lambda task: {
+        "status": "completed", "actualModel": consult.MODEL, "finalResponse": "Independent critique"})
+    original = consult.persist_consultation
+    monkeypatch.setattr(consult, "persist_consultation", lambda *args: original(*args, root=tmp_path / "artifacts"))
+    project = SimpleNamespace(canonical="rkb", path="/not/read/project")
+    spec = model_spec("claude_opus_5_5")
+    first = consult.dispatch(registry, project, request(), spec)
+    second = consult.dispatch(registry, project, request(), spec)
+    assert first["status"] == second["status"] == "completed"
+    assert first["taskId"] == second["taskId"]
+    assert second["replayed"] is True and len(calls) == 1
+    record = registry.get(first["taskId"])
+    terminal = consult.task_operation(registry, record, "read_task")
+    assert terminal["actualModel"] == consult.MODEL
+    assert terminal["consultationArtifact"]["status"] == "ok"
+    assert consult.task_operation(registry, record, "continue_task")["status"] == "conflict"
