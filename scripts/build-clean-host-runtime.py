@@ -277,7 +277,7 @@ TASK_REGISTRY_REQUEST_METHOD = r"""    def reserve_request(
 """
 
 DIRECT_FILES = (
-    "codex_account.py", "codex_consult.py",
+    "codex_account.py", "codex_consult.py", "claude_consult.py",
     "direct_web_context.py", "workspace_selection.py", "direct_probes.py", "direct_actions.py", "direct_probe_core.py", "direct_probe_project.py",
     "direct_probe_project_git.py", "direct_probe_project_files.py",
     "direct_probe_project_github.py", "direct_probe_host.py",
@@ -1534,6 +1534,8 @@ def transform_codex_explicit_opt_in(source: str) -> str:
         '            "Choose Kimi K3 or DeepSeek V4.1 Flash and a purpose. The consultant cannot modify source, "\n'
         '            "requirements, runtime state or external systems; no automatic model fallback occurs. "\n',
         'description=("Start one optional read-only consultation for a focused second opinion. "\n'
+        '            "Claude Opus 5.5 uses the installed Claude Code CLI, requires provided_only and "\n'
+        '            "a stable request_key, removes model tools and ordinary customizations, and verifies the reported model. "\n'
         '            "Kimi K3 and DeepSeek V4.1 Flash use NVIDIA. Native Codex consultant profiles are "\n'
         '            "available under the owner-authorized consultation ladder when the Codex quota gate "\n'
         '            "is strictly above the 10% reserve; this standing consultation policy is separate from "\n'
@@ -1653,6 +1655,10 @@ from model_consult import (
     consultation_request_fingerprint as _consultation_request_fingerprint,
     model_spec as _consult_model_spec,
     persist_consultation as _persist_consultation,
+)
+from claude_consult import (
+    dispatch as _dispatch_claude_consultation,
+    task_operation as _claude_consultation_task_operation,
 )
 from codex_consult import (
     CodexConsultError as _CodexConsultError,
@@ -2019,6 +2025,11 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
                 context_mode=context_mode,
                 evidence_bundle=evidence_bundle if isinstance(evidence_bundle, str) else None,
             )
+            if spec.get("backend") == "claude_code":
+                result = await asyncio.to_thread(
+                    _dispatch_claude_consultation, TASK_REGISTRY, project, arguments, spec,
+                )
+                return _tool_result(result, error=result.get("status") in {"failed", "conflict"})
             if spec.get("backend") == "codex":
                 if not provided_only:
                     return _tool_result({
@@ -2531,7 +2542,12 @@ STREET_STORY_DEPLOYMENT_RECEIPT_INPUT_SCHEMA: dict[str, Any] = {
     source = replace_once(source, handler_anchor, handlers + handler_anchor, "probe dispatch")
 
     codex_consult_task_anchor = '        if registered is not None and registered.get("backend") == "opencode":\n'
-    codex_consult_task_handler = '''        if registered is not None and registered.get("backend") == "codex_consult":
+    codex_consult_task_handler = '''        if registered is not None and registered.get("backend") == "claude_consult":
+            result = await asyncio.to_thread(
+                _claude_consultation_task_operation, TASK_REGISTRY, registered, name,
+            )
+            return _tool_result(result, error=result.get("status") in {"failed", "conflict"})
+        if registered is not None and registered.get("backend") == "codex_consult":
             if name == "continue_task":
                 return _tool_result({
                     "status": "conflict",
