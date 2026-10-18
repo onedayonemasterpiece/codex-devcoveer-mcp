@@ -252,3 +252,74 @@ def test_context_incident_id_is_stripped_from_nonincident_native_action(monkeypa
     assert out["status"]=="ok"
     assert "incident_id" not in seen["action"]
     assert seen["action"]=={"kind":"write_text","path":"x.txt","content":"x"}
+
+
+def test_cache_stable_stage_exact_base_accepts_pinned_empty_payload(monkeypatch, tmp_path: Path):
+    # The old stand-alone MCP action has cached minLength=1 in older clients;
+    # this direct_ops_v2 path validates the CURRENT server schema.
+    import hashlib
+    from types import SimpleNamespace
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repo)], check=True)
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text(json.dumps({
+        "version": 1,
+        "projects": {"p": {
+            "github_repo": "o/r", "remotes": {"origin": "o/r"},
+            "services": {}, "logs": {},
+            "roots": {"source": str(repo)}, "health": {},
+            "runtimes": {}, "runtime_files": {},
+            "config_presence": {}, "project_actions": {},
+        }},
+    }))
+    digest = hashlib.sha256(b"").hexdigest()
+    staged = {}
+
+    def stage(root, project, base, patch, patch_sha256):
+        staged.update(root=root, project=project, base=base,
+                      patch=patch, sha=patch_sha256)
+        return {"handoffId": "src_" + "a" * 24,
+                "baseSha": base, "patchSha256": patch_sha256,
+                "changedFiles": [], "baseOnly": True, "reused": False}
+
+    monkeypatch.setattr(actions, "stage_source_handoff", stage)
+    payload = {"base_sha": "b" * 40, "patch": "", "patch_sha256": digest}
+    validator = Draft202012Validator(actions.PROJECT_ACTION_INPUT_SCHEMA)
+    assert not list(validator.iter_errors({
+        "project": "p", "action": {"kind": "stage_source_handoff", **payload},
+    }))
+    assert list(validator.iter_errors({
+        "project": "p", "action": {"kind": "stage_source_handoff",
+            **payload, "source_path": "/etc/shadow"},
+    }))
+
+    result = run(actions.run_project_action(
+        str(repo), "p", {"kind": "stage_source_handoff", **payload},
+        config_path=cfg,
+    ))
+    assert result["status"] == "ok"
+    assert result["baseOnly"] is True
+    assert staged["project"] == "p"
+    assert staged["patch"] == ""
+    assert staged["sha"] == digest
+    assert staged["root"] == repo.resolve()
+
+
+def test_cache_stable_gateway_maps_stage_exact_base_to_typed_operation(monkeypatch, tmp_path: Path):
+    seen = {}
+
+    async def fake_action(root, project, action, **kwargs):
+        seen.update(root=root, project=project, action=action)
+        return {"status": "ok", "handoffId": "src_" + "b" * 24}
+
+    monkeypatch.setattr(gateway, "run_project_action", fake_action)
+    result = run(gateway.run_direct_ops_v2(
+        str(tmp_path), "p", "project_action", "stage_source_handoff",
+        {"base_sha": "f" * 40, "patch": "",
+         "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+    ))
+    assert result["status"] == "ok"
+    assert seen["action"]["kind"] == "stage_source_handoff"
+    assert seen["action"]["patch"] == ""
