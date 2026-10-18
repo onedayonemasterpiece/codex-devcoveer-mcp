@@ -23,6 +23,7 @@ MAX_HANDOFF_SCAN = 256
 HANDOFF_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
 SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EMPTY_PATCH_SHA256 = hashlib.sha256(b"").hexdigest()
 
 
 class SourceHandoffError(RuntimeError):
@@ -35,8 +36,8 @@ def _now() -> int:
 
 def _patch_bytes(patch: str | bytes) -> bytes:
     data = patch.encode("utf-8") if isinstance(patch, str) else bytes(patch)
-    if not data:
-        raise SourceHandoffError("patch is empty")
+    # An explicitly SHA-pinned empty patch creates a read-only exact-base
+    # release checkout. A mismatched SHA still fails before any worktree exists.
     if len(data) > MAX_PATCH_BYTES:
         raise SourceHandoffError(f"patch exceeds {MAX_PATCH_BYTES} byte limit")
     return data
@@ -517,6 +518,12 @@ def _existing_result(
         raise SourceHandoffError("existing handoff is not a git worktree")
     if not _same_repository(project_root, workspace):
         raise SourceHandoffError("existing handoff belongs to another repository")
+    if patch_sha256 == EMPTY_PATCH_SHA256:
+        # Never silently reuse an empty handoff once an agent has changed it.
+        head = _run_git(workspace, ["rev-parse", "HEAD"]).stdout.decode().strip()
+        state = _run_git(workspace, ["status", "--porcelain", "--untracked-files=all"]).stdout
+        if head != base_sha or state:
+            raise SourceHandoffError("base-only handoff is no longer exact and clean")
     meta["lastUsedAt"] = _now()
     _atomic_json(handoff_dir / "meta.json", meta)
     return {
@@ -525,6 +532,7 @@ def _existing_result(
         "baseSha": base_sha,
         "patchSha256": patch_sha256,
         "changedFiles": list(meta.get("changedFiles") or []),
+        "baseOnly": patch_sha256 == EMPTY_PATCH_SHA256,
         "reused": True,
     }
 
@@ -552,7 +560,7 @@ def stage_source_handoff(
     actual_patch_sha = hashlib.sha256(patch_bytes).hexdigest()
     if actual_patch_sha != expected_patch_sha:
         raise SourceHandoffError("patch sha256 mismatch")
-    if patch_touches_requirements(patch_bytes):
+    if patch_bytes and patch_touches_requirements(patch_bytes):
         raise SourceHandoffError(
             "requirements contract changes are not accepted through Source Handoff; "
             "use requirements_update after explicit user requirement-change intent"
@@ -602,22 +610,31 @@ def stage_source_handoff(
     try:
         _run_git(project, ["worktree", "add", "--detach", str(workspace), base], timeout=60)
         created_worktree = True
-        _run_git(
-            workspace,
-            ["apply", "--check", "--index", "--whitespace=nowarn", "-"],
-            input_bytes=patch_bytes,
-            timeout=60,
-        )
-        _run_git(
-            workspace,
-            ["apply", "--index", "--whitespace=nowarn", "-"],
-            input_bytes=patch_bytes,
-            timeout=60,
-        )
-        _reject_gitlinks(workspace, base)
-        changed = _changed_files(workspace, base)
-        if not changed:
-            raise SourceHandoffError("patch produced no staged source changes")
+        if patch_bytes:
+            _run_git(
+                workspace,
+                ["apply", "--check", "--index", "--whitespace=nowarn", "-"],
+                input_bytes=patch_bytes,
+                timeout=60,
+            )
+            _run_git(
+                workspace,
+                ["apply", "--index", "--whitespace=nowarn", "-"],
+                input_bytes=patch_bytes,
+                timeout=60,
+            )
+            _reject_gitlinks(workspace, base)
+            changed = _changed_files(workspace, base)
+            if not changed:
+                raise SourceHandoffError("patch produced no staged source changes")
+        else:
+            # No patch means no source mutation: verify detached exact-base
+            # HEAD and a clean index/worktree before exposing it to operators.
+            head = _run_git(workspace, ["rev-parse", "HEAD"]).stdout.decode().strip()
+            state = _run_git(workspace, ["status", "--porcelain", "--untracked-files=all"]).stdout
+            if head != base or state:
+                raise SourceHandoffError("base-only checkout failed exact HEAD/clean verification")
+            changed = []
         now = _now()
         meta = {
             "id": handoff_id,
@@ -637,6 +654,7 @@ def stage_source_handoff(
             "baseSha": base,
             "patchSha256": expected_patch_sha,
             "changedFiles": changed,
+            "baseOnly": not bool(patch_bytes),
             "reused": False,
         }
         if auto_cleanup is not None:
