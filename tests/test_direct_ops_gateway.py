@@ -261,6 +261,8 @@ def test_cache_stable_stage_exact_base_accepts_pinned_empty_payload(monkeypatch,
     from types import SimpleNamespace
     repo = tmp_path / "repo"
     repo.mkdir()
+    import subprocess
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repo)], check=True)
     cfg = tmp_path / "cfg.json"
     cfg.write_text(json.dumps({
         "version": 1,
