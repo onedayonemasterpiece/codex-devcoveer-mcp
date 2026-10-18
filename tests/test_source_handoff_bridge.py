@@ -253,7 +253,7 @@ class TestErrorCases:
     def test_explicit_empty_patch_creates_clean_exact_base_without_touching_canonical(self, tmp_path: Path) -> None:
         repo, base = make_repo(tmp_path)
         root = tmp_path / "handoffs"
-        (repo / "change.txt").write_text("in-progress unrelated work\\n", encoding="utf-8")
+        (repo / "change.txt").write_text("in-progress unrelated work\n", encoding="utf-8")
 
         created = stage(repo, base, b"", root)
         workspace = resolve_source_handoff(created["handoffId"], root=root)
@@ -261,11 +261,11 @@ class TestErrorCases:
         assert created["changedFiles"] == []
         assert git(workspace, "rev-parse", "HEAD").decode().strip() == base
         assert git(workspace, "status", "--porcelain", "--untracked-files=all") == b""
-        assert (workspace / "change.txt").read_text() == "old\\n"
-        assert (repo / "change.txt").read_text() == "in-progress unrelated work\\n"
+        assert (workspace / "change.txt").read_text() == "old\n"
+        assert (repo / "change.txt").read_text() == "in-progress unrelated work\n"
         assert stage(repo, base, b"", root)["reused"] is True
 
-        (workspace / "new-draft.txt").write_text("untracked\\n", encoding="utf-8")
+        (workspace / "new-draft.txt").write_text("untracked\n", encoding="utf-8")
         with pytest.raises(SourceHandoffError, match="no longer exact and clean"):
             stage(repo, base, b"", root)
         assert (workspace / "new-draft.txt").exists()  # Preserve concurrent work.
