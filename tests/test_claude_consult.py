@@ -185,13 +185,14 @@ def test_worker_handles_visible_result_and_removes_raw_output(run_root, tmp_path
             self.err.write("provider debug should not be retained")
 
     monkeypatch.setattr(consult.subprocess, "Popen", Child)
-    assert consult._worker(TASK, len("Supplied evidence only"), hashlib.sha256(b"Supplied evidence only").hexdigest()) == 0
+    assert consult._worker(TASK, len("Supplied evidence only"), hashlib.sha256(b"Supplied evidence only").hexdigest(), Path("/registered/claude")) == 0
     state = consult.public_status(TASK)
     assert state["status"] == "completed"
     assert state["actualModel"] == consult.MODEL
     assert observed["cwd"] == directory / "workspace"
     assert list(observed["cwd"].iterdir()) == []
     assert observed["prompt"] == "Supplied evidence only"
+    assert observed["args"][0] == "/registered/claude"
     assert not (directory / "response.json").exists()
     assert not (directory / "stderr.log").exists()
     assert "A material objection." in state["finalResponse"]
@@ -234,7 +235,7 @@ def test_timeout_terminates_provider_and_keeps_failure_receipt(run_root, monkeyp
             events.append("wait")
 
     monkeypatch.setattr(consult.subprocess, "Popen", Child)
-    assert consult._worker(TASK, len("Supplied evidence only"), hashlib.sha256(b"Supplied evidence only").hexdigest()) == 124
+    assert consult._worker(TASK, len("Supplied evidence only"), hashlib.sha256(b"Supplied evidence only").hexdigest(), Path("/registered/claude")) == 124
     state = consult.public_status(TASK)
     assert state["status"] == "failed"
     assert state["errorCategory"] == "timeout"
@@ -286,7 +287,7 @@ def test_interrupted_stdin_is_rejected_before_cli_launch(run_root, monkeypatch):
     monkeypatch.setattr(consult.sys, "stdin", io.StringIO(full[:10]))
     monkeypatch.setattr(consult.resource, "setrlimit", lambda *args: None)
     monkeypatch.setattr(consult.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("incomplete evidence sent to model"))
-    assert consult._worker(TASK, len(full), hashlib.sha256(full.encode()).hexdigest()) == 2
+    assert consult._worker(TASK, len(full), hashlib.sha256(full.encode()).hexdigest(), Path("/registered/claude")) == 2
     assert consult._read(TASK)["errorCategory"] == "incomplete_input"
 
 
@@ -373,3 +374,63 @@ def test_claude_dispatch_and_terminal_read_use_real_generated_registry(
     assert terminal["actualModel"] == consult.MODEL
     assert terminal["consultationArtifact"]["status"] == "ok"
     assert consult.task_operation(registry, record, "continue_task")["status"] == "conflict"
+
+
+def test_binary_selection_prefers_standard_then_numeric_vscode_version(run_root, tmp_path, monkeypatch):
+    extensions = tmp_path / "extensions"
+    extensions.mkdir()
+    monkeypatch.setattr(consult, "VSCODE_EXTENSIONS", extensions)
+    monkeypatch.setattr(consult.shutil, "which", lambda *args, **kwargs: None)
+    standalone = tmp_path / "standalone-claude"
+    standalone.write_text("installed executable")
+    standalone.chmod(0o700)
+    monkeypatch.setattr(consult, "BINARY_PATHS", (standalone,))
+
+    def install(name, executable=True):
+        binary = extensions / name / "resources" / "native-binary" / "claude"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("installed executable")
+        binary.chmod(0o700 if executable else 0o600)
+        return binary
+
+    install("anthropic.claude-code-2.1.99-linux-x64")
+    newest = install("anthropic.claude-code-2.1.301-linux-x64")
+    install("anthropic.claude-code-3.0.0-linux-x64", executable=False)
+    install("anthropic.claude-code-9.0.0-linux-arm64")
+    install("unrelated-extension-99.0.0")
+    assert consult._binary() == standalone
+    standalone.unlink()
+    assert consult._binary() == newest  # Numeric 301 > 99, unlike string ordering.
+
+    captured = []
+
+    class Worker:
+        pid = 987654321
+        def __init__(self, argv, **kwargs):
+            captured.append(argv)
+            self.stdin = io.StringIO()
+
+    monkeypatch.setattr(consult.subprocess, "Popen", Worker)
+    consult.start_consultation(task_id=TASK, prompt="Complete supplied evidence")
+    assert captured[0][-1] == str(newest)
+    assert consult._read(TASK)["binaryPath"] == str(newest)
+
+
+def test_vscode_discovery_rejects_escape_and_excessive_catalog(tmp_path, monkeypatch):
+    extensions = tmp_path / "extensions"
+    extensions.mkdir()
+    monkeypatch.setattr(consult, "VSCODE_EXTENSIONS", extensions)
+    monkeypatch.setattr(consult, "BINARY_PATHS", ())
+    monkeypatch.setattr(consult.shutil, "which", lambda *args, **kwargs: None)
+    outside = tmp_path / "outside-claude"
+    outside.write_text("unregistered executable")
+    outside.chmod(0o700)
+    escape = extensions / "anthropic.claude-code-9.0.0-linux-x64/resources/native-binary/claude"
+    escape.parent.mkdir(parents=True)
+    escape.symlink_to(outside)
+    with pytest.raises(consult.ClaudeConsultError, match="not installed"):
+        consult._binary()
+    (extensions / "another-extension").mkdir()
+    monkeypatch.setattr(consult, "MAX_EXTENSION_ENTRIES", 1)
+    with pytest.raises(consult.ClaudeConsultError, match="bounded discovery limit"):
+        consult._binary()

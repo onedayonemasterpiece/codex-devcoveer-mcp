@@ -144,6 +144,14 @@ supply the relevant evidence, and ask for material objections, missed failure
 cases, and the smallest improvement that addresses them. The calling model
 remains responsible for judging the advice and for every subsequent write.
 
+The executable is selected before dispatch. Standard CLI paths have priority.
+If they are absent, discovery examines at most 512 entries in the single known
+`/home/dev/.vscode-server/extensions` directory, accepts only
+`anthropic.claude-code-X.Y.Z-linux-x64/resources/native-binary/claude`, and chooses
+the newest executable by numeric version. It does not scan other host directories,
+accept a caller-supplied path, create a global symlink, or retry another installed
+version after a provider error. The selected entrypoint is pinned for that worker.
+
 The installed CLI runs once in a dedicated empty directory. The prompt and
 evidence travel through stdin; they are not command-line arguments or a saved
 project file. `--safe-mode` suppresses ordinary user/project customizations, plugins, skills,

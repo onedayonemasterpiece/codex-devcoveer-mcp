@@ -30,6 +30,9 @@ from model_consult import (
 
 RUN_ROOT = Path("/home/dev/.local/share/openai-codex-mcp/claude-consultations")
 BINARY_PATHS = (Path("/home/dev/.local/bin/claude"), Path("/usr/local/bin/claude"))
+VSCODE_EXTENSIONS = Path("/home/dev/.vscode-server/extensions")
+VSCODE_CLAUDE_RE = re.compile(r"anthropic\.claude-code-([0-9]{1,6})\.([0-9]{1,6})\.([0-9]{1,6})-linux-x64")
+MAX_EXTENSION_ENTRIES = 512
 MODEL = "claude-opus-5-5"
 TASK_RE = re.compile(r"^dvt_[0-9a-f]{32}$")
 MAX_PROMPT_CHARS = 120_000
@@ -121,6 +124,23 @@ def _binary() -> Path:
     registered = shutil.which("claude", path="/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin")
     if registered:
         return Path(registered)
+    # Only the observed official VS Code installer layout, one directory level.
+    # Discover installation versions before dispatch; provider failure never retries
+    # an older executable or another model.
+    candidates = []
+    if VSCODE_EXTENSIONS.is_dir() and not VSCODE_EXTENSIONS.is_symlink():
+        with os.scandir(VSCODE_EXTENSIONS) as entries:
+            for count, entry in enumerate(entries):
+                if count >= MAX_EXTENSION_ENTRIES:
+                    raise ClaudeConsultError("VS Code extension catalog exceeds bounded discovery limit")
+                match = VSCODE_CLAUDE_RE.fullmatch(entry.name)
+                if match and entry.is_dir(follow_symlinks=False):
+                    candidates.append((tuple(int(part) for part in match.groups()), Path(entry.path)))
+        for _version, extension in sorted(candidates, reverse=True):
+            path = extension / "resources" / "native-binary" / "claude"
+            if (path.is_file() and os.access(path, os.X_OK)
+                    and path.resolve().is_relative_to(VSCODE_EXTENSIONS.resolve())):
+                return path
     raise ClaudeConsultError("Claude Code is not installed at a registered binary path")
 
 
@@ -173,7 +193,7 @@ def decode_result(raw: str, exit_code: int) -> tuple[str | None, str | None, dic
 def start_consultation(*, task_id: str, prompt: str) -> dict[str, Any]:
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_PROMPT_CHARS:
         raise ClaudeConsultError("invalid consultation prompt")
-    _binary()  # Availability only, no inference and no credential inspection.
+    selected_binary = _binary()  # Pin one installed executable, without inference.
     directory = _directory(task_id)
     RUN_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
@@ -182,11 +202,11 @@ def start_consultation(*, task_id: str, prompt: str) -> dict[str, Any]:
         return public_status(task_id)
     workspace = directory / "workspace"
     workspace.mkdir(mode=0o700)
-    _update(task_id, status="dispatching", createdAt=_now())
+    _update(task_id, status="dispatching", createdAt=_now(), binaryPath=str(selected_binary))
     try:
         worker = subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--claude-consult-worker", task_id,
-             str(len(prompt)), hashlib.sha256(prompt.encode("utf-8")).hexdigest()],
+             str(len(prompt)), hashlib.sha256(prompt.encode("utf-8")).hexdigest(), str(selected_binary)],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             text=True, close_fds=True, start_new_session=True,
         )
@@ -315,7 +335,7 @@ def task_operation(registry: Any, record: dict[str, Any], action: str) -> dict[s
     return payload
 
 
-def _worker(task_id: str, prompt_length: int, prompt_sha256: str) -> int:
+def _worker(task_id: str, prompt_length: int, prompt_sha256: str, selected_binary: Path) -> int:
     directory = _directory(task_id)
     resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES))
     prompt = sys.stdin.read(MAX_PROMPT_CHARS + 1)
@@ -342,7 +362,7 @@ def _worker(task_id: str, prompt_length: int, prompt_sha256: str) -> int:
         with raw_path.open("w") as output, error_path.open("w") as error:
             os.chmod(raw_path, 0o600)
             os.chmod(error_path, 0o600)
-            process = subprocess.Popen(command(_binary()), stdin=subprocess.PIPE,
+            process = subprocess.Popen(command(selected_binary), stdin=subprocess.PIPE,
                                        stdout=output, stderr=error, text=True, close_fds=True,
                                        cwd=directory / "workspace", env=_environment())
             process.communicate(prompt, timeout=TIMEOUT_SECONDS)
@@ -378,6 +398,6 @@ def _worker(task_id: str, prompt_length: int, prompt_sha256: str) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 5 and sys.argv[1] == "--claude-consult-worker":
-        raise SystemExit(_worker(sys.argv[2], int(sys.argv[3]), sys.argv[4]))
+    if len(sys.argv) == 6 and sys.argv[1] == "--claude-consult-worker":
+        raise SystemExit(_worker(sys.argv[2], int(sys.argv[3]), sys.argv[4], Path(sys.argv[5])))
     raise SystemExit("claude_consult.py is an internal fixed-model worker")
