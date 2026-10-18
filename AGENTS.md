@@ -14,3 +14,14 @@ and use [`skills/devserver-interservice/SKILL.md`](skills/devserver-interservice
 - Install the host-managed instructions and skill with
   `python scripts/install-interservice-skill.py --apply`, then verify a
   second dry run reports no changes.
+
+## External and agent handoffs
+
+Before relaying work to dot or another assistant through Slack, read
+[`skills/devserver-agent-handoff/SKILL.md`](skills/devserver-agent-handoff/SKILL.md).
+Delivery receipts are **not** acknowledgments. After sending, read the exact
+reply thread, check that the intended recipient answered, and allow a short
+bounded follow-up check when initially unanswered. Report acceptance, current
+findings and real verification separately; do not re-send or invent a new
+service/method for a functioning Slack handoff. The shared agent installer
+runs automatically during canonical DevCoveer installation.
