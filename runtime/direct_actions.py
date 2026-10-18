@@ -339,9 +339,13 @@ HOST_ACTION_INPUT_SCHEMA: dict[str, Any] = {
                 {"type":"object","properties":{
                     "kind":{"const":"artifact_maintenance"},
                     "artifact_project":{"type":"string","enum":["street-story","events-bot","events-bot-new","regional-knowledge-base","wonderful-lections","vibepublish","codex-devcoveer-mcp"]},
-                    "mode":{"type":"string","enum":["list","inspect","delete"]},
+                    "mode":{"type":"string","enum":["list","inspect","delete","scratch_cleanup"]},
                     "run":{"type":"string","minLength":1,"maxLength":150},
-                    "expected_kib":{"type":"integer","minimum":1}
+                    "expected_kib":{"type":"integer","minimum":1},
+                    "child":{"const":"pytest-tmp"},
+                    "apply":{"type":"boolean","default":False},
+                    "expected_manifest":{"type":"string","pattern":r"^[0-9a-f]{64}$"},
+                    "expected_bytes":{"type":"integer","minimum":0}
                 },"required":["kind","artifact_project","mode"],"additionalProperties":False},
             ]
         },
@@ -1327,7 +1331,23 @@ async def _host_artifact_maintenance(binding_id: str, action: dict[str, Any]) ->
     mode = action["mode"]
     run = action.get("run")
     expected = action.get("expected_kib")
-    if mode == "list":
+    scratch_fields = {"child", "apply", "expected_manifest", "expected_bytes"}
+    if mode != "scratch_cleanup" and scratch_fields.intersection(action):
+        raise ProbeError("invalid_input", "scratch fields require scratch_cleanup mode")
+    if mode == "scratch_cleanup":
+        if not run or action.get("child") != "pytest-tmp" or expected is not None:
+            raise ProbeError("invalid_input", "scratch cleanup requires exact run and child pytest-tmp")
+        apply = action.get("apply", False)
+        if not isinstance(apply, bool):
+            raise ProbeError("invalid_input", "apply must be boolean")
+        manifest = action.get("expected_manifest")
+        size = action.get("expected_bytes")
+        if apply and (not isinstance(manifest, str) or re.fullmatch(r"[0-9a-f]{64}", manifest) is None
+                      or not isinstance(size, int) or isinstance(size, bool) or size < 0):
+            raise ProbeError("invalid_input", "scratch apply requires expected manifest and bytes")
+        if not apply and (manifest is not None or size is not None):
+            raise ProbeError("invalid_input", "dry-run accepts no expectations")
+    elif mode == "list":
         if run is not None or expected is not None:
             raise ProbeError("invalid_input", "list mode accepts no run/expected_kib")
     elif mode == "inspect":
@@ -1346,6 +1366,11 @@ async def _host_artifact_maintenance(binding_id: str, action: dict[str, Any]) ->
         argv.append("--list")
     else:
         argv.extend(["--run", run])
+    if mode == "scratch_cleanup":
+        argv.extend(["--scratch-child", "pytest-tmp"])
+        if action.get("apply", False):
+            argv.extend(["--delete", "--expected-manifest", action["expected_manifest"],
+                         "--expected-bytes", str(action["expected_bytes"])])
     if mode == "delete":
         argv.extend(["--delete", "--expected-kib", str(expected)])
     result = await _run_process(argv, cwd=script.parent, timeout=90, output_limit=48 * 1024)
@@ -1436,3 +1461,4 @@ async def run_host_action(project_root: str, project_id: str, action: dict[str, 
     return await recorded_call(project_root, project_id, "host_action", action,
         lambda: _legacy_run_host_action(project_root, project_id, action,
             config_path=config_path, receipt_surface=receipt_surface))
+
