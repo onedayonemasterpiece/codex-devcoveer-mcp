@@ -140,6 +140,7 @@ fi
 echo "=== incident observability preflight ==="
 "$BRIDGE_PY" "$SRC/scripts/install-incident-observability.py"
 "$BRIDGE_PY" "$SRC/scripts/install-interservice-skill.py"
+"$BRIDGE_PY" "$SRC/scripts/install-agent-handoff-skill.py"
 
 echo "=== canonical wrapper acceptance ==="
 "$BRIDGE_PY" - "$WRAP" <<'PY'
@@ -162,6 +163,7 @@ echo "backend=$BACKEND_SHA"
 echo "wrapper_canonical=PASS"
 "$BRIDGE_PY" "$SRC/scripts/install-incident-observability.py" --apply
 "$BRIDGE_PY" "$SRC/scripts/install-interservice-skill.py" --apply
+"$BRIDGE_PY" "$SRC/scripts/install-agent-handoff-skill.py" --apply
 echo "incident_observability=INSTALLED"
 if [ "$SKIP_TUNNEL_RESTART" = "1" ]; then
   # Return the deployment receipt before the caller explicitly restarts the
