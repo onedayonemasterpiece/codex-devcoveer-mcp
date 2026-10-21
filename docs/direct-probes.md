@@ -35,6 +35,12 @@ Logs/errors/short bodies are redacted, but the design intentionally does not cre
 
 ## Initial trusted bindings
 
+RKB has an owner-authorized operational binding for the user service
+`regional-knowledge-bge-controller.service` and its journal, both named
+`bge_controller`. This shared service binding also enables lifecycle actions;
+it is not a technical read-only grant. No release root or environment values
+are registered. Existing archive-grant path metadata remains independently scoped.
+
 The source config includes ordinary GitHub/project operations for every resolved DevCoveer project, plus explicit host bindings for the DevCoveer MCP runtime, my-browser-bridge, VibePublish, Dataset Loop, and Street Story. Registered names are discovered with `host_probe` `inventory`; ChatGPT should not guess unit names, ports, endpoints or operational paths.
 
 The my-browser-bridge binding is observability only: service/listener/log/health/runtime facts belong in `host_probe`, while DOM observation, navigation, clicks, screenshots, console/network inspection, uploads and downloads stay in the dedicated my-browser-bridge MCP. Do not turn `host_probe` into a second browser execution surface.

@@ -2,6 +2,20 @@
   "version": 1,
   "projects": {
     "regional-knowledge-base": {
+      "github_repo": "onedayonemasterpiece/regional-knowledge-base",
+      "services": {
+        "bge_controller": {
+          "unit": "regional-knowledge-bge-controller.service",
+          "scope": "user",
+          "safe_environment_keys": []
+        }
+      },
+      "logs": {
+        "bge_controller": {
+          "type": "journal",
+          "service": "bge_controller"
+        }
+      },
       "config_presence": {
         "archive_grant_path": {
           "path": "/home/dev/.local/state/regional-knowledge-base/service.env",
