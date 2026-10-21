@@ -60,10 +60,20 @@ def test_missing_and_invalid_opt_in(tmp_path):
         asyncio.run(runtime._config_metadata(cfg, check))
 
 
-def test_rkb_registration_has_no_other_host_access():
+def test_rkb_registration_is_limited_to_approved_controller_and_existing_metadata():
     config = json.loads((Path(__file__).resolve().parents[1] / 'runtime/direct_probe_config.json').read_text())
     rkb = config['projects']['regional-knowledge-base']
-    assert set(rkb) == {'config_presence'}
+    # Owner approved the controller operational binding on 2026-10-21.
+    # Do not silently add release roots, environment values or other services.
+    assert set(rkb) == {'config_presence', 'github_repo', 'services', 'logs'}
+    assert rkb['github_repo'] == 'onedayonemasterpiece/regional-knowledge-base'
+    assert rkb['services'] == {'bge_controller': {
+        'unit': 'regional-knowledge-bge-controller.service', 'scope': 'user',
+        'safe_environment_keys': [],
+    }}
+    assert rkb['logs'] == {'bge_controller': {
+        'type': 'journal', 'service': 'bge_controller',
+    }}
     assert rkb['config_presence'] == {'archive_grant_path': {
         'path': ROOT + '/service.env', 'keys': [KEY],
         'path_metadata_keys': {KEY: ROOT},
