@@ -34,12 +34,14 @@ Each needs, in the PR description, the failure it catches *and* why no existing 
 - extra checks, gates, readiness conditions, SHA/fingerprint/version pins used as gates;
 - hard-coded thresholds equal to today's count or chosen without measurement;
 - special cases ("allow X only when Y") instead of fixing the general rule;
-- a second implementation of something that already exists (a second answer path, a second receiver, a second capacity limiter).
+- a second implementation of something that already exists (a second answer path, a second receiver, a second capacity limiter);
+- statuses with an unknown or "needs a human" outcome, and manual checks or approvals inside the normal flow (see §4).
 
 **Repair paths are never the product.** If data can get into a bad state, fix the normal process that produced it and remove the bad state. Do not add a path that repairs it afterwards. Hiding a path (removing it from a schema while instructions or dead code still point to it) is not removal: delete the code, the instructions and the tests that describe it.
 
 ## 4. Liveness: the system must keep moving
 
+- **Every scenario ends in a terminal outcome without a person.** Do not add statuses such as `unknown`, `needs_review`, `pending_manual`, `requires_operator`, `awaiting_confirmation` that stop work until someone looks. Do not design "an operator/owner will check it" steps, manual approval gates or "report and wait" branches into a normal path. Resolve the outcome in code (read the ledger, retry the same request, reject and move on) or keep the uncertainty *inside the data* (e.g. an unreadable word transcribed as `[?]`) so the flow continues.
 - An error before commit means "not applied": the same request can be repeated. "Unknown outcome" exists only when the connection was lost at commit, and it is resolved by reading the ledger by key, never by waiting for a human.
 - One failing item must not block unrelated items (other users, books, queues).
 - A deterministic failure must not loop: after the bounded retry it is rejected and the queue moves on.
