@@ -19,8 +19,9 @@ Write these three lines into your plan (and later the PR description). If any is
 
 Before adding a mechanism, find the existing one (file:line, or the platform documentation) and use it:
 
-- **Stable platforms keep their own guarantees.** Database transactions and unique constraints, S3 conditional writes, systemd restarts, HTTP/MCP/Slack/Telegram SDK delivery and retries, OS file atomicity. Do not re-verify their outcome, re-implement their retry, or add a second integrity hash on top.
+- **Stable platforms keep their own guarantees.** Database transactions and unique constraints, S3 conditional writes, systemd restarts, HTTP/MCP/Slack/Telegram SDK delivery and retries, OS file atomicity. Do not re-verify their outcome, re-implement their retry, or add a second integrity hash on top. One SHA/size check at a genuinely untrusted boundary (an external upload, a fetched archive) is fine; re-checking what your own code or the platform already guaranteed is not.
 - **One authoritative source per fact.** Do not prove one fact several ways (status + log + re-read + hash). Read the single source of truth.
+- **Find every consumer of what you change.** When you change a path, install method, limit or format, `git grep` all its consumers, including isolated subprocesses, bundles shipped to other runtimes and other components. A limit raised in one place and left old in another is a new defect.
 - **Reuse a working peer.** If another project on this host already solved it (a viewer, an upload path, a local service connection), copy its approach. Do not invent a new transport, gateway, queue or controller.
 - **Do not validate your own just-produced output** when no untrusted boundary lies between producer and consumer.
 - **Depend on internals explicitly or not at all.** If you rely on a library's internals, declare the dependency and its range; better, use its public API.
@@ -52,7 +53,7 @@ Each needs, in the PR description, the failure it catches *and* why no existing 
 - **Do exactly the task.** Do not change product behaviour outside it, even by one line of an instruction or tool description: a changed answer language, an added "you may request more results" hint, a widened limit. Those are product decisions; put them in a separate PR with the owner's decision.
 - **Prefer subtraction.** When you touch an area, delete the dead branch, obsolete instruction and old test it leaves behind. A good fix often has a negative line count.
 - **Respect the line budget** in the task. If the correct fix does not fit, report the exact deficit and why. Do not silently exceed the budget, and do not shrink readability or provenance checks to meet it.
-- **Measure before optimising.** A performance change needs before/after numbers (query plan, timing, size) from the real path; a passing CI on a tiny fixture is not evidence of speed.
+- **Measure before optimising.** A performance change needs before/after numbers (query plan, timing, size) from the real path; a passing CI on a tiny fixture is not evidence of speed. A change that alters model answers (ranking, prompt, tool description) needs the project's question bank run before/after, not only green tests.
 - **One distinguishing test.** It fails before the fix and passes after it. Do not add test suites for paths you just deleted.
 
 ## 6. Self-check before opening the PR
