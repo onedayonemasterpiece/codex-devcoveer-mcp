@@ -308,6 +308,41 @@ def test_adopt_existing_clean_worktree_without_second_copy(repo, preexisting_cop
     assert git(worktree, "status", "--porcelain") == ""
 
 
+def test_owned_lifecycle_with_symlinked_parent(repo, monkeypatch):
+    physical = repo.parent / "physical-home"
+    physical.mkdir()
+    alias = repo.parent / "home-alias"
+    alias.symlink_to(physical, target_is_directory=True)
+    monkeypatch.setattr(manager, "WORKTREE_ROOT", alias / "worktrees" / "managed")
+    monkeypatch.setattr(manager, "ADOPT_ROOTS", (alias / "worktrees",))
+    created = perform(repo, "create")
+    worktree = Path(created["worktree"])
+    head = git(worktree, "rev-parse", "HEAD")
+    assert perform(repo, "status")["head"] == head
+    assert perform(repo, "adopt", worktree=str(worktree.resolve()),
+                   expected_branch=created["branch"], expected_head=head)["reused"]
+    assert len(git(repo, "worktree", "list", "--porcelain").split("worktree ")) == 3
+    (worktree / "draft.txt").write_text("keep this draft")
+    assert perform(repo, "finish", expected_head=head)["blocker"] == "uncommitted_or_untracked_work"
+    updated = commit_change(worktree, "draft.txt", "finished draft")
+    monkeypatch.chdir(worktree)
+    assert manager._in_use(worktree)  # /proc stores the physical cwd, not the alias.
+    monkeypatch.chdir(repo)
+    assert perform(repo, "finish", expected_head=updated)["cleaned"]
+    assert (repo / "draft.txt").read_text() == "finished draft"
+    assert not worktree.exists()
+
+
+def test_adopt_root_with_symlinked_parent(repo, preexisting_copy, monkeypatch):
+    worktree, branch, head = preexisting_copy
+    alias = repo.parent / "home-alias"
+    alias.symlink_to(repo.parent, target_is_directory=True)
+    monkeypatch.setattr(manager, "ADOPT_ROOTS", (alias / "projects",))
+    assert perform(repo, "adopt", worktree=str(worktree),
+                   expected_branch=branch, expected_head=head)["adopted"]
+    assert perform(repo, "status")["head"] == head
+
+
 def test_adopt_existing_dirty_worktree_preserves_data_until_commit(repo, preexisting_copy):
     worktree, branch, head = preexisting_copy
     (worktree / "unsaved-draft.txt").write_text("preserve changes")

@@ -53,6 +53,12 @@ The lifecycle is scoped to an exact task UUID or dvt task ID, with an on-disk
 receipt so interrupted tasks can resume idempotently. No new daemon, queue,
 scheduled GC or mandatory per-task approval is introduced.
 
+Configured checkout roots may have a symlinked parent, such as the host's
+`.codex` home alias. Git registration and process-use checks compare physical
+paths; existing receipts retain their original path. Adoption still requires
+the exact physical path, approved root, branch, commit and task ownership.
+Symlinked worktree directories themselves remain rejected.
+
 ## Recovery from old erroneous unknown outcomes
 
 Older `managed_worktree(mode=status)` calls without a binding sometimes

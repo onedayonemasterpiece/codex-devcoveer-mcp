@@ -149,7 +149,7 @@ def _active(root: Path) -> list[str]:
 
 def _registered(root: Path, worktree: Path) -> bool:
     data = _git(root, "worktree", "list", "--porcelain", "-z").stdout
-    return f"worktree {worktree}\0" in data
+    return f"worktree {worktree.resolve()}\0" in data
 
 
 def _transport_process(proc: Path, uid: int) -> bool:
@@ -168,6 +168,7 @@ def _transport_process(proc: Path, uid: int) -> bool:
 
 
 def _in_use(worktree: Path) -> bool:
+    worktree = worktree.resolve()
     prefix = str(worktree) + os.sep
     uid = os.getuid()
     try:
@@ -237,7 +238,7 @@ def _check_record(record: dict[str, Any], root: Path, worktree: Path, branch: st
         worktree = Path(adopted_path)
         branch = adopted_branch
         if (worktree.is_symlink() or not any(
-                worktree.is_relative_to(parent) and worktree != parent
+                worktree.is_relative_to(parent.resolve()) and worktree != parent.resolve()
                 for parent in ADOPT_ROOTS)):
             raise ProbeError("record_denied", "adopted worktree escapes allowed roots", status="denied")
     if (record.get("repository") != str(root)
@@ -273,7 +274,8 @@ def _registered_external(root: Path, raw_path: str, expected_branch: str,
     if candidate != resolved or candidate == root:
         raise ProbeError("worktree_denied", "candidate worktree must be exact and non-canonical",
                          status="denied")
-    if not any(resolved.is_relative_to(parent) and resolved != parent for parent in ADOPT_ROOTS):
+    if not any(resolved.is_relative_to(parent.resolve()) and resolved != parent.resolve()
+               for parent in ADOPT_ROOTS):
         raise ProbeError("worktree_denied", "candidate worktree is outside dedicated checkout roots",
                          status="denied")
     if (_git(resolved, "rev-parse", "--show-toplevel").stdout.strip() != str(resolved)
@@ -364,7 +366,7 @@ def managed_worktree(root: Path, project: str, action: dict[str, Any]) -> dict[s
                 action.get("expected_head"))
             wanted_branch = action["expected_branch"]
             if record is not None:
-                if (record["worktree"] == str(candidate)
+                if (Path(record["worktree"]).resolve() == candidate
                         and record["branch"] == wanted_branch
                         and record["state"] in {"active", "creating", "integrated", "finished"}):
                     return _public(record, reused=True, adopted=bool(record.get("adopted")))
