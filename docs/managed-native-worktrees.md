@@ -19,6 +19,12 @@ connector schema: project `street-story` (or the canonical repository project),
    Set the top-level Direct Ops project to the original canonical repository
    (not the temporary checkout's project alias). A verified Git registration,
    branch, commit, shared ancestry and task ownership are mandatory.
+   The SHA present **before adoption** is retained as the baseline: `finish`
+   refuses to merge earlier unrelated commits from the adopted branch unless
+   that baseline is already reachable from the target branch. It reports
+   `adopted_baseline_not_in_target` without modifying or deleting either copy.
+   Integrate/reconcile that earlier baseline separately if authorized; do not
+   treat all pre-existing commits as this task's result.
    `adopt` is idempotent for the same receipt and refuses worktrees bound to
    another task. **Never create a second copy after an adoption failure.**
 
