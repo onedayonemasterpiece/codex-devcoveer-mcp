@@ -25,7 +25,7 @@ def test_direct_host_schema_advertises_bounded_artifact_operator():
     by_kind = {x["properties"]["kind"]["const"]: x for x in variants}
     assert "artifact_maintenance" in by_kind
     item = by_kind["artifact_maintenance"]
-    assert set(item["properties"]["mode"]["enum"]) == {"list", "inspect", "delete"}
+    assert set(item["properties"]["mode"]["enum"]) == {"list", "inspect", "delete", "scratch_cleanup"}
     assert "project" not in item["properties"]
     assert "run" in item["properties"]
     assert "expected_kib" in item["properties"]
@@ -98,3 +98,4 @@ def test_canonical_builder_bundles_host_maintenance_script(tmp_path):
     direct = (built / "direct_actions.py").read_text()
     assert 'kind == "artifact_maintenance"' in direct
     assert '"artifact_maintenance"' in direct
+
